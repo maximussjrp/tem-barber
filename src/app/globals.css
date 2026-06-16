@@ -1,26 +1,179 @@
 @import "tailwindcss";
 
+/* ─── Premium Design Tokens ─────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Gold — acento principal */
+  --gold:         #C9A84C;
+  --gold-light:   #D4B86A;
+  --gold-dim:     #8A6F2E;
+  --gold-surface: rgba(201, 168, 76, 0.08);
+  --gold-border:  rgba(201, 168, 76, 0.18);
+
+  /* Backgrounds */
+  --bg:         #111113;
+  --surface-1:  #1C1C1F;
+  --surface-2:  #252528;
+  --surface-3:  #2E2E32;
+
+  /* Text */
+  --text-primary:   #F2F2F2;
+  --text-secondary: #A0A0A8;
+  --text-muted:     #5C5C66;
+
+  /* Borders */
+  --border-subtle:  rgba(255,255,255,0.06);
+  --border-medium:  rgba(255,255,255,0.10);
+
+  /* Status */
+  --status-confirmed:    #22C55E;
+  --status-pending:      #F59E0B;
+  --status-in-progress:  #3B82F6;
+  --status-completed:    #6B7280;
+  --status-cancelled:    #EF4444;
+  --status-noshow:       #7C3AED;
+
+  --radius: 0.875rem;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Core palette */
+  --color-gold:         var(--gold);
+  --color-gold-light:   var(--gold-light);
+  --color-gold-dim:     var(--gold-dim);
+
+  --color-ink:          var(--bg);
+  --color-surface-1:    var(--surface-1);
+  --color-surface-2:    var(--surface-2);
+  --color-surface-3:    var(--surface-3);
+
+  --color-text-primary:   var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted:     var(--text-muted);
+
+  /* Status colors */
+  --color-status-confirmed:   var(--status-confirmed);
+  --color-status-pending:     var(--status-pending);
+  --color-status-progress:    var(--status-in-progress);
+  --color-status-completed:   var(--status-completed);
+  --color-status-cancelled:   var(--status-cancelled);
+
+  /* Fonts */
+  --font-sans:  var(--font-outfit), 'Outfit', sans-serif;
+  --font-serif: var(--font-playfair), 'Playfair Display', serif;
+
+  /* Radius scale */
+  --radius-sm:  0.5rem;
+  --radius-md:  0.75rem;
+  --radius-lg:  var(--radius);
+  --radius-xl:  1.25rem;
+  --radius-2xl: 1.5rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ─── Base ───────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar premium ──────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+/* ─── Utility classes ────────────────────────────────── */
+
+/* Glassmorphism */
+.glass {
+  background: rgba(28, 28, 31, 0.75);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--gold-border);
+}
+
+/* Superfícies */
+.surface-1 { background: var(--surface-1); border: 1px solid var(--border-subtle); }
+.surface-2 { background: var(--surface-2); border: 1px solid var(--border-subtle); }
+
+/* Botão gold primário */
+.btn-gold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%);
+  color: #111113;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius);
+  padding: 0.875rem 1.5rem;
+  min-height: 52px;
+  transition: filter 0.2s, transform 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.btn-gold:hover  { filter: brightness(1.1); }
+.btn-gold:active { transform: scale(0.985); }
+.btn-gold:disabled { opacity: 0.45; pointer-events: none; }
+
+/* Botão outline gold */
+.btn-outline-gold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--gold-surface);
+  color: var(--gold-light);
+  font-weight: 600;
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1.25rem;
+  min-height: 44px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-outline-gold:hover { background: rgba(201,168,76,0.14); border-color: var(--gold); }
+
+/* Status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.625rem;
+  border-radius: 99px;
+}
+.badge-confirmed  { background: rgba(34,197,94,0.12);  color: #4ADE80; border: 1px solid rgba(34,197,94,0.25); }
+.badge-pending    { background: rgba(245,158,11,0.12); color: #FCD34D; border: 1px solid rgba(245,158,11,0.25); }
+.badge-progress   { background: rgba(59,130,246,0.12); color: #93C5FD; border: 1px solid rgba(59,130,246,0.25); }
+.badge-completed  { background: rgba(107,114,128,0.15); color: #9CA3AF; border: 1px solid rgba(107,114,128,0.25); }
+.badge-cancelled  { background: rgba(239,68,68,0.12);  color: #FCA5A5; border: 1px solid rgba(239,68,68,0.25); }
+.badge-noshow     { background: rgba(124,58,237,0.12); color: #C4B5FD; border: 1px solid rgba(124,58,237,0.25); }
+
+/* Gold divider */
+.divider-gold {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-border), transparent);
+}
+
+/* Glow effect */
+.glow-gold {
+  box-shadow: 0 0 24px rgba(201,168,76,0.20), 0 2px 8px rgba(0,0,0,0.40);
+}
+.glow-gold-sm {
+  box-shadow: 0 0 12px rgba(201,168,76,0.15);
 }

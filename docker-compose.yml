@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: match-barber-postgres
+    environment:
+      POSTGRES_USER: match_barber_user
+      POSTGRES_PASSWORD: match_barber_password
+      POSTGRES_DB: match_barber
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: match-barber-redis
+    ports:
+      - "6389:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

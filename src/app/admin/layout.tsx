@@ -1,0 +1,23 @@
+import { requireAdmin } from "@/lib/admin-guard";
+import { AdminSidebar } from "@/components/admin/Sidebar";
+
+export default async function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { barbershop, session } = await requireAdmin();
+
+  return (
+    <div className="flex min-h-screen bg-stone-950">
+      <AdminSidebar
+        barbershopName={barbershop?.name ?? "Match Barber"}
+        userName={session.user?.name ?? "Admin"}
+      />
+      {/* Offset content by sidebar width on desktop */}
+      <main className="flex-1 md:ml-64 min-h-screen overflow-x-hidden">
+        {children}
+      </main>
+    </div>
+  );
+}

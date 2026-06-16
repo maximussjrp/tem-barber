@@ -1,0 +1,349 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// 1. USUÁRIOS E CONTROLE DE ACESSO
+// ----------------------------------------------------
+
+enum UserRole {
+  SUPER_ADMIN // Administrador global da plataforma (Match Barber)
+  USER        // Cliente final que agenda horários
+}
+
+model User {
+  id            String             @id @default(uuid())
+  name          String
+  email         String?            @unique // Opcional para clientes, obrigatório para staff/admin
+  phone         String             @unique // Obrigatório e único para todos (chave de login do cliente)
+  cpf           String?            @unique // Opcional para clientes, obrigatório para staff/admin
+  passwordHash  String?            @map("password_hash") // Opcional para clientes (login sem senha)
+  role          UserRole           @default(USER)
+  avatarUrl     String?            @map("avatar_url")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  // Relacionamentos
+  memberships   BarbershopMember[] // Caso o usuário seja funcionário/dono de barbearia
+  appointments  Appointment[]      // Histórico de agendamentos como cliente
+  reviews       Review[]           // Avaliações feitas pelo cliente
+  notifications Notification[]
+
+  @@map("users")
+}
+
+// ----------------------------------------------------
+// 2. TENANTS (ESTABELECIMENTOS / BARBEARIAS)
+// ----------------------------------------------------
+
+model Barbershop {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique // Para URLs amigáveis: matchbarber.com.br/barbearia-do-ze
+  logoUrl     String?  @map("logo_url")
+  coverUrl    String?  @map("cover_url")
+  description String?
+  phone       String
+  active      Boolean  @default(true)
+
+  // Endereço
+  zipCode      String   @map("zip_code")
+  street       String
+  number       String
+  complement   String?
+  neighborhood String
+  city         String
+  state        String
+  latitude     Float?
+  longitude    Float?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relacionamentos
+  members       BarbershopMember[]
+  services      Service[]
+  categories    Category[]
+  appointments  Appointment[]
+  subscriptions TenantSubscription[]
+
+  @@map("barbershops")
+}
+
+// Papéis dentro de uma barbearia específica
+enum MemberRole {
+  OWNER   // Dono da barbearia (acesso total administrativo)
+  MANAGER // Gerente (acesso operacional e financeiro básico)
+  BARBER  // Barbeiro / Colaborador (vê apenas a própria agenda)
+}
+
+model BarbershopMember {
+  id           String     @id @default(uuid())
+  barbershopId String     @map("barbershop_id")
+  userId       String     @map("user_id")
+  role         MemberRole @default(BARBER)
+  bio          String?
+  ratingAvg    Float      @default(0.0) @map("rating_avg")
+  isActive     Boolean    @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relacionamentos
+  barbershop   Barbershop      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services     BarberService[]
+  workingHours WorkingHour[]
+  timeOffs     TimeOff[]
+  appointments Appointment[]
+
+  @@unique([barbershopId, userId])
+  @@map("barbershop_members")
+}
+
+// ----------------------------------------------------
+// 3. CATEGORIAS E SERVIÇOS
+// ----------------------------------------------------
+
+model Category {
+  id           String @id @default(uuid())
+  barbershopId String @map("barbershop_id")
+  name         String
+  slug         String
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  services   Service[]
+
+  @@unique([barbershopId, slug])
+  @@map("categories")
+}
+
+model Service {
+  id           String  @id @default(uuid())
+  barbershopId String  @map("barbershop_id")
+  categoryId   String  @map("category_id")
+  name         String
+  description  String?
+  price        Decimal @db.Decimal(10, 2)
+  durationMin  Int     @map("duration_min") // Duração do serviço em minutos
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relacionamentos
+  barbershop   Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  category     Category             @relation(fields: [categoryId], references: [id])
+  barbers      BarberService[]
+  appointments AppointmentService[]
+
+  @@map("services")
+}
+
+// Tabela dinâmica de associação N:N entre Barbeiro e Serviço
+model BarberService {
+  barberId  String @map("barber_id")
+  serviceId String @map("service_id")
+
+  barber  BarbershopMember @relation(fields: [barberId], references: [id], onDelete: Cascade)
+  service Service          @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([barberId, serviceId])
+  @@map("barber_services")
+}
+
+// ----------------------------------------------------
+// 4. AGENDAS E HORÁRIOS
+// ----------------------------------------------------
+
+// Grade de horários padrão de trabalho do profissional (Ex: Seg a Sex, 09:00 às 18:00)
+model WorkingHour {
+  id         String  @id @default(uuid())
+  memberId   String  @map("member_id")
+  dayOfWeek  Int     @map("day_of_week") // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+  startTime  String  @map("start_time") // Formato "HH:MM"
+  endTime    String  @map("end_time")   // Formato "HH:MM"
+
+  // Horários de Intervalo (Almoço/Pausa)
+  breakStart String? @map("break_start") // Formato "HH:MM"
+  breakEnd   String? @map("break_end")   // Formato "HH:MM"
+  isActive   Boolean @default(true) @map("is_active")
+
+  member BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, dayOfWeek])
+  @@map("working_hours")
+}
+
+// Dias de folga, férias ou bloqueios temporários de agenda de um profissional
+model TimeOff {
+  id        String   @id @default(uuid())
+  memberId  String   @map("member_id")
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  reason    String?  // Ex: "Férias", "Médico", "Bloqueio manual"
+
+  member BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("time_offs")
+}
+
+// ----------------------------------------------------
+// 5. AGENDAMENTOS E FLUXO
+// ----------------------------------------------------
+
+enum AppointmentStatus {
+  PENDING    // Aguardando confirmação (caso a barbearia use aprovação manual)
+  CONFIRMED  // Confirmado e ativo
+  COMPLETED  // Serviço finalizado com sucesso
+  CANCELLED  // Cancelado pelo cliente ou estabelecimento
+  NO_SHOW    // Cliente não compareceu
+}
+
+model Appointment {
+  id           String            @id @default(uuid())
+  barbershopId String            @map("barbershop_id")
+  memberId     String            @map("member_id") // O barbeiro que executará o serviço
+  customerId   String            @map("customer_id") // O cliente que reservou
+  dateTime     DateTime          @map("date_time") // Data e hora de início do atendimento
+  totalPrice   Decimal           @map("total_price") @db.Decimal(10, 2)
+  durationMin  Int               @map("duration_min") // Soma das durações dos serviços escolhidos
+  status       AppointmentStatus @default(CONFIRMED)
+  notes        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relacionamentos
+  barbershop Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  barber     BarbershopMember     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  customer   User                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  services   AppointmentService[]
+  review     Review?
+  payment    Payment?
+
+  @@index([barbershopId, dateTime])
+  @@index([memberId, dateTime])
+  @@map("appointments")
+}
+
+// Serviços atrelados ao agendamento (suporta múltiplos serviços no mesmo slot)
+model AppointmentService {
+  appointmentId String  @map("appointment_id")
+  serviceId     String  @map("service_id")
+  priceApplied  Decimal @map("price_applied") @db.Decimal(10, 2) // Salva o preço cobrado na época
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id])
+
+  @@id([appointmentId, serviceId])
+  @@map("appointment_services")
+}
+
+// ----------------------------------------------------
+// 6. AVALIAÇÕES E COMUNICAÇÃO
+// ----------------------------------------------------
+
+model Review {
+  id            String   @id @default(uuid())
+  appointmentId String   @unique @map("appointment_id")
+  customerId    String   @map("customer_id")
+  rating        Int      // 1 a 5 estrelas
+  comment       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  customer    User        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  title     String
+  content   String
+  type      String    // "APPOINTMENT_REMINDER", "APPOINTMENT_CONFIRMED", "SYSTEM_ALERT"
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// ----------------------------------------------------
+// 7. ASSINATURA DA PLATAFORMA (SAAS) E FINANCEIRO
+// ----------------------------------------------------
+
+enum PlanPeriod {
+  MONTHLY
+  YEARLY
+}
+
+model Plan {
+  id          String     @id @default(uuid())
+  name        String     // Ex: "Bronze", "Prata", "Ouro"
+  description String?
+  price       Decimal    @db.Decimal(10, 2)
+  period      PlanPeriod @default(MONTHLY)
+  maxMembers  Int        @map("max_members") // Limite de barbeiros por plano
+  isActive    Boolean    @default(true) @map("is_active")
+
+  subscriptions TenantSubscription[]
+
+  @@map("plans")
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+model TenantSubscription {
+  id           String             @id @default(uuid())
+  barbershopId String             @map("barbershop_id")
+  planId       String             @map("plan_id")
+  status       SubscriptionStatus @default(TRIAL)
+  trialEndsAt  DateTime?          @map("trial_ends_at")
+  periodStart  DateTime           @map("period_start")
+  periodEnd    DateTime           @map("period_end")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  plan       Plan       @relation(fields: [planId], references: [id])
+
+  @@map("tenant_subscriptions")
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  appointmentId String        @unique @map("appointment_id")
+  gatewayTxId   String?       @map("gateway_tx_id") // ID da transação no gateway
+  amount        Decimal       @db.Decimal(10, 2)
+  status        PaymentStatus @default(PENDING)
+  method        String        // "PIX", "CREDIT_CARD", "IN_STORE"
+  paidAt        DateTime?     @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
