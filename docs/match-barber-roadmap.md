@@ -1,9 +1,9 @@
 # Match Barber — Roadmap de Implementação v2.0
 
-**Última atualização:** 2026-06-15
+**Última atualização:** 2026-06-16
 **Versão:** 2.0
-**Status geral:** NÃO INICIADO
-**Fase atual:** DOCUMENTAÇÃO
+**Status geral:** EM ANDAMENTO
+**Fase atual:** FASE 0
 
 ---
 
@@ -71,6 +71,51 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 **Dependências:** Nenhuma.
 
 **Pendências e bloqueios:** Nenhum — pode ser iniciada imediatamente.
+
+### Fase 0A — Baseline de testes da aplicação funcional
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline funcional:** `cf4d41aac2e62c8f93f96c2bd71c1d095473e080`
+**Branch:** `feat/phase-0a-booking-test-baseline-v2`
+**Commit da etapa:** `test: add booking regression baseline`
+
+#### Itens concluídos nesta etapa
+
+- [x] Infraestrutura de testes com Vitest em ambiente Node
+- [x] Scripts `test`, `test:run`, `test:watch` e `typecheck`
+- [x] Testes de caracterização para cálculo de serviços, disponibilidade, agendamento público, agendamento administrativo, cancelamento, reagendamento e guards
+- [x] Mocks de Prisma, NextAuth e guards para não usar banco real nem dados reais
+- [x] Casos futuros críticos registrados como `todo`
+
+#### Testes pendentes registrados como `todo`
+
+- [ ] Impede reservas concorrentes para intervalos sobrepostos
+- [ ] Requisição repetida com a mesma intenção não cria duplicidade
+- [ ] Endpoint administrativo impede sobreposição de horários
+- [ ] Toda alteração de status gera histórico
+- [ ] Rotas públicas aplicam rate limit
+
+#### Evidências da Fase 0A
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm ci` | 0 | aprovado; Prisma Client gerado via `postinstall`; 7 vulnerabilidades moderadas já existentes |
+| `npm run typecheck` | 0 | aprovado |
+| `npm run test:run` | 0 | 8 arquivos de teste; 57 testes aprovados; 5 `todo`; duração 8.32s |
+| `npm run build` | 0 | aprovado |
+| `npm run lint` | 1 | reprovado por dívida preexistente: 56 erros e 15 warnings |
+| `npx eslint vitest.config.ts "src/__tests__/**/*.ts"` | 0 | aprovado para arquivos alterados nesta etapa |
+
+#### Dívida e lacunas mantidas
+
+- Lint global preexistente permanece reprovado, sem novos erros nos arquivos da Fase 0A.
+- Concorrência transacional, idempotência, `AppointmentStatusLog`, `AuditLog`, rate limiting e role `RECEPTIONIST` não foram implementados nesta etapa.
+- Conflito-check ausente no endpoint administrativo permanece registrado como lacuna, sem correção nesta etapa.
+
+#### Gate da Fase 0
+
+**Status do gate:** NÃO AVALIADO
 
 ### Escopo incluído
 
