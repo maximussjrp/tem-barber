@@ -22,6 +22,7 @@ interface Appointment {
   customer: { id: string; name: string; phone: string };
   barber: { id: string; user: { name: string; avatarUrl: string | null } };
   services: AppService[];
+  comandas?: { id: string; status: string; total: string; paidTotal: string }[];
 }
 
 interface Member {
@@ -38,20 +39,43 @@ interface Service {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STATUS_LABEL: Record<AppStatus, string> = {
+type UIStatus = "PENDING" | "CONFIRMED" | "OPEN_COMANDA" | "IN_SERVICE" | "PENDING_PAYMENT" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+
+function getUIStatus(app: Appointment): UIStatus {
+  if (app.status === "PENDING") return "PENDING";
+  if (app.status === "CANCELLED") return "CANCELLED";
+  if (app.status === "NO_SHOW") return "NO_SHOW";
+  if (app.status === "COMPLETED") return "COMPLETED";
+
+  const comanda = app.comandas?.[0];
+  if (!comanda) return "CONFIRMED";
+  if (comanda.status === "OPEN") return "OPEN_COMANDA";
+  if (comanda.status === "IN_SERVICE") return "IN_SERVICE";
+  if (comanda.status === "PENDING_PAYMENT") return "PENDING_PAYMENT";
+  if (comanda.status === "CLOSED") return "COMPLETED";
+  return "CONFIRMED";
+}
+
+const UI_STATUS_LABEL: Record<UIStatus, string> = {
   PENDING: "Pendente",
   CONFIRMED: "Confirmado",
+  OPEN_COMANDA: "Atendimento aberto",
+  IN_SERVICE: "Em atendimento",
+  PENDING_PAYMENT: "Aguardando pagamento",
   COMPLETED: "Concluído",
   CANCELLED: "Cancelado",
-  NO_SHOW: "Não compareceu",
+  NO_SHOW: "Faltou",
 };
 
-const STATUS_BG: Record<AppStatus, string> = {
-  PENDING:   "bg-amber-500/15 border-amber-500/30 text-amber-200",
-  CONFIRMED: "bg-sky-500/15 border-sky-500/30 text-sky-100",
+const UI_STATUS_BG: Record<UIStatus, string> = {
+  PENDING: "bg-amber-500/15 border-amber-500/30 text-amber-200",
+  CONFIRMED: "bg-stone-500/20 border-stone-500/40 text-stone-300", // neutro/dourado discreto
+  OPEN_COMANDA: "bg-amber-600/20 border-amber-500/40 text-amber-100", // intermediario
+  IN_SERVICE: "bg-blue-500/20 border-blue-500/40 text-blue-100", // destaque ativo coerente
+  PENDING_PAYMENT: "bg-orange-500/20 border-orange-500/40 text-orange-200", // laranja/amarelo
   COMPLETED: "bg-emerald-500/15 border-emerald-500/30 text-emerald-100",
-  CANCELLED: "bg-[var(--surface-3)] border-[var(--border-subtle)] text-[var(--text-muted)]",
-  NO_SHOW:   "bg-red-500/15 border-red-500/30 text-red-300",
+  CANCELLED: "bg-red-900/30 border-red-800/40 text-red-300", // vermelho discreto
+  NO_SHOW: "bg-stone-800 border-stone-700 text-stone-400", // cinza crítico
 };
 
 const LABEL_INPUT = "text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]";
@@ -350,13 +374,14 @@ function AppointmentBlock({
 }) {
   const [open, setOpen] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   const startMin = isoToMinutes(appointment.dateTime);
   const top = minutesToTop(startMin);
   const height = Math.max(minutesToHeight(appointment.durationMin), ROW_HEIGHT);
 
-  const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(appointment.status);
+  const uiStatus = getUIStatus(appointment);
+  const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
   const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
   const price = parseFloat(appointment.totalPrice).toLocaleString("pt-BR", {
     style: "currency",
@@ -381,20 +406,33 @@ function AppointmentBlock({
     }
   };
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    if (open) document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  const startComandaService = async () => {
+    const comanda = appointment.comandas?.[0];
+    if (!comanda) return;
+    setLoadingStatus(true);
+    try {
+      const res = await fetch(`/api/admin/comandas/${comanda.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "IN_SERVICE" }),
+      });
+      if (res.ok) {
+        router.push(`/admin/comandas/${comanda.id}`);
+      } else {
+        const data = await res.json();
+        alert(data.error || "Erro ao iniciar atendimento");
+      }
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
 
   return (
-    <div ref={ref} className="absolute left-1 right-1 z-10" style={{ top, height }}>
+    <div className="absolute left-1 right-1 z-10" style={{ top, height }}>
       {/* Block */}
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`w-full h-full rounded-lg border px-2 py-1 text-left overflow-hidden transition-all shadow-sm ${STATUS_BG[appointment.status]} ${isTerminal ? "opacity-50" : "hover:brightness-110 cursor-pointer"}`}
+        className={`w-full h-full rounded-lg border px-2 py-1 text-left overflow-hidden transition-all shadow-sm ${UI_STATUS_BG[uiStatus]} ${isTerminal ? "opacity-50" : "hover:brightness-110 cursor-pointer"}`}
       >
         <p className="text-[11px] font-bold tabular-nums leading-tight">
           {formatTime(appointment.dateTime)}
@@ -405,60 +443,110 @@ function AppointmentBlock({
         )}
       </button>
 
-      {/* Detail popup */}
+      {/* Detail Popup (Fixed Modal/Bottom Sheet) */}
       {open && (
-        <div className="absolute left-full ml-2 top-0 z-50 w-64 bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl shadow-2xl p-4 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-bold text-[var(--text-primary)]">{appointment.customer.name}</p>
-              <p className="text-xs text-[var(--text-muted)]">{appointment.customer.phone}</p>
-            </div>
-            <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_BG[appointment.status]}`}>
-              {STATUS_LABEL[appointment.status]}
-            </span>
-          </div>
-          <div className="text-xs text-[var(--text-secondary)] space-y-1">
-            <p className="flex items-center gap-1.5">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              {formatTime(appointment.dateTime)} · {appointment.durationMin}min
-            </p>
-            <p className="flex items-center gap-1.5">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              {serviceNames}
-            </p>
-            <p className="font-bold text-[var(--gold)]">{price}</p>
-          </div>
-          {appointment.notes && (
-            <p className="text-xs text-[var(--text-muted)] italic border-l-2 border-[var(--gold-border)] pl-2">{appointment.notes}</p>
-          )}
-          {!isTerminal && (
-            <div className="space-y-1.5 border-t border-[var(--border-subtle)] pt-3">
-              {appointment.status === "PENDING" && (
-                <button onClick={() => changeStatus("CONFIRMED")} disabled={loadingStatus} className="w-full text-xs font-bold px-3 py-2 rounded-xl bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 border border-sky-500/20 transition-colors disabled:opacity-50">
-                  ✓ Confirmar
-                </button>
-              )}
-              {appointment.status === "CONFIRMED" && (
-                <button onClick={() => changeStatus("COMPLETED")} disabled={loadingStatus} className="w-full text-xs font-bold px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors disabled:opacity-50">
-                  ✓ Concluir
-                </button>
-              )}
-              <div className="grid grid-cols-2 gap-1.5">
-                <button onClick={() => { setOpen(false); onOpenComanda(appointment); }} className="col-span-2 text-xs font-bold px-2 py-1.5 rounded-xl bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/20 transition-colors">
-                  Abrir atendimento
-                </button>
-                <button onClick={() => { setOpen(false); onEdit(appointment); }} className="text-xs font-bold px-2 py-1.5 rounded-xl bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors">
-                  ✏️ Editar
-                </button>
-                <button onClick={() => { setOpen(false); onCancel(appointment); }} disabled={loadingStatus} className="text-xs font-bold px-2 py-1.5 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors disabled:opacity-50">
-                  Cancelar
-                </button>
-                <button onClick={() => changeStatus("NO_SHOW")} disabled={loadingStatus} className="col-span-2 text-xs font-bold px-2 py-1.5 rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors disabled:opacity-50">
-                  Não compareceu
-                </button>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-0">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+          <div className="relative w-full max-w-sm bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:fade-in sm:zoom-in-95">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-base font-bold text-[var(--text-primary)]">{appointment.customer.name}</p>
+                <p className="text-sm text-[var(--text-muted)]">{appointment.customer.phone}</p>
               </div>
+              <span className={`shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${UI_STATUS_BG[uiStatus]}`}>
+                {UI_STATUS_LABEL[uiStatus]}
+              </span>
             </div>
-          )}
+            
+            <div className="text-sm text-[var(--text-secondary)] space-y-1.5">
+              <p className="flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {formatTime(appointment.dateTime)} · {appointment.durationMin}min
+              </p>
+              <p className="flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                {serviceNames}
+              </p>
+              <p className="font-bold text-[var(--gold)]">{price}</p>
+            </div>
+
+            {appointment.notes && (
+              <p className="text-sm text-[var(--text-muted)] italic border-l-2 border-[var(--gold-border)] pl-3">{appointment.notes}</p>
+            )}
+
+            <div className="space-y-2 border-t border-[var(--border-subtle)] pt-4">
+              
+              {/* Matriz de Botões */}
+              {uiStatus === "PENDING" && (
+                <button onClick={() => changeStatus("CONFIRMED")} disabled={loadingStatus} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 border border-sky-500/20 transition-colors disabled:opacity-50">
+                  Confirmar Agendamento
+                </button>
+              )}
+
+              {uiStatus === "CONFIRMED" && (
+                <button onClick={() => { setOpen(false); onOpenComanda(appointment); }} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-[var(--gold)] hover:bg-[#c99833] text-stone-900 transition-colors disabled:opacity-50">
+                  Abrir Atendimento
+                </button>
+              )}
+
+              {uiStatus === "OPEN_COMANDA" && (
+                <div className="flex gap-2">
+                  <button onClick={startComandaService} disabled={loadingStatus} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-50">
+                    Iniciar Atendimento
+                  </button>
+                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-[var(--surface-3)] hover:bg-[var(--surface-4)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
+                    Ver Comanda
+                  </button>
+                </div>
+              )}
+
+              {uiStatus === "IN_SERVICE" && (
+                <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                  Ver Atendimento
+                </button>
+              )}
+
+              {uiStatus === "PENDING_PAYMENT" && (
+                <div className="flex gap-2">
+                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-[2] text-sm font-bold px-4 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors">
+                    Ir para Pagamento
+                  </button>
+                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-[var(--surface-3)] hover:bg-[var(--surface-4)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
+                    Ver Comanda
+                  </button>
+                </div>
+              )}
+
+              {isTerminal && appointment.comandas?.[0] && (
+                <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-[var(--surface-3)] hover:bg-[var(--surface-4)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
+                  Ver Comanda
+                </button>
+              )}
+
+              {/* Botões secundários (apenas para não-terminais e sem comanda avançada) */}
+              {!isTerminal && uiStatus !== "IN_SERVICE" && uiStatus !== "PENDING_PAYMENT" && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button onClick={() => { setOpen(false); onEdit(appointment); }} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors">
+                    Editar
+                  </button>
+                  <button onClick={() => { setOpen(false); onCancel(appointment); }} disabled={loadingStatus} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-red-400 hover:bg-red-500/10 border border-red-500/20 transition-colors disabled:opacity-50">
+                    Cancelar
+                  </button>
+                </div>
+              )}
+
+              {/* Falta só permitida antes do início do atendimento (sem comanda ou comanda aberta) */}
+              {(uiStatus === "PENDING" || uiStatus === "CONFIRMED" || uiStatus === "OPEN_COMANDA") && (
+                <button onClick={() => changeStatus("NO_SHOW")} disabled={loadingStatus} className="w-full text-sm font-bold px-3 py-2 mt-2 rounded-xl bg-transparent text-[var(--text-muted)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors disabled:opacity-50">
+                  Marcar como Falta
+                </button>
+              )}
+
+              <button onClick={() => setOpen(false)} className="w-full text-sm font-semibold px-3 py-2 mt-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+                Fechar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

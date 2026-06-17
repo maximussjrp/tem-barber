@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ComandaStatus } from "@prisma/client";
 import { closeComanda } from "@/lib/operations/payments";
-import { comandaInclude, OperationalError } from "@/lib/operations/comandas";
+import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
@@ -60,6 +60,20 @@ export async function PATCH(
       if (!ALLOWED[comanda.status].includes(body.status!)) {
         throw new OperationalError("INVALID_TRANSITION", "Transicao de comanda invalida.", 422);
       }
+      if (body.status === "PENDING_PAYMENT") {
+        const comandaWithItems = await tx.comanda.findUnique({
+          where: { id },
+          include: { items: true },
+        });
+        const hasPendingObligatoryItems = comandaWithItems?.items.some(
+          (i) => i.status === "PENDING" && i.type === "SERVICE"
+        );
+        if (hasPendingObligatoryItems) {
+          throw new OperationalError("PENDING_ITEMS", "Conclua ou cancele todos os itens de serviço antes de ir para pagamento.", 422);
+        }
+        await recalculateComandaTotals(tx, id);
+      }
+      
       if (body.status === "CLOSED") {
         return closeComanda(tx, data!.barbershopId, id);
       }

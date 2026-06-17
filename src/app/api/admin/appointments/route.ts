@@ -106,6 +106,9 @@ export async function GET(request: NextRequest) {
         services: {
           include: { service: { select: { name: true, durationMin: true } } },
         },
+        comandas: {
+          select: { id: true, status: true, total: true, paidTotal: true },
+        },
       },
       orderBy: { dateTime: "asc" },
       skip: (page - 1) * pageSize,

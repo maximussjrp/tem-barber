@@ -226,6 +226,14 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     data: { status: "CLOSED", closedAt: new Date(), remainingTotal: 0 },
     include: comandaInclude,
   });
+
+  if (closed.appointmentId) {
+    await tx.appointment.update({
+      where: { id: closed.appointmentId },
+      data: { status: "COMPLETED" },
+    });
+  }
+
   await syncCommissionReleaseForComanda(tx, barbershopId, comandaId);
   return closed;
 }

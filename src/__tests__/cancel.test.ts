@@ -4,6 +4,9 @@ import { NextRequest } from "next/server";
 const { prismaMock, getAdminSessionMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     appointment: { findFirst: vi.fn(), update: vi.fn() },
+    comanda: { findFirst: vi.fn(), update: vi.fn() },
+    financialEntry: { count: vi.fn() },
+    $transaction: vi.fn(),
   },
   getAdminSessionMock: vi.fn(),
   getServerSessionMock: vi.fn(),
@@ -36,10 +39,13 @@ beforeEach(() => {
     dateTime: new Date("2026-07-21T10:00:00.000Z"),
     status: "CONFIRMED",
   });
-  prismaMock.appointment.update.mockImplementation(async ({ where, data }) => ({
+  prismaMock.appointment.update.mockImplementation(async ({ where, data }: any) => ({
     id: where.id,
     ...data,
   }));
+  prismaMock.comanda.findFirst.mockResolvedValue(null);
+  prismaMock.financialEntry.count.mockResolvedValue(0);
+  prismaMock.$transaction.mockImplementation(async (cb: any) => await cb(prismaMock));
 });
 
 describe("cancelamento de agendamentos", () => {

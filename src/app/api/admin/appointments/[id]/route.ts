@@ -33,6 +33,7 @@ export async function GET(
       customer: { select: { id: true, name: true, phone: true } },
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
       services: { include: { service: { select: { name: true, durationMin: true } } } },
+      comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
     },
   });
 
@@ -190,6 +191,66 @@ export async function PATCH(
     return NextResponse.json({ error: "Agendamento não encontrado." }, { status: 404 });
   }
 
+  // Cancelar comanda junto se for status terminal (CANCELLED ou NO_SHOW)
+  if (status && ["CANCELLED", "NO_SHOW"].includes(status)) {
+    const existingComanda = await prisma.comanda.findFirst({
+      where: { appointmentId: id, barbershopId: barbershopIdPatch, status: { not: "CANCELLED" } },
+      include: {
+        payments: { where: { status: "CONFIRMED" } },
+        items: {
+          include: {
+            stockMovements: true,
+            commissionEntry: true,
+          },
+        },
+      },
+    });
+
+    if (existingComanda) {
+      if (existingComanda.status !== "OPEN") {
+        return NextResponse.json(
+          { error: `Não é possível marcar como ${status === "NO_SHOW" ? "Falta" : "Cancelado"} pois a comanda associada já avançou (status: ${existingComanda.status}).` },
+          { status: 422 }
+        );
+      }
+
+      const hasPayments = existingComanda.payments.length > 0;
+      const hasFinancial = await prisma.financialEntry.count({ where: { comandaId: existingComanda.id } }) > 0;
+      const hasStock = existingComanda.items.some(i => i.stockMovements.length > 0);
+      const hasCommissions = existingComanda.items.some(i => i.commissionEntry !== null);
+
+      if (hasPayments || hasFinancial || hasStock || hasCommissions) {
+        return NextResponse.json(
+          { error: "A comanda possui efeitos financeiros, comissões ou estoque baixado. Realize o cancelamento da comanda manualmente (com estorno, se aplicável)." },
+          { status: 422 }
+        );
+      }
+
+      const updatedTransaction = await prisma.$transaction(async (tx) => {
+        await tx.comanda.update({
+          where: { id: existingComanda.id },
+          data: { status: "CANCELLED", cancelledAt: new Date() },
+        });
+
+        return tx.appointment.update({
+          where: { id },
+          data: {
+            status: status as ValidStatus,
+            ...(notes !== undefined && { notes }),
+          },
+          include: {
+            customer: { select: { id: true, name: true, phone: true } },
+            barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
+            services: { include: { service: { select: { name: true, durationMin: true } } } },
+            comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
+          },
+        });
+      });
+
+      return NextResponse.json(updatedTransaction);
+    }
+  }
+
   const updated = await prisma.appointment.update({
     where: { id },
     data: {
@@ -200,6 +261,7 @@ export async function PATCH(
       customer: { select: { id: true, name: true, phone: true } },
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
       services: { include: { service: { select: { name: true, durationMin: true } } } },
+      comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
     },
   });
 
