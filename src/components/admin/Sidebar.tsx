@@ -65,6 +65,16 @@ const navItems = [
   { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [] },
   { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [] },
   {
+    label: "Comissoes",
+    href: "/admin/comissoes",
+    icon: Icons.dashboard,
+    children: [
+      { label: "Geral", href: "/admin/comissoes" },
+      { label: "Configuracoes", href: "/admin/comissoes/configuracoes" },
+      { label: "Periodos", href: "/admin/comissoes/periodos" },
+    ],
+  },
+  {
     label: "Serviços",
     href: "/admin/servicos",
     icon: Icons.scissors,

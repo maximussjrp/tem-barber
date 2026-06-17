@@ -308,6 +308,60 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 - Fidelidade, Plano Clube, fornecedores, compras, estoque avançado, conciliação bancária, gateway, fiscal e relatórios avançados.
 - Histórico genérico de status, auditoria genérica, rate limit, CI/CD avançado e correção global do lint permanecem fora desta entrega.
 
+### Release Operacional 1B — Comissões e extrato do profissional
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline de partida:** `e9d7041b63d5bc23696643f719c21cd5ccfaf99b`
+**Branch:** `feat/release-1b-commissions`
+**Commit da etapa:** `feat: add commission management and barber statements`
+
+#### Itens concluídos nesta etapa
+
+- [x] Modelos `CommissionConfig`, `CommissionEntry`, `CommissionPeriod` e `CommissionAdjustment`
+- [x] Migration `20260617160000_release_1b_commissions`
+- [x] Hierarquia de configuração: profissional+serviço, profissional+categoria, profissional padrão, serviço geral, categoria geral e padrão da barbearia
+- [x] Snapshot da regra aplicada em cada comissão gerada
+- [x] Geração idempotente por item de serviço concluído com profissional executor
+- [x] Exclusão de produtos, descontos, acréscimos, itens cancelados, itens sem profissional e valores zerados
+- [x] Liberação proporcional ao valor recebido líquido da comanda
+- [x] Estorno com reversão proporcional e preservação do histórico
+- [x] Períodos por `barbershopId + memberId + competence` com estados `OPEN`, `CLOSED` e `PAID`
+- [x] Rotas administrativas de configuração, consulta, fechamento e pagamento
+- [x] Extrato do profissional em `/member/comissoes`, filtrado pelo próprio `memberId`
+- [x] Telas `/admin/comissoes`, `/admin/comissoes/configuracoes` e `/admin/comissoes/periodos`
+
+#### Evidências da Release 1B
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm ci` | 0 | aprovado; Prisma Client gerado via `postinstall`; 7 vulnerabilidades moderadas já existentes |
+| `npx prisma validate` | 0 | schema válido |
+| `npx prisma generate` | 0 | Prisma Client gerado |
+| `npx prisma migrate deploy` com `DATABASE_URL=postgresql://match_barber_test_user:***@localhost:55439/match_barber_test` | 0 | migrations da base, Fase 0B, Release 1A e Release 1B aplicadas no banco isolado |
+| `npx vitest run src/__tests__/commissions.integration.test.ts --pool forks --fileParallelism false` | 0 | 1 arquivo; 5 testes aprovados |
+| `npx vitest run src/__tests__/booking-concurrency.integration.test.ts --pool forks --fileParallelism false` | 0 | 1 arquivo; 4 testes aprovados |
+| `npm run test:run` com `TEST_DATABASE_URL` | 0 | 12 arquivos aprovados; 1 skipped; 87 testes aprovados; 2 `todo` |
+| `npm run typecheck` | 0 | aprovado |
+| `npm run build` | 0 | aprovado |
+| `npm run lint` | 1 | baseline mantido: 47 erros e 15 warnings; sem enfraquecimento de `eslint.config.mjs` |
+
+#### Rollback da Release 1B
+
+- Reverter o commit `feat: add commission management and barber statements`.
+- Remover a migration `20260617160000_release_1b_commissions`.
+- Em ambiente onde a migration já tenha sido aplicada sem dados reais, remover tabelas `commission_adjustments`, `commission_periods`, `commission_entries` e `commission_configs`, seguidas dos enums `CommissionAdjustmentType`, `CommissionPeriodStatus`, `CommissionEntryStatus` e `CommissionConfigType`.
+- Em ambiente com dados reais, executar rollback operacional preservando export/backup dos lançamentos de comissão antes de remover estruturas.
+
+#### Riscos e melhorias futuras
+
+- Gorjeta ficou como melhoria futura; a Release 1A não possui modelagem de gorjeta coerente no pagamento atual.
+- Períodos fechados não são recalculados silenciosamente; ajustes após pagamento ficam visíveis como ajuste negativo.
+- Lint global permanece com dívida preexistente fora do escopo.
+- Plano Clube, fidelidade, lista de espera, lembretes, relatórios avançados, produção e deploy beta permanecem fora desta entrega.
+
+**Próximo marco:** RELEASE CANDIDATE OPERACIONAL — QA VISUAL, INTEGRAÇÃO E DEPLOY BETA
+
 ### Escopo incluído
 
 - [ ] CRUD completo de `Comanda`

@@ -20,6 +20,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 const navItems = [
   { label: "Minha Agenda", href: "/member/agenda", icon: "📅" },
+  { label: "Comissoes", href: "/member/comissoes", icon: "R$" },
   { label: "Meu Perfil", href: "/member/perfil", icon: "👤" },
 ];
 

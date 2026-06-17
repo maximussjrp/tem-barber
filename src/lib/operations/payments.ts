@@ -1,4 +1,5 @@
 import { ComandaStatus, PaymentMethod, Prisma, StockMovementType } from "@prisma/client";
+import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "./comandas";
 import { fromCents, positiveCents, toCents } from "./money";
 
@@ -23,7 +24,9 @@ export async function registerPayment(
       },
     });
     if (existing) {
-      return recalculateComandaTotals(tx, input.comandaId);
+      const updated = await recalculateComandaTotals(tx, input.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+      return updated;
     }
   }
 
@@ -83,7 +86,9 @@ export async function registerPayment(
     });
   }
 
-  return recalculateComandaTotals(tx, input.comandaId);
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  return updated;
 }
 
 export async function refundPayment(
@@ -156,6 +161,7 @@ export async function refundPayment(
   }
 
   const updated = await recalculateComandaTotals(tx, original.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, original.comandaId, "Recalculo por estorno");
   if (toCents(updated.remainingTotal) > 0 && updated.status === "CLOSED") {
     return tx.comanda.update({
       where: { id: updated.id },
@@ -215,10 +221,12 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     });
   }
 
-  return tx.comanda.update({
+  const closed = await tx.comanda.update({
     where: { id: comandaId },
     data: { status: "CLOSED", closedAt: new Date(), remainingTotal: 0 },
     include: comandaInclude,
   });
+  await syncCommissionReleaseForComanda(tx, barbershopId, comandaId);
+  return closed;
 }
 

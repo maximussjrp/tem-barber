@@ -76,6 +76,10 @@ model Barbershop {
   products      Product[]
   cashSessions  CashSession[]
   financialEntries FinancialEntry[]
+  commissionConfigs CommissionConfig[]
+  commissionEntries CommissionEntry[]
+  commissionPeriods CommissionPeriod[]
+  commissionAdjustments CommissionAdjustment[]
 
   @@map("barbershops")
 }
@@ -123,6 +127,10 @@ model BarbershopMember {
   timeOffs     TimeOff[]
   appointments Appointment[]
   comandaItems  ComandaItem[]
+  commissionConfigs CommissionConfig[]
+  commissionEntries CommissionEntry[]
+  commissionPeriods CommissionPeriod[]
+  commissionAdjustments CommissionAdjustment[]
 
   @@unique([barbershopId, userId])
   @@map("barbershop_members")
@@ -140,6 +148,7 @@ model Category {
 
   barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   services   Service[]
+  commissionConfigs CommissionConfig[]
 
   @@unique([barbershopId, slug])
   @@map("categories")
@@ -164,6 +173,7 @@ model Service {
   barbers      BarberService[]
   appointments AppointmentService[]
   comandaItems ComandaItem[]
+  commissionConfigs CommissionConfig[]
 
   @@map("services")
 }
@@ -466,6 +476,7 @@ model ComandaItem {
   product   Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
   executor  BarbershopMember? @relation(fields: [executorId], references: [id], onDelete: SetNull)
   stockMovements StockMovement[]
+  commissionEntry CommissionEntry?
 
   @@index([barbershopId, comandaId])
   @@index([executorId, status])
@@ -531,6 +542,7 @@ model Payment {
   refunds      Payment[]        @relation("PaymentRefund")
   cashMovements CashMovement[]
   financialEntries FinancialEntry[]
+  commissionAdjustments CommissionAdjustment[]
 
   @@unique([barbershopId, idempotencyKey])
   @@index([barbershopId, paidAt])
@@ -594,4 +606,135 @@ model FinancialEntry {
   @@index([barbershopId, entryDate])
   @@index([barbershopId, type])
   @@map("financial_entries")
+}
+
+enum CommissionConfigType {
+  PERCENTAGE
+  FIXED_VALUE
+}
+
+enum CommissionEntryStatus {
+  GENERATED
+  PARTIALLY_RELEASED
+  RELEASED
+  PAID
+  REVERSED
+}
+
+enum CommissionPeriodStatus {
+  OPEN
+  CLOSED
+  PAID
+}
+
+enum CommissionAdjustmentType {
+  RELEASE
+  REVERSAL
+  PAID_ADJUSTMENT
+}
+
+model CommissionConfig {
+  id           String               @id @default(uuid())
+  barbershopId String               @map("barbershop_id")
+  memberId     String?              @map("member_id")
+  serviceId    String?              @map("service_id")
+  categoryId   String?              @map("category_id")
+  scopeKey     String               @map("scope_key")
+  type         CommissionConfigType
+  value        Decimal              @db.Decimal(10, 2)
+  active       Boolean              @default(true)
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member     BarbershopMember? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  service    Service?          @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  category   Category?         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  entries    CommissionEntry[]
+
+  @@unique([barbershopId, scopeKey])
+  @@index([barbershopId, active])
+  @@index([memberId])
+  @@index([serviceId])
+  @@index([categoryId])
+  @@map("commission_configs")
+}
+
+model CommissionEntry {
+  id                String                @id @default(uuid())
+  barbershopId      String                @map("barbershop_id")
+  comandaItemId     String                @unique @map("comanda_item_id")
+  memberId          String                @map("member_id")
+  configId          String?               @map("config_id")
+  configSnapshot    Json                  @map("config_snapshot")
+  baseAmount        Decimal               @map("base_amount") @db.Decimal(10, 2)
+  generatedAmount   Decimal               @map("generated_amount") @db.Decimal(10, 2)
+  releasedAmount    Decimal               @default(0) @map("released_amount") @db.Decimal(10, 2)
+  paidAmount        Decimal               @default(0) @map("paid_amount") @db.Decimal(10, 2)
+  reversedAmount    Decimal               @default(0) @map("reversed_amount") @db.Decimal(10, 2)
+  competence        String
+  status            CommissionEntryStatus @default(GENERATED)
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  barbershop  Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comandaItem ComandaItem       @relation(fields: [comandaItemId], references: [id], onDelete: Cascade)
+  member      BarbershopMember  @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  config      CommissionConfig? @relation(fields: [configId], references: [id], onDelete: SetNull)
+  adjustments CommissionAdjustment[]
+
+  @@index([barbershopId, competence])
+  @@index([barbershopId, status])
+  @@index([memberId, competence])
+  @@map("commission_entries")
+}
+
+model CommissionPeriod {
+  id              String                 @id @default(uuid())
+  barbershopId    String                 @map("barbershop_id")
+  memberId        String                 @map("member_id")
+  competence      String
+  status          CommissionPeriodStatus @default(OPEN)
+  generatedAmount Decimal                @default(0) @map("generated_amount") @db.Decimal(10, 2)
+  releasedAmount  Decimal                @default(0) @map("released_amount") @db.Decimal(10, 2)
+  paidAmount      Decimal                @default(0) @map("paid_amount") @db.Decimal(10, 2)
+  reversedAmount  Decimal                @default(0) @map("reversed_amount") @db.Decimal(10, 2)
+  balanceAmount   Decimal                @default(0) @map("balance_amount") @db.Decimal(10, 2)
+  closedAt        DateTime?              @map("closed_at")
+  paidAt          DateTime?              @map("paid_at")
+  closedById      String?                @map("closed_by_id")
+  paidById        String?                @map("paid_by_id")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  barbershop Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([barbershopId, memberId, competence])
+  @@index([barbershopId, competence])
+  @@index([barbershopId, status])
+  @@map("commission_periods")
+}
+
+model CommissionAdjustment {
+  id           String                   @id @default(uuid())
+  barbershopId String                   @map("barbershop_id")
+  entryId      String                   @map("entry_id")
+  memberId     String                   @map("member_id")
+  paymentId    String?                  @map("payment_id")
+  type         CommissionAdjustmentType
+  amount       Decimal                  @db.Decimal(10, 2)
+  competence   String
+  description  String
+  createdAt    DateTime                 @default(now()) @map("created_at")
+
+  barbershop Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  entry      CommissionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  payment    Payment?         @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, competence])
+  @@index([memberId, competence])
+  @@index([paymentId])
+  @@map("commission_adjustments")
 }
