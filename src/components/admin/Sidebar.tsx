@@ -65,7 +65,7 @@ const navItems = [
   { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [] },
   { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [] },
   {
-    label: "Comissoes",
+    label: "Comissões",
     href: "/admin/comissoes",
     icon: Icons.dashboard,
     children: [
@@ -105,10 +105,16 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
   const isExact = (href: string) => pathname === href;
 
   // Track open/closed state for each expandable group
+  // Auto-open any group whose route matches the current pathname
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const item of navItems) {
-      if (item.children.length > 0) initial[item.href] = false;
+      if (item.children.length > 0) {
+        // Open if current path starts with this group's href or any child href
+        initial[item.href] =
+          pathname.startsWith(item.href) ||
+          item.children.some((c) => pathname.startsWith(c.href));
+      }
     }
     return initial;
   });

@@ -20,7 +20,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 const navItems = [
   { label: "Minha Agenda", href: "/member/agenda", icon: "📅" },
-  { label: "Comissoes", href: "/member/comissoes", icon: "R$" },
+  { label: "Comissões", href: "/member/comissoes", icon: "R$" },
   { label: "Meu Perfil", href: "/member/perfil", icon: "👤" },
 ];
 
@@ -79,13 +79,15 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
 
       {/* Footer */}
       <div className="px-3 py-4 border-t border-stone-800 space-y-1">
-        <Link
-          href="/admin/dashboard"
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-stone-500 hover:bg-stone-800/60 hover:text-stone-300 transition-colors"
-        >
-          <span>⚙️</span>
-          <span>Painel Admin</span>
-        </Link>
+        {(role === "OWNER" || role === "MANAGER") && (
+          <Link
+            href="/admin/dashboard"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-stone-500 hover:bg-stone-800/60 hover:text-stone-300 transition-colors"
+          >
+            <span>⚙️</span>
+            <span>Painel Admin</span>
+          </Link>
+        )}
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-stone-500 hover:bg-red-950/40 hover:text-red-400 transition-colors"
