@@ -59,7 +59,11 @@ const Icons = {
 const navItems = [
   { label: "Dashboard",     href: "/admin/dashboard",    icon: Icons.dashboard, children: [] },
   { label: "Agendamentos",  href: "/admin/agendamentos", icon: Icons.calendar,  children: [] },
+  { label: "Comandas",      href: "/admin/comandas",     icon: Icons.calendar,  children: [] },
   { label: "Clientes",      href: "/admin/clientes",     icon: Icons.clients,   children: [] },
+  { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [] },
+  { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [] },
+  { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [] },
   {
     label: "Serviços",
     href: "/admin/servicos",
@@ -233,6 +237,7 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
       >
+        {/* eslint-disable-next-line react-hooks/static-components */}
         <SidebarContent />
       </aside>
     </>

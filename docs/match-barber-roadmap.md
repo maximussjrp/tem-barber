@@ -3,7 +3,9 @@
 **Última atualização:** 2026-06-16
 **Versão:** 2.0
 **Status geral:** EM ANDAMENTO
-**Fase atual:** FASE 0
+**Fase atual:** RELEASE OPERACIONAL 1A
+
+**Marco prioritário atual:** RELEASE OPERACIONAL 1 — ATENDIMENTO, COMANDA E RECEBIMENTO
 
 ---
 
@@ -234,7 +236,77 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 
 **Dependências:** Fase 0 completa.
 
-**Pendências e bloqueios:** Nenhum — pode ser planejada durante a Fase 0.
+**Pendências e bloqueios:** Fase 0 segue com pendências futuras registradas; Release Operacional 1A prioriza uso real de atendimento e recebimento.
+
+### Release Operacional 1A — Comanda, recebimento e caixa básico
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline de partida:** `45928618d76ce901d1de9bc376af97676314bb2c`
+**Branch:** `feat/release-1a-command-payments`
+**Commit da etapa:** `feat: add operational commands and payment flow`
+
+#### Itens concluídos nesta etapa
+
+- [x] Modelos operacionais `Comanda`, `ComandaItem`, `Product`, `StockMovement`, `Payment`, `CashSession`, `CashMovement` e `FinancialEntry`
+- [x] Constraint de uma comanda por agendamento e índice parcial de um caixa aberto por tenant
+- [x] Ação `Abrir atendimento` na agenda administrativa, reutilizando comanda existente
+- [x] Comanda sem agendamento para cliente de passagem
+- [x] Itens de serviço, produto, desconto e acréscimo com totais calculados no backend
+- [x] Estados de comanda `OPEN`, `IN_SERVICE`, `PENDING_PAYMENT`, `CLOSED`, `CANCELLED`
+- [x] Pagamentos parciais, múltiplas formas, idempotência por operação e estorno
+- [x] Caixa básico com abertura, fechamento, movimentos e diferença
+- [x] Baixa transacional de estoque ao fechar comanda, sem baixa duplicada
+- [x] Lançamentos financeiros e resumo diário por forma de pagamento
+- [x] Telas administrativas de comandas, detalhe da comanda, produtos, caixa e financeiro
+- [x] Teste de integração do fluxo operacional obrigatório
+
+#### Evidências da Release 1A
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm ci` | 0 | aprovado; Prisma Client gerado via `postinstall`; 7 vulnerabilidades moderadas já existentes |
+| `npx prisma validate` | 0 | schema válido |
+| `npx prisma generate` | 0 | Prisma Client gerado |
+| `npx prisma migrate deploy` com `DATABASE_URL=postgresql://match_barber_test_user:***@localhost:55439/match_barber_test` | 0 | migrations da base, Fase 0B e Release 1A aplicadas no banco isolado |
+| `npm run test:operational` com `TEST_DATABASE_URL` | 0 | 1 arquivo; 3 testes aprovados |
+| `npm run test:run` com `TEST_DATABASE_URL` | 0 | 11 arquivos aprovados; 1 skipped; 82 testes aprovados; 2 `todo` |
+| `npm run typecheck` | 0 | aprovado |
+| `npm run build` | 0 | aprovado |
+| `npx eslint` dirigido nos arquivos alterados da Release 1A | 0 | aprovado |
+| `npm run lint` | 1 | reprovado por dívida preexistente fora do escopo da Release 1A; 47 erros e 15 warnings |
+
+#### Fluxo de aceite validado
+
+- [x] Criar/selecionar cliente
+- [x] Criar agendamento com corte
+- [x] Abrir comanda pela agenda
+- [x] Iniciar atendimento
+- [x] Adicionar barba
+- [x] Adicionar produto
+- [x] Associar profissional executor
+- [x] Concluir itens
+- [x] Aplicar desconto autorizado
+- [x] Registrar pagamento em dinheiro
+- [x] Registrar restante via Pix
+- [x] Fechar comanda
+- [x] Confirmar baixa de produto
+- [x] Confirmar lançamento financeiro
+- [x] Confirmar valores no resumo diário
+- [x] Confirmar vínculo entre agendamento e comanda
+- [x] Confirmar bloqueio de dados de outro tenant
+
+#### Rollback da Release 1A
+
+- Reverter o commit `feat: add operational commands and payment flow`.
+- Remover a migration `20260617120000_release_1a_operational_commands`.
+- Em ambiente onde a migration já tenha sido aplicada, executar rollback operacional validado removendo tabelas `financial_entries`, `cash_movements`, `cash_sessions`, `command_payments`, `stock_movements`, `comanda_items`, `products` e `comandas`, além dos enums criados para a Release 1A. A tabela legada `payments` não é removida por esta entrega.
+
+#### Melhorias futuras mantidas
+
+- Comissão e extrato do profissional na Release Operacional 1B.
+- Fidelidade, Plano Clube, fornecedores, compras, estoque avançado, conciliação bancária, gateway, fiscal e relatórios avançados.
+- Histórico genérico de status, auditoria genérica, rate limit, CI/CD avançado e correção global do lint permanecem fora desta entrega.
 
 ### Escopo incluído
 

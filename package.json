@@ -10,8 +10,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "vitest run --pool forks --fileParallelism false",
     "test:integration": "vitest run src/__tests__/booking-concurrency.integration.test.ts --pool forks --fileParallelism false",
+    "test:operational": "vitest run src/__tests__/operational-flow.integration.test.ts --pool forks --fileParallelism false",
     "test:watch": "vitest"
   },
   "dependencies": {

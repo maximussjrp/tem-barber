@@ -195,8 +195,8 @@ function AppointmentModal({
       }
       if (!res.ok) throw new Error((await res.json()).error ?? "Erro ao salvar.");
       onSaved(await res.json());
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erro ao salvar.");
     } finally {
       setSaving(false);
     }
@@ -301,8 +301,8 @@ function CancelModal({
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Erro.");
       onCancelled(await res.json());
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erro ao cancelar.");
     } finally {
       setSaving(false);
     }
@@ -340,11 +340,13 @@ function AppointmentBlock({
   onEdit,
   onCancel,
   onStatusChange,
+  onOpenComanda,
 }: {
   appointment: Appointment;
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
+  onOpenComanda: (a: Appointment) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
@@ -442,6 +444,9 @@ function AppointmentBlock({
                 </button>
               )}
               <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => { setOpen(false); onOpenComanda(appointment); }} className="col-span-2 text-xs font-bold px-2 py-1.5 rounded-xl bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/20 transition-colors">
+                  Abrir atendimento
+                </button>
                 <button onClick={() => { setOpen(false); onEdit(appointment); }} className="text-xs font-bold px-2 py-1.5 rounded-xl bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors">
                   ✏️ Editar
                 </button>
@@ -469,6 +474,7 @@ function CalendarGrid({
   onEdit,
   onCancel,
   onStatusChange,
+  onOpenComanda,
   currentDate,
 }: {
   appointments: Appointment[];
@@ -477,6 +483,7 @@ function CalendarGrid({
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
+  onOpenComanda: (a: Appointment) => void;
   currentDate: string;
 }) {
   const hours: number[] = [];
@@ -562,6 +569,7 @@ function CalendarGrid({
                     onEdit={onEdit}
                     onCancel={onCancel}
                     onStatusChange={onStatusChange}
+                    onOpenComanda={onOpenComanda}
                   />
                 ))}
               </div>
@@ -612,6 +620,7 @@ function AgendamentosContent() {
   }, [filterMember]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData(currentDate);
   }, [currentDate, fetchData]);
 
@@ -635,6 +644,20 @@ function AgendamentosContent() {
 
   const handleStatusChange = (id: string, status: AppStatus) => {
     setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
+  };
+
+  const handleOpenComanda = async (appointment: Appointment) => {
+    const res = await fetch("/api/admin/comandas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appointmentId: appointment.id }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      router.push(`/admin/comandas/${data.id}`);
+    } else {
+      alert(data.message ?? data.error ?? "Erro ao abrir atendimento.");
+    }
   };
 
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
@@ -751,6 +774,7 @@ function AgendamentosContent() {
               onEdit={(a) => setEditTarget(a)}
               onCancel={(a) => setCancelTarget(a)}
               onStatusChange={handleStatusChange}
+              onOpenComanda={handleOpenComanda}
               currentDate={currentDate}
             />
           )}

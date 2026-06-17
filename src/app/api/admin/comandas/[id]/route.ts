@@ -1,0 +1,82 @@
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { ComandaStatus } from "@prisma/client";
+import { closeComanda } from "@/lib/operations/payments";
+import { comandaInclude, OperationalError } from "@/lib/operations/comandas";
+import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import { operationErrorResponse } from "@/lib/operations/responses";
+
+const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
+  OPEN: ["IN_SERVICE", "CANCELLED"],
+  IN_SERVICE: ["PENDING_PAYMENT", "CANCELLED"],
+  PENDING_PAYMENT: ["CLOSED", "CANCELLED"],
+  CLOSED: [],
+  CANCELLED: [],
+};
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { error, data } = await requireOperationalSession();
+  if (error) return error;
+  const { id } = await params;
+
+  const comanda = await prisma.comanda.findFirst({
+    where: { id, barbershopId: data!.barbershopId },
+    include: comandaInclude,
+  });
+  if (!comanda) return NextResponse.json({ error: "Comanda nao encontrada." }, { status: 404 });
+  if (data!.role === "BARBER" && !comanda.items.some((item) => item.executorId === data!.memberId)) {
+    return forbidden();
+  }
+  return NextResponse.json(comanda);
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { error, data } = await requireOperationalSession();
+  if (error) return error;
+  if (!canManageComandas(data!.role)) return forbidden();
+  const { id } = await params;
+
+  let body: { status?: ComandaStatus };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Body invalido." }, { status: 400 });
+  }
+
+  if (!body.status) return NextResponse.json({ error: "status obrigatorio." }, { status: 400 });
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const comanda = await tx.comanda.findFirst({
+        where: { id, barbershopId: data!.barbershopId },
+      });
+      if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+      if (!ALLOWED[comanda.status].includes(body.status!)) {
+        throw new OperationalError("INVALID_TRANSITION", "Transicao de comanda invalida.", 422);
+      }
+      if (body.status === "CLOSED") {
+        return closeComanda(tx, data!.barbershopId, id);
+      }
+      return tx.comanda.update({
+        where: { id },
+        data: {
+          status: body.status,
+          ...(body.status === "IN_SERVICE" && { startedAt: new Date() }),
+          ...(body.status === "CANCELLED" && { cancelledAt: new Date() }),
+        },
+        include: comandaInclude,
+      });
+    });
+
+    return NextResponse.json(result);
+  } catch (err) {
+    return operationErrorResponse(err);
+  }
+}
+
