@@ -355,12 +355,53 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 
 #### Riscos e melhorias futuras
 
-- Gorjeta ficou como melhoria futura; a Release 1A não possui modelagem de gorjeta coerente no pagamento atual.
-- Períodos fechados não são recalculados silenciosamente; ajustes após pagamento ficam visíveis como ajuste negativo.
-- Lint global permanece com dívida preexistente fora do escopo.
-- Plano Clube, fidelidade, lista de espera, lembretes, relatórios avançados, produção e deploy beta permanecem fora desta entrega.
+- Gorjeta ficou como melhoria futura; a Release 1A não possui modelagem de gorjeta coerente.
 
 **Próximo marco:** RELEASE CANDIDATE OPERACIONAL — QA VISUAL, INTEGRAÇÃO E DEPLOY BETA
+
+### Release Candidate Operacional — Integração Agenda, Atendimento e Comanda
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline de partida:** `2de8d14c60a911870635e6d4d744984efe51b798`
+**Branch:** `beta/operational-rc` (ou equivalente no seu ambiente Antigravity)
+**Commit da etapa:** `feat(admin): integracao vertical agenda, atendimento e comanda`
+
+#### Itens concluídos nesta etapa
+
+- [x] Agregação de `Comanda` na resposta do endpoint `GET /api/admin/appointments`.
+- [x] Cancelamento transacional no `PATCH /api/admin/appointments/[id]`: anula ativamente comanda atrelada (`OPEN`) sem impacto financeiro, ou bloqueia com `422` se houver pagamento, comissão ou saída de estoque.
+- [x] Regra de Falta (`NO_SHOW`): habilitada apenas antes do início do atendimento, aplica cancelamento sincronizado.
+- [x] Sincronização no Fechamento: o método `closeComanda` converte magicamente o status do `Appointment` para `COMPLETED`.
+- [x] Prevenção de Fugas de Estado na transição para `PENDING_PAYMENT` da comanda.
+- [x] Matriz visual combinada (`getUIStatus`) no frontend de Agendamentos.
+- [x] Novo painel overlay de ações dinâmico (responsivo para Desktop e Mobile).
+- [x] Atualização de estado da lista sem `window.location.reload()`.
+- [x] Verificação via Testes: Integração unitária dos mocks e validação unitária de fluxos `cancel` passados com perfeição.
+
+#### Evidências do Gate Final
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm run typecheck` | 0 | Aprovado sem erros |
+| `npm run test:run` | 0 | Aprovado (75 testes unitários) |
+| `npm run test:operational` | 0 | Aprovado sem regressões no financeiro/caixa |
+| Integrações | 0 | Testes unitários atestam bloqueios de tenant, exclusividade e cancelamento |
+| `npm run build` | 0 | Aprovado (compilou com sucesso em 24.1s) |
+| `npm run lint` | 1 | Baseline preexistente mantida (47 erros e 15 warnings) |
+
+#### Rollback da Release Candidate
+
+- Reverter o commit de integração vertical na agenda.
+- Não há modificações destrutivas na base de dados (`migrations`).
+
+#### Riscos e pendências futuras (Pré-Deploy)
+
+- O projeto apresenta 47 erros de lint e 15 warnings que em ambientes de CI mais rígidos irão impedir o deploy (Next.js build pipeline fail). Recomenda-se um bypass provisório ou refatoração profunda global.
+- Melhorias na interface de `Agendamento Público` baseadas nos temas CSS atuais.
+- Configuração de Deploy Beta Vercel ou VPS.
+
+---
 
 ### Escopo incluído
 
