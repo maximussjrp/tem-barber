@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
+import { AppointmentConflictError } from "@/lib/appointments/errors";
+import {
+  calculateAppointmentTotals,
+  mapAppointmentServiceSnapshots,
+} from "@/lib/appointments/calculate-appointment";
+import { rescheduleAppointmentWithScheduleLock } from "@/lib/appointments/reschedule-appointment";
 
 const VALID_STATUSES = ["PENDING", "CONFIRMED", "COMPLETED", "NO_SHOW", "CANCELLED"] as const;
 type ValidStatus = (typeof VALID_STATUSES)[number];
@@ -93,7 +100,7 @@ export async function PUT(
 
   let totalPrice = Number(existing.totalPrice);
   let durationMin = existing.durationMin;
-  let serviceCreateData: { serviceId: string; priceApplied: any }[] | undefined;
+  let serviceCreateData: { serviceId: string; priceApplied: string | number }[] | undefined;
 
   if (serviceIds && serviceIds.length > 0) {
     const services = await prisma.service.findMany({
@@ -105,32 +112,44 @@ export async function PUT(
         { status: 400 }
       );
     }
-    totalPrice = services.reduce((sum, s) => sum + Number(s.price), 0);
-    durationMin = services.reduce((sum, s) => sum + s.durationMin, 0);
-    serviceCreateData = services.map((s) => ({ serviceId: s.id, priceApplied: s.price }));
+    const totals = calculateAppointmentTotals(services);
+    totalPrice = totals.totalPrice;
+    durationMin = totals.durationMin;
+    serviceCreateData = mapAppointmentServiceSnapshots(services);
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    if (serviceCreateData) {
-      await tx.appointmentService.deleteMany({ where: { appointmentId: id } });
-      await tx.appointmentService.createMany({ data: serviceCreateData.map((s) => ({ ...s, appointmentId: id })) });
+  const targetMemberId = memberId ?? existing.memberId;
+  const targetDateTime = dateTime ? new Date(dateTime) : existing.dateTime;
+
+  if (Number.isNaN(targetDateTime.getTime())) {
+    return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
+  }
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(
+      (tx) =>
+        rescheduleAppointmentWithScheduleLock(tx, {
+          id,
+          barbershopId,
+          memberId: targetMemberId,
+          dateTime: targetDateTime,
+          notes,
+          totalPrice,
+          durationMin,
+          serviceCreateData,
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+  } catch (error) {
+    if (error instanceof AppointmentConflictError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message },
+        { status: error.status }
+      );
     }
-    return tx.appointment.update({
-      where: { id },
-      data: {
-        ...(memberId && { memberId }),
-        ...(dateTime && { dateTime: new Date(dateTime) }),
-        ...(notes !== undefined && { notes }),
-        totalPrice,
-        durationMin,
-      },
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
-        services: { include: { service: { select: { name: true, durationMin: true } } } },
-      },
-    });
-  });
+    throw error;
+  }
 
   return NextResponse.json(updated);
 }

@@ -1,8 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma, AppointmentStatus } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
+import { AppointmentConflictError } from "@/lib/appointments/errors";
+import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
+import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
 
-// GET /api/admin/appointments?date=YYYY-MM-DD&memberId=...&status=...&page=1
+interface AdminAppointmentBody {
+  memberId?: string;
+  customerId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  serviceIds?: string[];
+  dateTime?: string;
+  notes?: string;
+}
+
+function conflictResponse(error: AppointmentConflictError) {
+  return NextResponse.json(
+    { error: error.code, message: error.message },
+    { status: error.status }
+  );
+}
+
+function isRetryableTransactionError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+
+  return (
+    error.code === "P2034" ||
+    error.message.includes("could not serialize access") ||
+    error.message.includes("write conflict") ||
+    error.message.includes("deadlock")
+  );
+}
+
+async function runSerializableTransaction<T>(
+  callback: (tx: Prisma.TransactionClient) => Promise<T>
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await prisma.$transaction(callback, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (!isRetryableTransactionError(error) || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+
+  throw new AppointmentConflictError("A reserva ainda esta sendo processada. Tente novamente.");
+}
+
 export async function GET(request: NextRequest) {
   const { error, data } = await getAdminSession();
   if (error) return error;
@@ -19,7 +69,6 @@ export async function GET(request: NextRequest) {
   }
   const barbershopId = data!.barbershopId;
 
-  // Date range — default today
   let startOfDay: Date;
   let endOfDay: Date;
   if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -32,13 +81,19 @@ export async function GET(request: NextRequest) {
     endOfDay = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999));
   }
 
-  const where: any = {
+  const where: Prisma.AppointmentWhereInput = {
     barbershopId,
     dateTime: { gte: startOfDay, lte: endOfDay },
   };
 
   if (memberIdFilter) where.memberId = memberIdFilter;
-  if (statusFilter && statusFilter !== "ALL") where.status = statusFilter;
+  if (
+    statusFilter &&
+    statusFilter !== "ALL" &&
+    Object.values(AppointmentStatus).includes(statusFilter as AppointmentStatus)
+  ) {
+    where.status = statusFilter as AppointmentStatus;
+  }
 
   const [appointments, total] = await Promise.all([
     prisma.appointment.findMany({
@@ -59,7 +114,6 @@ export async function GET(request: NextRequest) {
     prisma.appointment.count({ where }),
   ]);
 
-  // Also return team list for filter dropdown
   const members = await prisma.barbershopMember.findMany({
     where: { barbershopId, isActive: true },
     include: { user: { select: { name: true } } },
@@ -69,32 +123,22 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ appointments, total, page, pageSize, members });
 }
 
-// POST /api/admin/appointments — create appointment manually
 export async function POST(request: NextRequest) {
   const { error, data } = await getAdminSession();
   if (error) return error;
 
-  let body: {
-    memberId?: string;
-    customerId?: string;
-    customerName?: string;
-    customerPhone?: string;
-    serviceIds?: string[];
-    dateTime?: string;
-    notes?: string;
-  };
-
+  let body: AdminAppointmentBody;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Body inválido." }, { status: 400 });
+    return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
   const { memberId, customerId, customerName, customerPhone, serviceIds, dateTime, notes } = body;
 
   if (!memberId || !serviceIds?.length || !dateTime) {
     return NextResponse.json(
-      { error: "memberId, serviceIds e dateTime são obrigatórios." },
+      { error: "memberId, serviceIds e dateTime sao obrigatorios." },
       { status: 400 }
     );
   }
@@ -103,76 +147,82 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });
   }
   const barbershopId = data!.barbershopId;
-
-  // Validate member belongs to barbershop
-  const member = await prisma.barbershopMember.findFirst({
-    where: { id: memberId, barbershopId, isActive: true },
-  });
-  if (!member) {
-    return NextResponse.json({ error: "Barbeiro não encontrado." }, { status: 404 });
+  const requestedDateTime = new Date(dateTime);
+  if (Number.isNaN(requestedDateTime.getTime())) {
+    return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
   }
 
-  // Resolve or create customer
-  let resolvedCustomerId = customerId;
-  if (!resolvedCustomerId) {
-    if (!customerPhone) {
-      return NextResponse.json(
-        { error: "Informe customerId ou customerPhone." },
-        { status: 400 }
-      );
-    }
-    const cleanPhone = customerPhone.replace(/\D/g, "");
-    let customer = await prisma.user.findFirst({ where: { phone: cleanPhone } });
-    if (!customer) {
-      customer = await prisma.user.create({
-        data: { name: customerName ?? "Cliente", phone: cleanPhone, role: "USER" },
+  try {
+    const result = await runSerializableTransaction(
+      async (tx) => {
+        const member = await tx.barbershopMember.findFirst({
+          where: { id: memberId, barbershopId, isActive: true },
+        });
+      if (!member) {
+        return {
+          error: NextResponse.json({ error: "Barbeiro nao encontrado." }, { status: 404 }),
+        };
+      }
+
+      let resolvedCustomerId = customerId;
+      if (!resolvedCustomerId) {
+        if (!customerPhone) {
+          return {
+            error: NextResponse.json(
+              { error: "Informe customerId ou customerPhone." },
+              { status: 400 }
+            ),
+          };
+        }
+        const cleanPhone = customerPhone.replace(/\D/g, "");
+        let customer = await tx.user.findFirst({ where: { phone: cleanPhone } });
+        if (!customer) {
+          customer = await tx.user.create({
+            data: { name: customerName ?? "Cliente", phone: cleanPhone, role: "USER" },
+          });
+        }
+        resolvedCustomerId = customer.id;
+      }
+
+      const services = await tx.service.findMany({
+        where: {
+          id: { in: serviceIds },
+          barbershopId,
+          isActive: true,
+        },
       });
-    }
-    resolvedCustomerId = customer.id;
-  }
 
-  // Fetch services to compute total price and duration
-  const services = await prisma.service.findMany({
-    where: {
-      id: { in: serviceIds },
-      barbershopId,
-      isActive: true,
-    },
-  });
+      if (services.length !== serviceIds.length) {
+        return {
+          error: NextResponse.json(
+            { error: "Um ou mais servicos nao foram encontrados ou estao inativos." },
+            { status: 400 }
+          ),
+        };
+      }
 
-  if (services.length !== serviceIds.length) {
-    return NextResponse.json(
-      { error: "Um ou mais serviços não foram encontrados ou estão inativos." },
-      { status: 400 }
+      const { totalPrice, durationMin } = calculateAppointmentTotals(services);
+      const appointment = await createAppointmentWithScheduleLock(tx, {
+        barbershopId,
+        memberId,
+        customerId: resolvedCustomerId,
+        dateTime: requestedDateTime,
+        totalPrice,
+        durationMin,
+        services,
+        notes: notes ?? null,
+      });
+
+        return { appointment };
+      }
     );
+
+    if ("error" in result && result.error) return result.error;
+    return NextResponse.json(result.appointment, { status: 201 });
+  } catch (error) {
+    if (error instanceof AppointmentConflictError) {
+      return conflictResponse(error);
+    }
+    throw error;
   }
-
-  const totalPrice = services.reduce((sum, s) => sum + Number(s.price), 0);
-  const durationMin = services.reduce((sum, s) => sum + s.durationMin, 0);
-
-  const appointment = await prisma.appointment.create({
-    data: {
-      barbershopId,
-      memberId,
-      customerId: resolvedCustomerId,
-      dateTime: new Date(dateTime),
-      totalPrice,
-      durationMin,
-      status: "CONFIRMED",
-      notes: notes ?? null,
-      services: {
-        create: services.map((s) => ({
-          serviceId: s.id,
-          priceApplied: s.price,
-        })),
-      },
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
-      services: { include: { service: { select: { name: true, durationMin: true } } } },
-    },
-  });
-
-  return NextResponse.json(appointment, { status: 201 });
 }

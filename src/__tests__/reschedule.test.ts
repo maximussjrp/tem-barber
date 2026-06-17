@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 const txMock = {
   appointmentService: { deleteMany: vi.fn(), createMany: vi.fn() },
   appointment: { update: vi.fn() },
+  $executeRaw: vi.fn(),
+  $queryRaw: vi.fn(),
 };
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
@@ -51,6 +53,8 @@ beforeEach(() => {
   ]);
   txMock.appointmentService.deleteMany.mockResolvedValue({ count: 2 });
   txMock.appointmentService.createMany.mockResolvedValue({ count: 2 });
+  txMock.$executeRaw.mockResolvedValue(0);
+  txMock.$queryRaw.mockResolvedValue([]);
   txMock.appointment.update.mockImplementation(async ({ data }) => ({ id: "appointment-a", ...data }));
   prismaMock.$transaction.mockImplementation((callback: (tx: typeof txMock) => unknown) => callback(txMock));
 });
@@ -144,5 +148,19 @@ describe("reagendamento administrativo", () => {
 
     expect(response.status).toBe(404);
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejeita reagendamento para horario sobreposto", async () => {
+    txMock.$queryRaw.mockResolvedValueOnce([{ id: "appointment-b" }]);
+
+    const response = await PUT(
+      request({ dateTime: "2026-07-22T14:30:00.000Z" }),
+      { params: Promise.resolve({ id: "appointment-a" }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("SLOT_UNAVAILABLE");
+    expect(txMock.appointment.update).not.toHaveBeenCalled();
   });
 });

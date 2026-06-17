@@ -1,0 +1,17 @@
+services:
+  postgres-test:
+    image: postgres:16
+    container_name: match-barber-postgres-test
+    environment:
+      POSTGRES_USER: match_barber_test_user
+      POSTGRES_PASSWORD: match_barber_test_password
+      POSTGRES_DB: match_barber_test
+    ports:
+      - "55439:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U match_barber_test_user -d match_barber_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 12

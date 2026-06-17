@@ -7,6 +7,9 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     user: { findFirst: vi.fn(), create: vi.fn() },
     service: { findMany: vi.fn() },
     appointment: { findMany: vi.fn(), count: vi.fn(), create: vi.fn(), findFirst: vi.fn() },
+    $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
   },
   getAdminSessionMock: vi.fn(),
 }));
@@ -43,6 +46,11 @@ function adminSession(role = "OWNER", barbershopId = "shop-a") {
 beforeEach(() => {
   vi.clearAllMocks();
   getAdminSessionMock.mockResolvedValue(adminSession());
+  prismaMock.$transaction.mockImplementation((callback: (tx: typeof prismaMock) => unknown) =>
+    callback(prismaMock)
+  );
+  prismaMock.$executeRaw.mockResolvedValue(0);
+  prismaMock.$queryRaw.mockResolvedValue([]);
   prismaMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
   prismaMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   prismaMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
@@ -158,6 +166,17 @@ describe("agendamento administrativo", () => {
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
   });
 
+  it("rejeita criacao administrativa com sobreposicao de agenda", async () => {
+    prismaMock.$queryRaw.mockResolvedValueOnce([{ id: "conflict-a" }]);
+
+    const response = await POST(jsonRequest(body));
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("SLOT_UNAVAILABLE");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
   it("nao acessa agendamento de outra barbearia", async () => {
     prismaMock.appointment.findFirst.mockResolvedValue(null);
 
@@ -182,10 +201,11 @@ describe("agendamento administrativo", () => {
     );
   });
 
-  it("registra lacuna: criacao administrativa ainda nao consulta conflito de agenda", async () => {
+  it("consulta conflito de agenda dentro do fluxo transacional", async () => {
     await POST(jsonRequest(body));
 
     expect(prismaMock.appointment.create).toHaveBeenCalled();
-    expect(prismaMock.appointment.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalled();
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
   });
 });

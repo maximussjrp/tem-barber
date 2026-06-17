@@ -1,12 +1,143 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
+import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
+import {
+  AppointmentConflictError,
+  IdempotencyKeyInvalidError,
+  IdempotencyKeyRequiredError,
+  IdempotencyKeyReusedError,
+} from "@/lib/appointments/errors";
+import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
+import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
+import {
+  getIdempotencyExpiresAt,
+  getIdempotencyKeyFromRequest,
+  hashPublicBookingPayload,
+} from "@/lib/appointments/idempotency";
 
-// POST /api/public/barbershop/[slug]/book
-// Body: { memberId, serviceIds, dateTime, customerName?, customerPhone? }
-// If session exists (logged-in client), uses session user.
-// Otherwise requires customerPhone (and optional customerName) to find/create user.
+interface SessionUser {
+  id?: string;
+}
+
+interface PublicBookingBody {
+  memberId?: string;
+  serviceIds?: string[];
+  dateTime?: string;
+  customerName?: string;
+  customerPhone?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
+function jsonError(error: unknown) {
+  if (
+    error instanceof AppointmentConflictError ||
+    error instanceof IdempotencyKeyReusedError ||
+    error instanceof IdempotencyKeyRequiredError ||
+    error instanceof IdempotencyKeyInvalidError
+  ) {
+    return NextResponse.json(
+      { error: error.code, message: error.message },
+      { status: error.status }
+    );
+  }
+
+  throw error;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+function isRetryableTransactionError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+
+  return (
+    error.code === "P2034" ||
+    error.message.includes("could not serialize access") ||
+    error.message.includes("write conflict") ||
+    error.message.includes("deadlock")
+  );
+}
+
+async function runSerializableTransaction<T>(
+  callback: (tx: Prisma.TransactionClient) => Promise<T>
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await prisma.$transaction(callback, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (!isRetryableTransactionError(error) || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+
+  throw new AppointmentConflictError("A reserva ainda esta sendo processada. Tente novamente.");
+}
+
+function buildAppointmentPayload(
+  appointment: Awaited<ReturnType<typeof createAppointmentWithScheduleLock>>,
+  barbershop: { name: string },
+  slug: string
+) {
+  return {
+    appointment: {
+      id: appointment.id,
+      dateTime: appointment.dateTime.toISOString(),
+      status: appointment.status,
+      totalPrice: appointment.totalPrice.toString(),
+      durationMin: appointment.durationMin,
+      barberName: appointment.barber.user.name,
+      customerName: appointment.customer.name,
+      services: appointment.services.map((service) => service.service.name),
+      barbershopName: barbershop.name,
+      barbershopSlug: slug,
+    },
+  };
+}
+
+async function replayIdempotentResult(
+  barbershopId: string,
+  key: string,
+  requestHash: string
+) {
+  const record = await prisma.idempotencyKey.findUnique({
+    where: { barbershopId_key: { barbershopId, key } },
+  });
+
+  if (!record) return null;
+
+  if (record.requestHash !== requestHash || record.expiresAt <= new Date()) {
+    throw new IdempotencyKeyReusedError();
+  }
+
+  if (!record.result) return null;
+
+  return NextResponse.json(record.result, {
+    status: 200,
+    headers: { "Idempotent-Replay": "true" },
+  });
+}
+
+async function replayAfterConcurrentInsert(
+  barbershopId: string,
+  key: string,
+  requestHash: string
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const replay = await replayIdempotentResult(barbershopId, key, requestHash);
+    if (replay) return replay;
+    await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+  }
+
+  throw new AppointmentConflictError("A reserva ainda esta sendo processada. Tente novamente.");
+}
 
 export async function POST(
   request: NextRequest,
@@ -14,168 +145,176 @@ export async function POST(
 ) {
   const { slug } = await params;
 
-  let body: {
-    memberId?: string;
-    serviceIds?: string[];
-    dateTime?: string;
-    customerName?: string;
-    customerPhone?: string;
-    notes?: string;
-  };
-
+  let body: PublicBookingBody;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Body inválido." }, { status: 400 });
+    return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
   const { memberId, serviceIds, dateTime, customerName, customerPhone, notes } = body;
 
   if (!memberId || !serviceIds?.length || !dateTime) {
     return NextResponse.json(
-      { error: "memberId, serviceIds e dateTime são obrigatórios." },
+      { error: "memberId, serviceIds e dateTime sao obrigatorios." },
       { status: 400 }
     );
   }
 
-  // Resolve barbershop
+  const requestedDateTime = new Date(dateTime);
+  if (Number.isNaN(requestedDateTime.getTime())) {
+    return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
+  }
+
   const barbershop = await prisma.barbershop.findUnique({
     where: { slug, active: true },
   });
   if (!barbershop) {
-    return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 404 });
+    return NextResponse.json({ error: "Barbearia nao encontrada." }, { status: 404 });
   }
 
-  // Validate member
-  const member = await prisma.barbershopMember.findFirst({
-    where: { id: memberId, barbershopId: barbershop.id, isActive: true },
-  });
-  if (!member) {
-    return NextResponse.json({ error: "Barbeiro não disponível." }, { status: 404 });
-  }
-
-  // Validate & price services
-  const services = await prisma.service.findMany({
-    where: { id: { in: serviceIds }, barbershopId: barbershop.id, isActive: true },
-  });
-  if (services.length !== serviceIds.length) {
-    return NextResponse.json({ error: "Um ou mais serviços inválidos." }, { status: 400 });
-  }
-
-  const totalPrice = services.reduce((s, svc) => s + Number(svc.price), 0);
-  const durationMin = services.reduce((s, svc) => s + svc.durationMin, 0);
-  const requestedDateTime = new Date(dateTime);
-
-  if (isNaN(requestedDateTime.getTime())) {
-    return NextResponse.json({ error: "dateTime inválido." }, { status: 400 });
-  }
-
-  // Conflict check — same member, overlapping active appointment
-  const slotStart = requestedDateTime;
-  const slotEnd = new Date(requestedDateTime.getTime() + durationMin * 60_000);
-
-  const conflict = await prisma.appointment.findFirst({
-    where: {
+  let idempotencyKey: string;
+  let requestHash: string;
+  try {
+    idempotencyKey = getIdempotencyKeyFromRequest(request, body);
+    requestHash = hashPublicBookingPayload({
       memberId,
-      status: { in: ["PENDING", "CONFIRMED"] },
-      dateTime: { lt: slotEnd },
-      AND: [
-        {
-          dateTime: {
-            gte: new Date(slotStart.getTime() - 24 * 60 * 60_000), // safety window
-          },
-        },
-      ],
-    },
-  });
-
-  // Fine-grain overlap check
-  if (conflict) {
-    const cStart = new Date(conflict.dateTime).getTime();
-    const cEnd = cStart + conflict.durationMin * 60_000;
-    const sStart = slotStart.getTime();
-    const sEnd = slotEnd.getTime();
-    if (sStart < cEnd && sEnd > cStart) {
-      return NextResponse.json(
-        { error: "Horário não disponível. Escolha outro horário." },
-        { status: 409 }
-      );
-    }
+      serviceIds,
+      dateTime,
+      customerName,
+      customerPhone,
+      notes,
+    });
+  } catch (error) {
+    return jsonError(error);
   }
 
-  // Resolve customer
-  let customerId: string;
+  try {
+    const replay = await replayIdempotentResult(barbershop.id, idempotencyKey, requestHash);
+    if (replay) return replay;
+  } catch (error) {
+    return jsonError(error);
+  }
 
   const session = await getServerSession(authOptions);
-  if (session?.user) {
-    customerId = (session.user as any).id as string;
-  } else {
-    if (!customerPhone) {
-      return NextResponse.json(
-        { error: "Informe seu telefone para confirmar o agendamento." },
-        { status: 400 }
-      );
-    }
-    const cleanPhone = customerPhone.replace(/\D/g, "");
-    if (cleanPhone.length < 10) {
-      return NextResponse.json({ error: "Telefone inválido." }, { status: 400 });
-    }
 
-    let customer = await prisma.user.findFirst({ where: { phone: cleanPhone } });
-    if (!customer) {
-      customer = await prisma.user.create({
-        data: {
-          name: customerName?.trim() || "Cliente",
-          phone: cleanPhone,
-          role: "USER",
-        },
+  try {
+    const transactionResult = await runSerializableTransaction(
+      async (tx) => {
+        const existingKey = await tx.idempotencyKey.findUnique({
+          where: { barbershopId_key: { barbershopId: barbershop.id, key: idempotencyKey } },
+        });
+
+      if (existingKey) {
+        if (existingKey.requestHash !== requestHash || existingKey.expiresAt <= new Date()) {
+          throw new IdempotencyKeyReusedError();
+        }
+        if (existingKey.result) {
+          return { replay: true, result: existingKey.result };
+        }
+      } else {
+        await tx.idempotencyKey.create({
+          data: {
+            barbershopId: barbershop.id,
+            key: idempotencyKey,
+            requestHash,
+            expiresAt: getIdempotencyExpiresAt(),
+          },
+        });
+      }
+
+      const member = await tx.barbershopMember.findFirst({
+        where: { id: memberId, barbershopId: barbershop.id, isActive: true },
       });
+      if (!member) {
+        return {
+          error: NextResponse.json({ error: "Barbeiro nao disponivel." }, { status: 404 }),
+        };
+      }
+
+      const services = await tx.service.findMany({
+        where: { id: { in: serviceIds }, barbershopId: barbershop.id, isActive: true },
+      });
+      if (services.length !== serviceIds.length) {
+        return {
+          error: NextResponse.json({ error: "Um ou mais servicos invalidos." }, { status: 400 }),
+        };
+      }
+
+      const { totalPrice, durationMin } = calculateAppointmentTotals(services);
+
+      let customerId: string | undefined;
+      if (session?.user) {
+        customerId = (session.user as SessionUser).id;
+      } else {
+        if (!customerPhone) {
+          return {
+            error: NextResponse.json(
+              { error: "Informe seu telefone para confirmar o agendamento." },
+              { status: 400 }
+            ),
+          };
+        }
+
+        const cleanPhone = customerPhone.replace(/\D/g, "");
+        if (cleanPhone.length < 10) {
+          return {
+            error: NextResponse.json({ error: "Telefone invalido." }, { status: 400 }),
+          };
+        }
+
+        let customer = await tx.user.findFirst({ where: { phone: cleanPhone } });
+        if (!customer) {
+          customer = await tx.user.create({
+            data: {
+              name: customerName?.trim() || "Cliente",
+              phone: cleanPhone,
+              role: "USER",
+            },
+          });
+        }
+        customerId = customer.id;
+      }
+
+      if (!customerId) {
+        return {
+          error: NextResponse.json({ error: "Sessao invalida." }, { status: 401 }),
+        };
+      }
+
+      const appointment = await createAppointmentWithScheduleLock(tx, {
+        barbershopId: barbershop.id,
+        memberId,
+        customerId,
+        dateTime: requestedDateTime,
+        totalPrice,
+        durationMin,
+        services,
+        notes: notes?.trim() || null,
+      });
+
+      const result = buildAppointmentPayload(appointment, barbershop, slug);
+      await tx.idempotencyKey.update({
+        where: { barbershopId_key: { barbershopId: barbershop.id, key: idempotencyKey } },
+        data: { result },
+      });
+
+        return { replay: false, result };
+      }
+    );
+
+    if ("error" in transactionResult && transactionResult.error) {
+      return transactionResult.error;
     }
-    customerId = customer.id;
+
+    return NextResponse.json(transactionResult.result, {
+      status: transactionResult.replay ? 200 : 201,
+      headers: transactionResult.replay ? { "Idempotent-Replay": "true" } : undefined,
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return replayAfterConcurrentInsert(barbershop.id, idempotencyKey, requestHash);
+    }
+    return jsonError(error);
   }
-
-  // Create appointment
-  const appointment = await prisma.appointment.create({
-    data: {
-      barbershopId: barbershop.id,
-      memberId,
-      customerId,
-      dateTime: requestedDateTime,
-      totalPrice,
-      durationMin,
-      status: "CONFIRMED",
-      notes: notes?.trim() || null,
-      services: {
-        create: services.map((s) => ({
-          serviceId: s.id,
-          priceApplied: s.price,
-        })),
-      },
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      barber: { include: { user: { select: { name: true } } } },
-      services: {
-        include: { service: { select: { name: true, durationMin: true } } },
-      },
-    },
-  });
-
-  return NextResponse.json(
-    {
-      appointment: {
-        id: appointment.id,
-        dateTime: appointment.dateTime,
-        status: appointment.status,
-        totalPrice: appointment.totalPrice,
-        durationMin: appointment.durationMin,
-        barberName: appointment.barber.user.name,
-        customerName: appointment.customer.name,
-        services: appointment.services.map((s) => s.service.name),
-        barbershopName: barbershop.name,
-        barbershopSlug: slug,
-      },
-    },
-    { status: 201 }
-  );
 }

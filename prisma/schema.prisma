@@ -70,8 +70,25 @@ model Barbershop {
   categories    Category[]
   appointments  Appointment[]
   subscriptions TenantSubscription[]
+  idempotencyKeys IdempotencyKey[]
 
   @@map("barbershops")
+}
+
+model IdempotencyKey {
+  id           String   @id @default(uuid())
+  barbershopId String   @map("barbershop_id")
+  key          String
+  requestHash  String   @map("request_hash")
+  result       Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  expiresAt    DateTime @map("expires_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@unique([barbershopId, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
 }
 
 // Papéis dentro de uma barbearia específica

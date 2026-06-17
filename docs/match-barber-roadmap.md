@@ -120,22 +120,22 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 ### Escopo incluído
 
 - [ ] Testes de integração para os fluxos existentes (agendamento, disponibilidade, auth)
-- [ ] Implementação de lock transacional serializado na criação de agendamentos (público + admin)
-- [ ] Idempotência no endpoint público de agendamento (`IdempotencyKey`)
+- [x] Implementação de lock transacional serializado na criação de agendamentos (público + admin)
+- [x] Idempotência no endpoint público de agendamento (`IdempotencyKey`)
 - [ ] `AppointmentStatusLog` com log inicial de todos os agendamentos existentes
 - [ ] `AuditLog` configurado com helpers de registro
 - [ ] Índice `@@index([customerId])` na entidade `Appointment`
 - [ ] `NotificationType` convertido de string livre para enum
 - [ ] Role `RECEPTIONIST` adicionado aos enums
 - [ ] Rate limiting por IP e por `customerPhone` nas rotas públicas (Redis)
-- [ ] Conflito-check no endpoint admin de criação de agendamentos
-- [ ] `AppointmentService[]` dentro de `$transaction`
+- [x] Conflito-check no endpoint admin de criação de agendamentos
+- [x] `AppointmentService[]` dentro de `$transaction`
 
 ### Banco de dados
 
 - [ ] Migration: `AppointmentStatusLog`
 - [ ] Migration: `AuditLog`
-- [ ] Migration: `IdempotencyKey`
+- [x] Migration: `IdempotencyKey`
 - [ ] Migration: índice em `Appointment.customerId`
 - [ ] Migration: enum `NotificationType`
 - [ ] Migration: role `RECEPTIONIST`
@@ -151,30 +151,76 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 
 ### Frontend
 
-- [ ] Geração de `idempotencyKey` no formulário de agendamento público
+- [x] Geração de `idempotencyKey` no formulário de agendamento público
 - [ ] Exibir histórico de status no detalhe do agendamento (admin)
 
 ### Testes obrigatórios
 
-- [ ] Teste: dois clientes simultâneos não podem reservar o mesmo horário
-- [ ] Teste: idempotencyKey duplicada retorna resultado anterior sem criar novo agendamento
+- [x] Teste: dois clientes simultâneos não podem reservar o mesmo horário
+- [x] Teste: idempotencyKey duplicada retorna resultado anterior sem criar novo agendamento
 - [ ] Teste: mudança de status cria `AppointmentStatusLog`
-- [ ] Teste: conflito-check no admin bloqueia sobreposição de horários
+- [x] Teste: conflito-check no admin bloqueia sobreposição de horários
 
 ### Critérios de aceite
 
 - [ ] Nenhum agendamento duplicado em testes de concorrência com 10 requisições paralelas
 - [ ] `AppointmentStatusLog` criado em toda mudança de status
-- [ ] `IdempotencyKey` funcional com TTL de 24h
+- [x] `IdempotencyKey` funcional com TTL de 24h
 - [ ] Rate limit retorna HTTP 429 após threshold configurável
-- [ ] Build passing sem erros TypeScript
-- [ ] Testes passando (coverage mínimo: fluxos críticos)
+- [x] Build passing sem erros TypeScript
+- [x] Testes passando (coverage mínimo: fluxos críticos)
 
 ### Evidências a registrar
 
-- [ ] Output dos testes de concorrência
-- [ ] Migration SQL revisada
+- [x] Output dos testes de concorrência
+- [x] Migration SQL revisada
 - [ ] Backfill confirmado (count de `AppointmentStatusLog` = count de `Appointment` após backfill)
+
+### Fase 0B — Concorrência, sobreposição e idempotência da agenda
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline de partida:** `892d85217801129ed5c4ddf430eae3bc1c7ee702`
+**Branch:** `feat/phase-0b-booking-concurrency`
+**Commit da etapa:** `feat: harden appointment booking concurrency`
+
+#### Itens concluídos nesta etapa
+
+- [x] Migration `20260616203000_add_booking_idempotency` criando `idempotency_keys`
+- [x] Lock transacional por `barbershopId:memberId` com advisory lock PostgreSQL
+- [x] Detecção de sobreposição por intervalo real: `date_time < end` e `date_time + duration_min > start`
+- [x] `POST /api/public/barbershop/[slug]/book` com idempotência, transação e resposta estável para `409 SLOT_UNAVAILABLE`
+- [x] `POST /api/admin/appointments` com conflito-check transacional
+- [x] `PUT /api/admin/appointments/[id]` com conflito-check ao reagendar e preservação do estado original em conflito
+- [x] Frontend público envia `Idempotency-Key`, bloqueia tentativa duplicada em andamento e trata conflito de slot
+- [x] Testes unitários e integração PostgreSQL para concorrência, idempotência, adjacência, profissional/tenant diferentes e conflito admin
+
+#### Evidências da Fase 0B
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm ci` | 0 | aprovado; Prisma Client gerado via `postinstall`; 7 vulnerabilidades moderadas já existentes |
+| `npx prisma validate` | 0 | schema válido |
+| `npx prisma generate` | 0 | Prisma Client gerado |
+| `npx prisma migrate deploy` com `DATABASE_URL=postgresql://match_barber_test_user:***@localhost:55439/match_barber_test` | 0 | migrations `20260615125853_init_schema` e `20260616203000_add_booking_idempotency` aplicadas no banco isolado |
+| `npm run test:integration` com `TEST_DATABASE_URL` | 0 | 1 arquivo; 4 testes aprovados |
+| `npm run test:run` com `TEST_DATABASE_URL` | 0 | 10 arquivos aprovados; 1 arquivo skipped; 79 testes aprovados; 2 `todo` |
+| `npm run typecheck` | 0 | aprovado |
+| `npm run build` | 0 | aprovado |
+| `npm run lint` | 1 | reprovado por dívida preexistente fora do escopo da Fase 0B |
+| `npx eslint` dirigido nos arquivos alterados da Fase 0B | 0 | aprovado; 1 warning preexistente de `<img>` na página pública |
+
+#### Dívida e lacunas mantidas
+
+- Lint global permanece reprovado por erros preexistentes fora dos arquivos da Fase 0B.
+- `AppointmentStatusLog`, `AuditLog`, rate limiting, índice `Appointment.customerId`, enum `NotificationType`, role `RECEPTIONIST` e backfill de status permanecem pendentes.
+- O critério de 10 requisições paralelas ainda não foi marcado como concluído; esta etapa cobre concorrência de duas chamadas simultâneas e replay idempotente.
+
+#### Rollback da Fase 0B
+
+- Reverter o commit `feat: harden appointment booking concurrency`.
+- Remover a migration `20260616203000_add_booking_idempotency`.
+- Em ambiente onde a migration já tenha sido aplicada, executar rollback operacional validado para remover a tabela `idempotency_keys` antes de reimplantar a versão anterior.
 
 ### Gate da fase
 

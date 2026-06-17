@@ -36,6 +36,11 @@ interface AvailabilityResult {
   slots: string[];
 }
 
+interface BookingErrorResponse {
+  error?: string;
+  message?: string;
+}
+
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 const STEPS = ["Serviço", "Barbeiro", "Horário", "Dados", "Confirmar"];
@@ -104,6 +109,7 @@ function BookingWizard() {
   // Booking
   const [booking, setBooking] = useState(false);
   const [bookingError, setBookingError] = useState("");
+  const [bookingAttemptKey, setBookingAttemptKey] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState<{
     id: string;
     barberName: string;
@@ -167,9 +173,15 @@ function BookingWizard() {
 
   useEffect(() => {
     if (step === 2 && selectedDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchAvailability(selectedDate);
     }
   }, [step, selectedDate, fetchAvailability]);
+
+  const resetBookingAttempt = () => {
+    setBookingAttemptKey(null);
+    setBookingError("");
+  };
 
   // ─── Step 0: Services ─────────────────────────────────────────────────────
 
@@ -181,6 +193,7 @@ function BookingWizard() {
     setSelectedDate("");
     setSelectedSlot(null);
     setAvailabilityResults([]);
+    resetBookingAttempt();
   };
 
   // ─── Step 1: Barber ───────────────────────────────────────────────────────
@@ -221,9 +234,11 @@ function BookingWizard() {
   // ─── Step 4: Confirm + Book ───────────────────────────────────────────────
 
   const handleBook = async () => {
-    if (!selectedSlot) return;
+    if (!selectedSlot || booking) return;
     setBooking(true);
     setBookingError("");
+    const idempotencyKey = bookingAttemptKey ?? crypto.randomUUID();
+    setBookingAttemptKey(idempotencyKey);
 
     // Build dateTime from selectedDate + selectedSlot.time
     const [year, month, day] = selectedDate.split("-").map(Number);
@@ -233,7 +248,10 @@ function BookingWizard() {
     try {
       const res = await fetch(`/api/public/barbershop/${slug}/book`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
         body: JSON.stringify({
           memberId: selectedSlot.memberId,
           serviceIds: selectedServiceIds,
@@ -243,7 +261,18 @@ function BookingWizard() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Erro ao agendar.");
+      if (!res.ok) {
+        const errorData = data as BookingErrorResponse;
+        if (errorData.error === "SLOT_UNAVAILABLE") {
+          setSelectedSlot(null);
+          setBookingAttemptKey(null);
+          await fetchAvailability(selectedDate);
+        }
+        if (errorData.error === "IDEMPOTENCY_KEY_REUSED") {
+          setBookingAttemptKey(null);
+        }
+        throw new Error(errorData.message ?? errorData.error ?? "Erro ao agendar.");
+      }
       setConfirmed({
         id: data.appointment.id,
         barberName: data.appointment.barberName,
@@ -251,8 +280,8 @@ function BookingWizard() {
         services: data.appointment.services,
         totalPrice: data.appointment.totalPrice,
       });
-    } catch (e: any) {
-      setBookingError(e.message);
+    } catch (error: unknown) {
+      setBookingError(error instanceof Error ? error.message : "Erro ao agendar.");
     } finally {
       setBooking(false);
     }
@@ -434,7 +463,11 @@ function BookingWizard() {
                   name="member"
                   value="any"
                   checked={selectedMemberId === "any"}
-                  onChange={() => setSelectedMemberId("any")}
+                  onChange={() => {
+                    setSelectedMemberId("any");
+                    setSelectedSlot(null);
+                    resetBookingAttempt();
+                  }}
                   title="Qualquer barbeiro disponível"
                   className="accent-amber-500"
                 />
@@ -461,7 +494,11 @@ function BookingWizard() {
                     name="member"
                     value={m.id}
                     checked={selectedMemberId === m.id}
-                    onChange={() => setSelectedMemberId(m.id)}
+                    onChange={() => {
+                      setSelectedMemberId(m.id);
+                      setSelectedSlot(null);
+                      resetBookingAttempt();
+                    }}
                     title={m.name}
                     className="accent-amber-500"
                   />
@@ -503,6 +540,7 @@ function BookingWizard() {
                 onChange={(e) => {
                   setSelectedDate(e.target.value);
                   setSelectedSlot(null);
+                  resetBookingAttempt();
                 }}
                 title="Data do agendamento"
                 className="w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors"
@@ -538,9 +576,10 @@ function BookingWizard() {
                           return (
                             <button
                               key={time}
-                              onClick={() =>
-                                setSelectedSlot({ memberId: result.memberId, time })
-                              }
+                              onClick={() => {
+                                setSelectedSlot({ memberId: result.memberId, time });
+                                resetBookingAttempt();
+                              }}
                               className={`py-3 rounded-xl text-sm font-semibold transition-colors min-h-[48px] ${
                                 isSelected
                                   ? "bg-amber-500 text-stone-950"
