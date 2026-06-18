@@ -78,6 +78,15 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   const surchargeTotal = surcharges.reduce((sum, item) => sum + toCents(item.total), 0);
   const total = Math.max(0, subtotal - discountTotal + surchargeTotal);
   const paidTotal = payments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+  
+  if (total < paidTotal) {
+    throw new OperationalError(
+      "TOTAL_BELOW_PAID",
+      "As alterações reduziriam o total da comanda abaixo do valor já pago.",
+      422
+    );
+  }
+  
   const remainingTotal = Math.max(0, total - paidTotal);
 
   return tx.comanda.update({
@@ -90,7 +99,10 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
       paidTotal: fromCents(paidTotal),
       remainingTotal: fromCents(remainingTotal),
       ...(total > 0 &&
-        remainingTotal > 0 && {
+        remainingTotal > 0 &&
+        comandaId && {
+          // If total > paidTotal and not closed, maybe go to PENDING_PAYMENT or keep IN_SERVICE.
+          // Wait, recalculateComandaTotals used to set PENDING_PAYMENT automatically. Let's keep the exact original behavior but with the block.
           status: ComandaStatus.PENDING_PAYMENT,
         }),
     },
@@ -204,6 +216,26 @@ export async function addProductItem(
   });
   if (!product) throw new OperationalError("INVALID_PRODUCT", "Produto invalido.", 400);
 
+  if (product.trackStock) {
+    const existingItems = await tx.comandaItem.findMany({
+      where: {
+        comandaId: input.comandaId,
+        productId: input.productId,
+        status: { not: "CANCELLED" }
+      }
+    });
+    const qtyInComanda = existingItems.reduce((sum, item) => sum + Number(item.quantity), 0);
+    const requestedQty = input.quantity ?? 1;
+    
+    if (Number(product.currentStock) - qtyInComanda < requestedQty) {
+      throw new OperationalError(
+        "INSUFFICIENT_STOCK",
+        `Estoque insuficiente. Disponível para adicionar: ${Math.max(0, Number(product.currentStock) - qtyInComanda)}`,
+        422
+      );
+    }
+  }
+
   const total = calculateItemTotal({
     quantity: input.quantity ?? 1,
     unitPrice: product.salePrice,
@@ -234,7 +266,7 @@ export async function addAdjustmentItem(
   input: {
     comandaId: string;
     barbershopId: string;
-    type: "DISCOUNT" | "SURCHARGE";
+    type: "SURCHARGE";
     description: string;
     amount: string | number;
   }
@@ -247,12 +279,81 @@ export async function addAdjustmentItem(
       comandaId: input.comandaId,
       barbershopId: input.barbershopId,
       type: input.type,
-      description: input.description.trim() || (input.type === "DISCOUNT" ? "Desconto" : "Acrescimo"),
+      description: input.description.trim() || "Acrescimo",
       quantity: 1,
       unitPrice: fromCents(amount),
       total: fromCents(amount),
     },
   });
+
+  return recalculateComandaTotals(tx, input.comandaId);
+}
+
+export async function upsertDiscountItem(
+  tx: Prisma.TransactionClient,
+  input: {
+    comandaId: string;
+    barbershopId: string;
+    description: string;
+    amount: string | number;
+  }
+) {
+  await assertEditableComanda(tx, input.barbershopId, input.comandaId);
+  const amountCents = Math.round(Number(input.amount) * 100);
+  
+  if (!Number.isFinite(amountCents) || amountCents < 0) {
+    throw new OperationalError("INVALID_DISCOUNT", "O desconto não pode ser negativo.", 400);
+  }
+
+  const reason = input.description.trim().substring(0, 255);
+  
+  if (amountCents > 0 && !reason) {
+    throw new OperationalError("INVALID_DISCOUNT_REASON", "Justificativa obrigatória para desconto maior que zero.", 400);
+  }
+
+  const items = await tx.comandaItem.findMany({
+    where: { comandaId: input.comandaId, status: { not: ComandaItemStatus.CANCELLED } }
+  });
+  
+  const regularItems = items.filter(
+    (item) => item.type === "SERVICE" || item.type === "PRODUCT"
+  );
+  const subtotal = regularItems.reduce((sum, item) => sum + toCents(item.total), 0);
+  
+  if (amountCents > subtotal) {
+    throw new OperationalError("DISCOUNT_EXCEEDS_SUBTOTAL", "O desconto não pode ser maior que o subtotal dos serviços e produtos.", 422);
+  }
+
+  const existingDiscount = items.find(item => item.type === "DISCOUNT");
+
+  if (amountCents === 0) {
+    if (existingDiscount) {
+      await tx.comandaItem.delete({ where: { id: existingDiscount.id } });
+    }
+  } else {
+    if (existingDiscount) {
+      await tx.comandaItem.update({
+        where: { id: existingDiscount.id },
+        data: {
+          description: reason,
+          unitPrice: fromCents(amountCents),
+          total: fromCents(amountCents),
+        }
+      });
+    } else {
+      await tx.comandaItem.create({
+        data: {
+          comandaId: input.comandaId,
+          barbershopId: input.barbershopId,
+          type: ComandaItemType.DISCOUNT,
+          description: reason,
+          quantity: 1,
+          unitPrice: fromCents(amountCents),
+          total: fromCents(amountCents),
+        }
+      });
+    }
+  }
 
   return recalculateComandaTotals(tx, input.comandaId);
 }

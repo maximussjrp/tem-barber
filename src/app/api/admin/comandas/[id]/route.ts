@@ -9,7 +9,7 @@ import { operationErrorResponse } from "@/lib/operations/responses";
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
   OPEN: ["IN_SERVICE", "CANCELLED"],
   IN_SERVICE: ["PENDING_PAYMENT", "CANCELLED"],
-  PENDING_PAYMENT: ["CLOSED", "CANCELLED"],
+  PENDING_PAYMENT: ["IN_SERVICE", "CLOSED", "CANCELLED"],
   CLOSED: [],
   CANCELLED: [],
 };

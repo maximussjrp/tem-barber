@@ -4,6 +4,8 @@ import {
   addAdjustmentItem,
   addProductItem,
   addServiceItem,
+  upsertDiscountItem,
+  OperationalError,
 } from "@/lib/operations/comandas";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
@@ -61,16 +63,24 @@ export async function POST(
           surchargeAmount: body.surchargeAmount,
         });
       }
-      if (body.type === "DISCOUNT" || body.type === "SURCHARGE") {
-        return addAdjustmentItem(tx, {
+      if (body.type === "DISCOUNT") {
+        return upsertDiscountItem(tx, {
           comandaId: id,
           barbershopId: data!.barbershopId,
-          type: body.type,
           description: body.description ?? "",
           amount: body.amount ?? 0,
         });
       }
-      throw new Error("Tipo de item invalido.");
+      if (body.type === "SURCHARGE") {
+        return addAdjustmentItem(tx, {
+          comandaId: id,
+          barbershopId: data!.barbershopId,
+          type: "SURCHARGE",
+          description: body.description ?? "",
+          amount: body.amount ?? 0,
+        });
+      }
+      throw new OperationalError("INVALID_ITEM_TYPE", "Tipo de item invalido.", 400);
     });
 
     return NextResponse.json(result, { status: 201 });

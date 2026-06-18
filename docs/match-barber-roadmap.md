@@ -304,6 +304,7 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 
 #### Melhorias futuras mantidas
 
+- [x] Comanda Operacional 2.0: Interface refatorada em cards/modais, validações de desconto e proteção de fechamento (concluída).
 - Comissão e extrato do profissional na Release Operacional 1B.
 - Fidelidade, Plano Clube, fornecedores, compras, estoque avançado, conciliação bancária, gateway, fiscal e relatórios avançados.
 - Histórico genérico de status, auditoria genérica, rate limit, CI/CD avançado e correção global do lint permanecem fora desta entrega.
