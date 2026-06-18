@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
+import { Sheet } from "@/components/ui/Sheet";
+import { IconButton } from "@/components/ui/IconButton";
 
 interface MemberNavProps {
   barbershopName: string;
@@ -28,30 +30,37 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const SidebarContent = () => (
-    <div className="flex flex-col h-full">
+  const renderSidebarContent = () => (
+    <div className="flex flex-col h-full bg-surface border-r border-border-subtle">
       {/* Brand */}
-      <div className="px-6 py-5 border-b border-stone-800">
-        <p className="font-serif text-lg font-bold text-amber-500 tracking-wide leading-tight">
-          MATCH BARBER
-        </p>
-        <p className="text-xs text-stone-500 mt-0.5 truncate">{barbershopName}</p>
+      <div className="px-5 py-5 border-b border-border-subtle">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-brand-subtle border border-brand/20 flex items-center justify-center shrink-0">
+            <span className="font-serif font-bold text-brand text-sm">MB</span>
+          </div>
+          <div className="min-w-0">
+            <p className="font-serif text-sm font-bold text-brand tracking-wide leading-tight truncate">
+              MATCH BARBER
+            </p>
+            <p className="text-[11px] text-text-muted mt-0.5 truncate">{barbershopName}</p>
+          </div>
+        </div>
       </div>
 
       {/* Member identity */}
-      <div className="px-6 py-4 border-b border-stone-800 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center overflow-hidden shrink-0">
+      <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-surface-raised flex items-center justify-center overflow-hidden shrink-0 border border-border-subtle">
           {avatarUrl ? (
             <img src={avatarUrl} alt={memberName} className="w-full h-full object-cover" />
           ) : (
-            <span className="text-stone-400 text-lg font-bold">
+            <span className="text-text-secondary text-lg font-bold">
               {memberName.charAt(0).toUpperCase()}
             </span>
           )}
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-stone-100 truncate">{memberName}</p>
-          <p className="text-xs text-amber-500/80">{ROLE_LABELS[role] ?? role}</p>
+          <p className="text-sm font-semibold text-text-primary truncate">{memberName}</p>
+          <p className="text-xs text-text-secondary">{ROLE_LABELS[role] ?? role}</p>
         </div>
       </div>
 
@@ -66,8 +75,8 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
               onClick={() => setMobileOpen(false)}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? "bg-amber-500/10 text-amber-400"
-                  : "text-stone-400 hover:bg-stone-800/60 hover:text-stone-200"
+                  ? "bg-brand-subtle text-brand font-bold border border-brand/20"
+                  : "text-text-muted hover:bg-surface-hover hover:text-text-primary"
               }`}
             >
               <span>{item.icon}</span>
@@ -78,11 +87,11 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-4 border-t border-stone-800 space-y-1">
+      <div className="px-3 py-4 border-t border-border-subtle space-y-1">
         {(role === "OWNER" || role === "MANAGER") && (
           <Link
             href="/admin/dashboard"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-stone-500 hover:bg-stone-800/60 hover:text-stone-300 transition-colors"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-text-muted hover:bg-surface-hover hover:text-text-primary transition-colors"
           >
             <span>⚙️</span>
             <span>Painel Admin</span>
@@ -90,7 +99,7 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
         )}
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-stone-500 hover:bg-red-950/40 hover:text-red-400 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-text-muted hover:bg-danger-subtle hover:text-danger transition-colors"
         >
           <span>🚪</span>
           <span>Sair</span>
@@ -102,46 +111,38 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
   return (
     <>
       {/* Mobile top bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-stone-950 border-b border-stone-800">
-        <p className="font-serif text-base font-bold text-amber-500 tracking-wide">
-          MATCH BARBER
-        </p>
-        <button
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-surface border-b border-border-subtle">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-brand-subtle border border-brand/20 flex items-center justify-center shrink-0">
+            <span className="font-serif font-bold text-brand text-xs">MB</span>
+          </div>
+          <p className="font-serif text-sm font-bold text-brand tracking-wide">
+            MATCH BARBER
+          </p>
+        </div>
+        <IconButton
+          variant="ghost"
           onClick={() => setMobileOpen(true)}
-          className="p-2 text-stone-400 hover:text-stone-100 transition-colors"
-          title="Abrir menu"
-        >
-          ☰
-        </button>
+          className="text-text-secondary"
+          icon={
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          }
+          aria-label="Abrir menu"
+        />
       </div>
 
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-50 bg-black/60"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-
-      {/* Mobile drawer */}
-      <aside
-        className={`md:hidden fixed top-0 left-0 h-full w-64 z-50 bg-stone-950 border-r border-stone-800 transition-transform duration-200 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+      {/* Mobile drawer using Sheet component */}
+      <Sheet
+        isOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        side="left"
       >
-        <button
-          onClick={() => setMobileOpen(false)}
-          className="absolute top-4 right-4 text-stone-500 hover:text-stone-200 transition-colors"
-          title="Fechar menu"
-        >
-          ✕
-        </button>
-        <SidebarContent />
-      </aside>
+        {renderSidebarContent()}
+      </Sheet>
 
       {/* Desktop fixed sidebar */}
-      <aside className="hidden md:flex fixed top-0 left-0 h-full w-64 flex-col bg-stone-950 border-r border-stone-800 z-30">
-        <SidebarContent />
+      <aside className="hidden md:flex fixed top-0 left-0 h-full w-64 flex-col bg-surface border-r border-border-subtle z-30">
+        {renderSidebarContent()}
       </aside>
     </>
   );

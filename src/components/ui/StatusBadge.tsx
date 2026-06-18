@@ -1,30 +1,35 @@
-type AppStatus =
-  | "PENDING"
-  | "CONFIRMED"
-  | "IN_PROGRESS"
-  | "COMPLETED"
-  | "CANCELLED"
-  | "NO_SHOW";
+import React from "react";
+import { Badge, BadgeProps } from "./Badge";
 
-const config: Record<AppStatus, { label: string; cls: string; dotCls: string }> = {
-  PENDING:     { label: "Pendente",       cls: "badge badge-pending",   dotCls: "bg-yellow-300" },
-  CONFIRMED:   { label: "Confirmado",     cls: "badge badge-confirmed", dotCls: "bg-green-400" },
-  IN_PROGRESS: { label: "Em atendimento", cls: "badge badge-progress",  dotCls: "bg-blue-400" },
-  COMPLETED:   { label: "Concluído",      cls: "badge badge-completed", dotCls: "bg-gray-400" },
-  CANCELLED:   { label: "Cancelado",      cls: "badge badge-cancelled", dotCls: "bg-red-400" },
-  NO_SHOW:     { label: "Não compareceu", cls: "badge badge-noshow",    dotCls: "bg-violet-400" },
+type StatusKey = 
+  | "PENDING" | "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW"
+  | "OPEN" | "IN_SERVICE" | "PENDING_PAYMENT" | "PAID";
+
+const config: Record<StatusKey, { label: string; variant: BadgeProps["variant"] }> = {
+  PENDING:         { label: "Pendente", variant: "warning" },
+  CONFIRMED:       { label: "Confirmado", variant: "success" },
+  IN_PROGRESS:     { label: "Em atendimento", variant: "info" },
+  COMPLETED:       { label: "Concluído", variant: "neutral" },
+  CANCELLED:       { label: "Cancelado", variant: "danger" },
+  NO_SHOW:         { label: "Não compareceu", variant: "danger" },
+  
+  OPEN:            { label: "Comanda aberta", variant: "neutral" },
+  IN_SERVICE:      { label: "Atendimento iniciado", variant: "info" },
+  PENDING_PAYMENT: { label: "Aguardando pagamento", variant: "warning" },
+  PAID:            { label: "Pago", variant: "success" },
 };
 
-export function StatusBadge({ status }: { status: string }) {
-  const c = config[status as AppStatus] ?? {
+export function StatusBadge({ status, className = "" }: { status: string; className?: string }) {
+  const c = config[status as StatusKey] ?? {
     label: status,
-    cls: "badge badge-pending",
-    dotCls: "bg-gray-400",
+    variant: "neutral",
   };
+  
   return (
-    <span className={c.cls}>
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${c.dotCls}`} />
+    <Badge variant={c.variant} className={className}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
       {c.label}
-    </span>
+    </Badge>
   );
 }
+

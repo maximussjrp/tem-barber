@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
+import { Sheet } from "@/components/ui/Sheet";
+import { IconButton } from "@/components/ui/IconButton";
 
 interface SidebarProps {
   barbershopName: string;
@@ -104,13 +106,10 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
     item.children.some((c) => pathname.startsWith(c.href));
   const isExact = (href: string) => pathname === href;
 
-  // Track open/closed state for each expandable group
-  // Auto-open any group whose route matches the current pathname
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const item of navItems) {
       if (item.children.length > 0) {
-        // Open if current path starts with this group's href or any child href
         initial[item.href] =
           pathname.startsWith(item.href) ||
           item.children.some((c) => pathname.startsWith(c.href));
@@ -122,19 +121,19 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
   const toggleGroup = (href: string) =>
     setOpenGroups((prev) => ({ ...prev, [href]: !prev[href] }));
 
-  const SidebarContent = () => (
-    <div className="flex flex-col h-full bg-[var(--surface-1)] border-r border-[var(--border-subtle)]">
+  const renderSidebarContent = () => (
+    <div className="flex flex-col h-full bg-surface border-r border-border-subtle">
       {/* Brand */}
-      <div className="px-5 py-5 border-b border-[var(--border-subtle)]">
+      <div className="px-5 py-5 border-b border-border-subtle">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center shrink-0">
-            <span className="font-serif font-bold text-[var(--gold)] text-sm">MB</span>
+          <div className="w-9 h-9 rounded-xl bg-brand-subtle border border-brand/20 flex items-center justify-center shrink-0">
+            <span className="font-serif font-bold text-brand text-sm">MB</span>
           </div>
           <div className="min-w-0">
-            <p className="font-serif text-sm font-bold text-[var(--gold)] tracking-wide leading-tight truncate">
+            <p className="font-serif text-sm font-bold text-brand tracking-wide leading-tight truncate">
               MATCH BARBER
             </p>
-            <p className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate">{barbershopName}</p>
+            <p className="text-[11px] text-text-muted mt-0.5 truncate">{barbershopName}</p>
           </div>
         </div>
       </div>
@@ -150,17 +149,17 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
               <>
                 <button
                   onClick={() => toggleGroup(item.href)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                     active
-                      ? "text-[var(--gold)] bg-[var(--gold-surface)]"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--surface-2)]"
+                      ? "text-brand bg-brand-subtle"
+                      : "text-text-muted hover:text-text-primary hover:bg-surface-hover"
                   }`}
                 >
-                  <span className={active ? "text-[var(--gold)]" : "text-[var(--text-muted)]"}>{item.icon}</span>
+                  <span className={active ? "text-brand" : "text-text-muted"}>{item.icon}</span>
                   <span className="flex-1 text-left text-xs uppercase tracking-widest font-bold">
                     {item.label}
                   </span>
-                  <span className={`transition-transform duration-200 ${isOpen ? "rotate-180" : ""} text-[var(--text-muted)]`}>
+                  <span className={`transition-transform duration-200 ${isOpen ? "rotate-180" : ""} text-text-muted`}>
                     {Icons.chevron}
                   </span>
                 </button>
@@ -171,10 +170,10 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
                         key={child.href}
                         href={child.href}
                         onClick={() => setMobileOpen(false)}
-                        className={`flex items-center px-3 py-2 rounded-lg text-xs transition-all font-medium ${
+                        className={`flex items-center px-3 py-2 rounded-lg text-xs transition-colors font-medium ${
                           isExact(child.href)
-                            ? "bg-[var(--gold-surface)] text-[var(--gold)] border border-[var(--gold-border)]"
-                            : "text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]"
+                            ? "bg-brand-subtle text-brand font-bold"
+                            : "text-text-muted hover:bg-surface-hover hover:text-text-secondary"
                         }`}
                       >
                         {child.label}
@@ -187,13 +186,13 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
               <Link
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                   isExact(item.href)
-                    ? "bg-[var(--gold-surface)] text-[var(--gold)] border border-[var(--gold-border)]"
-                    : "text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]"
+                    ? "bg-brand-subtle text-brand font-bold"
+                    : "text-text-muted hover:bg-surface-hover hover:text-text-primary"
                 }`}
               >
-                <span className={isExact(item.href) ? "text-[var(--gold)]" : "text-[var(--text-muted)]"}>{item.icon}</span>
+                <span className={isExact(item.href) ? "text-brand" : "text-text-muted"}>{item.icon}</span>
                 {item.label}
               </Link>
             )}
@@ -203,19 +202,19 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-4 border-t border-[var(--border-subtle)]">
+      <div className="px-3 py-4 border-t border-border-subtle">
         <div className="flex items-center gap-3 px-3 py-2 mb-1">
-          <div className="w-7 h-7 rounded-lg bg-[var(--surface-3)] flex items-center justify-center text-xs font-bold text-[var(--text-secondary)] font-serif shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-surface-raised flex items-center justify-center text-xs font-bold text-text-secondary font-serif shrink-0">
             {userName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-[var(--text-secondary)] truncate">{userName}</p>
-            <p className="text-[10px] text-[var(--text-muted)]">Administrador</p>
+            <p className="text-xs font-semibold text-text-secondary truncate">{userName}</p>
+            <p className="text-[10px] text-text-muted">Administrador</p>
           </div>
         </div>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 transition-all"
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-text-muted hover:text-danger hover:bg-danger-subtle transition-colors"
         >
           {Icons.logout}
           Sair
@@ -226,36 +225,33 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
 
   return (
     <>
-      {/* Mobile toggle */}
-      <button
-        className="fixed top-4 left-4 z-50 md:hidden bg-[var(--surface-2)] border border-[var(--border-medium)] p-2 rounded-xl text-[var(--text-secondary)]"
-        onClick={() => setMobileOpen(!mobileOpen)}
-        aria-label="Abrir menu"
-      >
-        {mobileOpen ? (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        ) : (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        )}
-      </button>
-
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/70 z-40 md:hidden backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)}
+      {/* Mobile toggle (temporary until AppShell is fully integrated) */}
+      <div className="fixed top-4 left-4 z-40 md:hidden">
+        <IconButton
+          variant="secondary"
+          className="shadow-sm border border-border-subtle"
+          onClick={() => setMobileOpen(true)}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          }
+          aria-label="Abrir menu"
         />
-      )}
+      </div>
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed top-0 left-0 h-full w-64 bg-[var(--surface-1)] z-40 transition-transform duration-300 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
+      {/* Mobile Drawer using new Sheet component */}
+      <Sheet
+        isOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        side="left"
       >
-        {/* eslint-disable-next-line react-hooks/static-components */}
-        <SidebarContent />
+        {renderSidebarContent()}
+      </Sheet>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:block fixed top-0 left-0 h-full w-64 bg-surface z-30">
+        {renderSidebarContent()}
       </aside>
     </>
   );
 }
+

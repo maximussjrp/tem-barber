@@ -404,6 +404,40 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 
 ---
 
+### Premium Design System — Fase 1 (Fundação)
+
+**Status:** concluída com ressalva de lint global preexistente.
+
+**Baseline de partida:** `6200fc4ca42ba4c626967187cb3c0f8d39ef8350`
+**Branch:** `feat/premium-design-system-foundation`
+**Commit da etapa:** `feat: match barber premium design system foundation`
+
+#### Itens concluídos nesta etapa
+
+- [x] Configuração oficial dos tokens no `globals.css` baseada em "Luxo Operacional".
+- [x] Criação de `Button`, `IconButton`, `Input`, `Select`, `Card`, `Badge`, `Skeleton`, `EmptyState` em `src/components/ui/`.
+- [x] Nova API de Modais focada em `Dialog`, `Sheet` e `ConfirmDialog` via HTML5 dinâmico sem dependências pesadas externas.
+- [x] Adaptação da Comanda Operacional 2.0 (substituição do `window.confirm` pelo `ConfirmDialog`).
+- [x] Refatoração visual da `AdminSidebar` e da `MemberNav` com painel de Drawer Mobile unificado e tokens limpos.
+- [x] Configuração e criação da documentação inicial de interface `docs/match-barber-premium-design-system.md`.
+- [x] Implementação concluída sem quebra dos testes e lógicas operacionais anteriores.
+
+#### Evidências do Gate Final
+
+| Comando | Exit code | Resultado |
+|---|---:|---|
+| `npm run typecheck` | 0 | Aprovado sem erros |
+| `npm run test:run` | 0 | Aprovado |
+| `npm run build` | 0 | Aprovado |
+
+#### Próximos passos (Fases 2, 3 e 4 do Design System)
+
+- Substituição massiva das telas antigas para as classes e primitives construídos nesta Fundação.
+- Criação e padronização da página `/admin/dashboard` e páginas de tabelas (Financeiro e Comissões).
+- Aplicação das diretrizes na navegação do cliente e página pública de agendamento.
+
+---
+
 ### Escopo incluído
 
 - [ ] CRUD completo de `Comanda`
