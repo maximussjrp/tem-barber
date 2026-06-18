@@ -137,6 +137,8 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
         isOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}
         side="left"
+        title="Menu profissional"
+        description="Acesso aos agendamentos e comissões"
       >
         {renderSidebarContent()}
       </Sheet>

@@ -7,10 +7,11 @@ export interface DialogProps {
   description?: string;
   children: React.ReactNode;
   className?: string;
+  isCritical?: boolean;
 }
 
 export const Dialog = forwardRef<HTMLDialogElement, DialogProps>(
-  ({ isOpen, onClose, title, description, children, className = "" }, ref) => {
+  ({ isOpen, onClose, title, description, children, className = "", isCritical = false }, ref) => {
     const dialogRef = useRef<HTMLDialogElement>(null);
     useImperativeHandle(ref, () => dialogRef.current as HTMLDialogElement);
 
@@ -37,7 +38,9 @@ export const Dialog = forwardRef<HTMLDialogElement, DialogProps>(
 
       const handleCancel = (e: Event) => {
         e.preventDefault();
-        onClose();
+        if (!isCritical) {
+          onClose();
+        }
       };
 
       const handleClick = (e: MouseEvent) => {
@@ -49,7 +52,7 @@ export const Dialog = forwardRef<HTMLDialogElement, DialogProps>(
             e.clientY <= rect.top + rect.height &&
             rect.left <= e.clientX &&
             e.clientX <= rect.left + rect.width;
-          if (!isInDialog) {
+          if (!isInDialog && !isCritical) {
             onClose();
           }
         }
@@ -62,7 +65,7 @@ export const Dialog = forwardRef<HTMLDialogElement, DialogProps>(
         dialogNode.removeEventListener("cancel", handleCancel);
         dialogNode.removeEventListener("click", handleClick);
       };
-    }, [onClose]);
+    }, [onClose, isCritical]);
 
     return (
       <dialog
@@ -85,9 +88,10 @@ export const Dialog = forwardRef<HTMLDialogElement, DialogProps>(
               {description && <p id="dialog-description" className="body-small text-text-secondary">{description}</p>}
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => !isCritical && onClose()}
                 className="absolute top-6 right-6 text-text-muted hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded-sm"
                 aria-label="Fechar diálogo"
+                disabled={isCritical}
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"></line>

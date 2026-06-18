@@ -243,6 +243,8 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
         isOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}
         side="left"
+        title="Menu principal"
+        description="Navegação administrativa"
       >
         {renderSidebarContent()}
       </Sheet>

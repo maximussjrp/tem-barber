@@ -4,13 +4,15 @@ export interface SheetProps {
   isOpen: boolean;
   onClose: () => void;
   children: React.ReactNode;
+  title: string;
+  description?: string;
   side?: "left" | "right";
   className?: string;
-  "aria-label"?: string;
+  isCritical?: boolean;
 }
 
 export const Sheet = forwardRef<HTMLDialogElement, SheetProps>(
-  ({ isOpen, onClose, children, side = "right", className = "", "aria-label": ariaLabel = "Menu lateral" }, ref) => {
+  ({ isOpen, onClose, children, title, description, side = "right", className = "", isCritical = false }, ref) => {
     const dialogRef = useRef<HTMLDialogElement>(null);
     useImperativeHandle(ref, () => dialogRef.current as HTMLDialogElement);
 
@@ -39,11 +41,13 @@ export const Sheet = forwardRef<HTMLDialogElement, SheetProps>(
 
       const handleCancel = (e: Event) => {
         e.preventDefault();
-        onClose();
+        if (!isCritical) {
+          onClose();
+        }
       };
 
       const handleClick = (e: MouseEvent) => {
-        if (e.target === dialogNode) {
+        if (e.target === dialogNode && !isCritical) {
           onClose(); // dialog itself is the backdrop area outside the content div
         }
       };
@@ -55,7 +59,7 @@ export const Sheet = forwardRef<HTMLDialogElement, SheetProps>(
         dialogNode.removeEventListener("cancel", handleCancel);
         dialogNode.removeEventListener("click", handleClick);
       };
-    }, [onClose]);
+    }, [onClose, isCritical]);
 
     // Position classes
     const posClass = side === "right" 
@@ -65,7 +69,8 @@ export const Sheet = forwardRef<HTMLDialogElement, SheetProps>(
     return (
       <dialog
         ref={dialogRef}
-        aria-label={ariaLabel}
+        aria-labelledby="sheet-title"
+        aria-describedby={description ? "sheet-description" : undefined}
         className={`
           backdrop:bg-backdrop backdrop:backdrop-blur-sm
           fixed top-0 bottom-0 m-0 h-full max-h-none
@@ -78,8 +83,27 @@ export const Sheet = forwardRef<HTMLDialogElement, SheetProps>(
           ${className}
         `}
       >
-        <div className="flex flex-col h-full w-full overflow-y-auto overscroll-contain">
-          {children}
+        <div className="flex flex-col h-full w-full overflow-hidden">
+          <div className="flex flex-col gap-1.5 p-6 pb-4 border-b border-border-subtle shrink-0 relative">
+            <h2 id="sheet-title" className="heading-2 text-text-primary pr-8">{title}</h2>
+            {description && <p id="sheet-description" className="body-small text-text-secondary">{description}</p>}
+            <button
+              type="button"
+              onClick={() => !isCritical && onClose()}
+              className="absolute top-6 right-6 text-text-muted hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded-sm"
+              aria-label="Fechar menu"
+              disabled={isCritical}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto overscroll-contain p-6">
+            {children}
+          </div>
         </div>
       </dialog>
     );

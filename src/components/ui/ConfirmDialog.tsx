@@ -26,7 +26,7 @@ export function ConfirmDialog({
   variant = "primary",
 }: ConfirmDialogProps) {
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title={title} description={description} className="max-w-md">
+    <Dialog isOpen={isOpen} onClose={onClose} title={title} description={description} isCritical={isLoading} className="max-w-md">
       <div className="flex justify-end gap-3 pt-4">
         <Button variant="ghost" onClick={onClose} disabled={isLoading}>
           {cancelLabel}
