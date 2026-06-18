@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
@@ -49,9 +50,9 @@ export function MemberNav({ barbershopName, memberName, avatarUrl, role }: Membe
 
       {/* Member identity */}
       <div className="px-5 py-4 border-b border-border-subtle flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-surface-raised flex items-center justify-center overflow-hidden shrink-0 border border-border-subtle">
+        <div className="relative w-10 h-10 rounded-full bg-surface-raised flex items-center justify-center overflow-hidden shrink-0 border border-border-subtle">
           {avatarUrl ? (
-            <img src={avatarUrl} alt={memberName} className="w-full h-full object-cover" />
+            <Image src={avatarUrl} alt={memberName} fill className="object-cover" />
           ) : (
             <span className="text-text-secondary text-lg font-bold">
               {memberName.charAt(0).toUpperCase()}
