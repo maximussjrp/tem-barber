@@ -13,6 +13,7 @@
     "test:run": "vitest run --pool forks --fileParallelism false",
     "test:integration": "vitest run src/__tests__/booking-concurrency.integration.test.ts --pool forks --fileParallelism false",
     "test:operational": "vitest run src/__tests__/operational-flow.integration.test.ts --pool forks --fileParallelism false",
+    "test:ui": "vitest run --config vitest.ui.config.ts --pool forks --fileParallelism false",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -27,6 +28,9 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
@@ -34,6 +38,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "jsdom": "^29.1.1",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
