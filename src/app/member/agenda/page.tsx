@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { todayIsoBR, formatHeaderDate } from "@/lib/time-utils";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -45,24 +46,22 @@ function formatTime(isoString: string) {
 }
 
 function formatDateDisplay(dateStr: string) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const tomorrowDate = new Date(today);
-  tomorrowDate.setDate(today.getDate() + 1);
-  const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
-  const yesterdayDate = new Date(today);
-  yesterdayDate.setDate(today.getDate() - 1);
-  const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getDate()).padStart(2, "0")}`;
+  const todayStr = todayIsoBR();
 
-  const weekday = date.toLocaleDateString("pt-BR", { weekday: "long", timeZone: "UTC" });
-  const formatted = date.toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  const [ty, tm, td] = todayStr.split("-").map(Number);
+  const todayObj = new Date(Date.UTC(ty, tm - 1, td));
+
+  const tomorrowObj = new Date(todayObj);
+  tomorrowObj.setUTCDate(todayObj.getUTCDate() + 1);
+  const tomorrowStr = `${tomorrowObj.getUTCFullYear()}-${String(tomorrowObj.getUTCMonth() + 1).padStart(2, "0")}-${String(tomorrowObj.getUTCDate()).padStart(2, "0")}`;
+
+  const yesterdayObj = new Date(todayObj);
+  yesterdayObj.setUTCDate(todayObj.getUTCDate() - 1);
+  const yesterdayStr = `${yesterdayObj.getUTCFullYear()}-${String(yesterdayObj.getUTCMonth() + 1).padStart(2, "0")}-${String(yesterdayObj.getUTCDate()).padStart(2, "0")}`;
+
+  const header = formatHeaderDate(dateStr);
+  const [weekday, ...rest] = header.split(", ");
+  const formatted = rest.join(", ");
 
   if (dateStr === todayStr) return { label: "Hoje", sub: formatted };
   if (dateStr === tomorrowStr) return { label: "Amanhã", sub: formatted };
@@ -233,6 +232,7 @@ function AgendaContent() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAppointments(currentDate);
   }, [currentDate, fetchAppointments]);
 

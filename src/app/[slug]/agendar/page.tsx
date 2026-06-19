@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
+import { formatHeaderDate } from "@/lib/time-utils";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -311,7 +313,7 @@ function BookingWizard() {
 
           <div className="bg-[var(--surface-1)] border border-[var(--gold-border)] rounded-2xl p-5 text-left space-y-0 divide-y divide-[var(--border-subtle)]">
             {[
-              { label: "Data", value: dt.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", timeZone: "UTC" }) },
+              { label: "Data", value: formatHeaderDate(confirmed.dateTime.split("T")[0]) },
               { label: "Horário", value: dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) },
               { label: "Barbeiro", value: confirmed.barberName },
               { label: "Serviços", value: confirmed.services.join(", ") },
@@ -399,6 +401,17 @@ function BookingWizard() {
         {step === 0 && (
           <div className="space-y-5">
             <h2 className="text-xl font-serif font-bold text-stone-100">Escolha o serviço</h2>
+            {categories.filter((c) => c.services.length > 0).length === 0 && (
+              <div className="py-12 text-center border border-[var(--border-subtle)] rounded-xl bg-[var(--surface-1)]">
+                <div className="w-16 h-16 bg-[var(--surface-3)] rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="text-2xl leading-none">✂️</span>
+                </div>
+                <p className="font-bold text-[var(--text-primary)] mb-1">Nenhum serviço disponível</p>
+                <p className="text-sm text-[var(--text-muted)] max-w-sm mx-auto">
+                  Esta barbearia ainda não possui serviços disponíveis para agendamento online.
+                </p>
+              </div>
+            )}
             {categories.filter((c) => c.services.length > 0).map((cat) => (
               <div key={cat.id}>
                 <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-wider mb-2">
@@ -502,14 +515,8 @@ function BookingWizard() {
                     title={m.name}
                     className="accent-amber-500"
                   />
-                  <div className="w-10 h-10 rounded-full bg-stone-800 overflow-hidden flex items-center justify-center shrink-0">
-                    {m.avatarUrl ? (
-                      <img src={m.avatarUrl} alt={m.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="font-bold text-stone-400">
-                        {m.name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
+                  <div className="w-10 h-10 rounded-full border border-[var(--border-subtle)] overflow-hidden flex items-center justify-center shrink-0 relative">
+                    <Avatar src={m.avatarUrl} alt={m.name} size="md" fallbackText={m.name} />
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-semibold text-stone-200">{m.name}</p>
@@ -658,15 +665,7 @@ function BookingWizard() {
               {[
                 {
                   label: "Data",
-                  value: (() => {
-                    const [y, m, d] = selectedDate.split("-").map(Number);
-                    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("pt-BR", {
-                      weekday: "long",
-                      day: "2-digit",
-                      month: "long",
-                      timeZone: "UTC",
-                    });
-                  })(),
+                  value: formatHeaderDate(selectedDate),
                 },
                 { label: "Horário", value: selectedSlot.time },
                 {

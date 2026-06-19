@@ -1,25 +1,24 @@
-﻿import { requireAdmin } from "@/lib/admin-guard";
+import { requireAdmin } from "@/lib/admin-guard";
 import prisma from "@/lib/prisma";
 import Link from "next/link";
 import BookingLinkShare from "@/components/admin/BookingLinkShare";
 import DashboardCharts from "@/components/admin/DashboardCharts";
+import { nowBR, toBR, startOfDayUTC, endOfDayUTC, formatHeaderDate } from "@/lib/time-utils";
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ——————————————————————————————————————————————————————————————————————————————
 
 function getTodayBR() {
-  const now = new Date();
-  const br = new Date(now.getTime() - 3 * 3600 * 1000);
+  const br = nowBR();
   const str = br.toISOString().slice(0, 10);
   const [y, m, d] = str.split("-").map(Number);
   const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  const startOfDay = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
-  const endOfDay = new Date(Date.UTC(y, m - 1, d, 23, 59, 59));
+  const startOfDay = startOfDayUTC(y, m, d);
+  const endOfDay = endOfDayUTC(y, m, d);
   return { str, dayOfWeek, startOfDay, endOfDay };
 }
 
 function getWeekStartBR() {
-  const now = new Date();
-  const br = new Date(now.getTime() - 3 * 3600 * 1000);
+  const br = nowBR();
   const str = br.toISOString().slice(0, 10);
   const [y, m, d] = str.split("-").map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -43,12 +42,12 @@ function formatTime(minutes: number) {
 }
 
 function formatApptTimeBR(dateTime: Date): string {
-  const br = new Date(dateTime.getTime() - 3 * 3600 * 1000);
+  const br = toBR(dateTime);
   return `${String(br.getUTCHours()).padStart(2, "0")}:${String(br.getUTCMinutes()).padStart(2, "0")}`;
 }
 
 function formatRelativeTimeBR(dateTime: Date, todayStr: string): string {
-  const br = new Date(dateTime.getTime() - 3 * 3600 * 1000);
+  const br = toBR(dateTime);
   const dateStr = br.toISOString().slice(0, 10);
   const hh = String(br.getUTCHours()).padStart(2, "0");
   const mm = String(br.getUTCMinutes()).padStart(2, "0");
@@ -71,7 +70,7 @@ const APPT_STATUS: Record<string, { label: string; dot: string; badge: string }>
     badge: "text-emerald-400 bg-emerald-500/15 border-emerald-500/25",
   },
   COMPLETED: {
-    label: "ConcluÃ­do",
+    label: "Concluído",
     dot: "bg-violet-400",
     badge: "text-violet-400 bg-violet-500/15 border-violet-500/25",
   },
@@ -81,7 +80,7 @@ const APPT_STATUS: Record<string, { label: string; dot: string; badge: string }>
     badge: "text-red-400 bg-red-500/15 border-red-500/25",
   },
   NO_SHOW: {
-    label: "NÃ£o compareceu",
+    label: "Não compareceu",
     dot: "bg-zinc-500",
     badge: "text-zinc-400 bg-zinc-500/15 border-zinc-500/25",
   },
@@ -140,7 +139,7 @@ export default async function DashboardPage() {
   const cancelledPct = totalCount > 0 ? Math.round((cancelledCount / totalCount) * 100) : 0;
 
   // â”€â”€ Weekly revenue by day â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "SÃ¡b", "Dom"];
+  const DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const dailyRevByDay: Record<number, number> = {};
   let totalWeekRevenue = 0;
   for (const a of weeklyAppts) {
@@ -258,17 +257,17 @@ export default async function DashboardPage() {
   // â”€â”€ Checklist â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const checkItems = [
     {
-      label: "Configurar informaÃ§Ãµes da barbearia",
+      label: "Configurar informações da barbearia",
       href: "/admin/configuracoes",
       done: !!(barbershop?.description && barbershop.phone),
     },
     {
-      label: "Definir horÃ¡rios de funcionamento",
+      label: "Definir horários de funcionamento",
       href: "/admin/configuracoes/horarios",
       done: workingHoursCount > 0,
     },
     {
-      label: "Cadastrar serviÃ§os oferecidos",
+      label: "Cadastrar serviços oferecidos",
       href: "/admin/servicos",
       done: servicesCount > 0,
     },
@@ -288,8 +287,8 @@ export default async function DashboardPage() {
   };
 
   // â”€â”€ Current time (BRT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const nowBR = new Date(new Date().getTime() - 3 * 3600 * 1000);
-  const currentTimeBR = `${String(nowBR.getUTCHours()).padStart(2, "0")}:${String(nowBR.getUTCMinutes()).padStart(2, "0")}`;
+  const currentTimeObj = nowBR();
+  const currentTimeBR = `${String(currentTimeObj.getUTCHours()).padStart(2, "0")}:${String(currentTimeObj.getUTCMinutes()).padStart(2, "0")}`;
 
   // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
@@ -302,14 +301,7 @@ export default async function DashboardPage() {
             {barbershop?.name}
           </h1>
           <p className="text-[var(--text-muted)] text-sm mt-1 capitalize">
-            {new Date(
-              Date.UTC(...(todayStr.split("-").map(Number) as [number, number, number]))
-            ).toLocaleDateString("pt-BR", {
-              weekday: "long",
-              day: "2-digit",
-              month: "long",
-              timeZone: "UTC",
-            })}
+            {formatHeaderDate(todayStr)}
           </p>
         </div>
         <Link
@@ -370,7 +362,7 @@ export default async function DashboardPage() {
                 <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
               </svg>
             ),
-            sub: "serviÃ§os concluÃ­dos",
+            sub: "serviços concluídos",
             highlight: true,
           },
         ].map((card) => (
@@ -468,7 +460,7 @@ export default async function DashboardPage() {
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                 </svg>
-                <span>Ãšltima atualizaÃ§Ã£o: {currentTimeBR}</span>
+                <span>Última atualização: {currentTimeBR}</span>
               </div>
               <span className="text-xs text-[var(--text-muted)]">{totalCount} agendamentos hoje</span>
             </div>
@@ -513,7 +505,7 @@ export default async function DashboardPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
-                          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--surface-3)] border border-[var(--border-medium)]" />DisponÃ­vel</span>
+                          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--surface-3)] border border-[var(--border-medium)]" />Disponível</span>
                           <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--gold)]" />Ocupado</span>
                           <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />Bloqueado</span>
                         </div>
@@ -569,7 +561,7 @@ export default async function DashboardPage() {
                       </div>
                       <span className="text-sm text-[var(--text-muted)]">{m.memberName}</span>
                       <span className="text-xs text-[var(--text-muted)]">
-                        {m.onTimeOff ? "Â· folga" : "Â· nÃ£o trabalha hoje"}
+                        {m.onTimeOff ? "· folga" : "· não trabalha hoje"}
                       </span>
                     </div>
                   ))}
@@ -581,7 +573,7 @@ export default async function DashboardPage() {
         {/* â”€â”€ Right column â”€â”€ */}
         <div className="lg:col-span-2 space-y-5">
 
-          {/* VisÃ£o rÃ¡pida do negÃ³cio */}
+          {/* Visão rápida do negócio */}
           <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-2xl p-5">
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
@@ -590,7 +582,7 @@ export default async function DashboardPage() {
                     <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
                   </svg>
                 </div>
-                <h2 className="text-sm font-bold text-[var(--text-primary)]">VisÃ£o rÃ¡pida do negÃ³cio</h2>
+                <h2 className="text-sm font-bold text-[var(--text-primary)]">Visão rápida do negócio</h2>
               </div>
               <span className="text-[11px] text-[var(--text-muted)] bg-[var(--surface-2)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1">
                 Esta semana

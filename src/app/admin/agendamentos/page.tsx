@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -90,15 +90,10 @@ const ROW_HEIGHT = 48; // px per 30-min slot
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Brasil é fixo em UTC-3 desde a abolição do horário de verão em 2019
-const BR_OFFSET_MS = -3 * 3600 * 1000;
-function toBR(date: Date): Date {
-  return new Date(date.getTime() + BR_OFFSET_MS);
-}
+import { toBR, todayIsoBR, formatHeaderDate } from "@/lib/time-utils";
 
 function getTodayStr() {
-  const br = toBR(new Date());
-  return br.toISOString().slice(0, 10);
+  return todayIsoBR();
 }
 
 function shiftDate(dateStr: string, days: number) {
@@ -108,14 +103,7 @@ function shiftDate(dateStr: string, days: number) {
 }
 
 function formatDateFull(dateStr: string) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return formatHeaderDate(dateStr);
 }
 
 function formatTime(iso: string) {
@@ -621,14 +609,14 @@ function CalendarGrid({
       </div>
 
       {/* Member columns */}
-      <div className="flex flex-1 border-l border-[var(--border-subtle)] overflow-x-auto">
+      <div className="flex flex-1 border-l border-[var(--border-subtle)] overflow-x-auto snap-x snap-mandatory hide-scrollbar">
         {visibleMembers.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-[var(--text-muted)] text-sm py-20">
             Nenhum barbeiro encontrado
           </div>
         ) : (
           visibleMembers.map((m) => (
-            <div key={m.id} className="flex-1 min-w-[160px] relative border-r border-[var(--border-subtle)]">
+            <div key={m.id} className="flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] snap-start">
               {/* Grid lines */}
               <div className="absolute inset-0 pointer-events-none">
                 {hours.map((h) => (

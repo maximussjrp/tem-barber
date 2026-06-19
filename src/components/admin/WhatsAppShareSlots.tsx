@@ -36,6 +36,8 @@ function groupConsecutive(slots: number[], step = 30): string {
   return ranges.join(", ");
 }
 
+import { formatHeaderDate } from "@/lib/time-utils";
+
 export default function WhatsAppShareSlots({
   members,
   barbershopName,
@@ -45,13 +47,7 @@ export default function WhatsAppShareSlots({
   barbershopName: string;
   todayStr: string; // YYYY-MM-DD
 }) {
-  const [y, m, d] = todayStr.split("-").map(Number);
-  const dateLabel = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    timeZone: "UTC",
-  });
+  const dateLabel = formatHeaderDate(todayStr);
 
   // Selected slots per member: { memberName -> Set<minutes> }
   const [selected, setSelected] = useState<Record<string, Set<number>>>(() => {
