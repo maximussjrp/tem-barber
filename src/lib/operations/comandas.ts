@@ -1,7 +1,6 @@
 import {
   ComandaItemStatus,
   ComandaItemType,
-  ComandaStatus,
   Prisma,
 } from "@prisma/client";
 import { fromCents, nonNegativeCents, positiveCents, toCents } from "./money";
@@ -51,8 +50,8 @@ export function calculateItemTotal(input: {
   }
 
   const gross = Math.round(quantity * toCents(input.unitPrice));
-  const discount = nonNegativeCents(input.discountAmount, "Desconto");
-  const surcharge = nonNegativeCents(input.surchargeAmount, "Acrescimo");
+  const discount = nonNegativeCents(input.discountAmount ?? 0, "Desconto");
+  const surcharge = nonNegativeCents(input.surchargeAmount ?? 0, "Acrescimo");
   const total = gross - discount + surcharge;
   if (total < 0) {
     throw new OperationalError("NEGATIVE_TOTAL", "Total do item nao pode ser negativo.");
@@ -98,13 +97,6 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
       total: fromCents(total),
       paidTotal: fromCents(paidTotal),
       remainingTotal: fromCents(remainingTotal),
-      ...(total > 0 &&
-        remainingTotal > 0 &&
-        comandaId && {
-          // If total > paidTotal and not closed, maybe go to PENDING_PAYMENT or keep IN_SERVICE.
-          // Wait, recalculateComandaTotals used to set PENDING_PAYMENT automatically. Let's keep the exact original behavior but with the block.
-          status: ComandaStatus.PENDING_PAYMENT,
-        }),
     },
     include: comandaInclude,
   });

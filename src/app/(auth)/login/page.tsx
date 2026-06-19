@@ -87,6 +87,9 @@ function LoginContent() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
+    if (activeTab !== "client") {
+      return;
+    }
     fetch("/api/public/barbershops")
       .then((r) => r.json())
       .then((data) => {
@@ -94,7 +97,7 @@ function LoginContent() {
       })
       .catch(() => setPartners([]))
       .finally(() => setPartnersLoading(false));
-  }, []);
+  }, [activeTab]);
 
   const selectTab = (tab: "client" | "admin") => {
     setErrorMsg(null);
@@ -374,12 +377,13 @@ function LoginContent() {
           </div>
         </div>
 
-        {/* Lado Direito / Inferior - BARBEARIAS PARCEIRAS */}
+        {/* Descoberta de barbearias para clientes */}
+        {activeTab === "client" && (
         <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Barbearias Parceiras</h2>
-              <p className="text-sm text-[var(--text-muted)]">Descubra as melhores perto de você</p>
+              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Encontrar minha barbearia</h2>
+              <p className="text-sm text-[var(--text-muted)]">Barbearias disponiveis para agendamento</p>
             </div>
 
             {!locationPermitted && (
@@ -455,6 +459,7 @@ function LoginContent() {
             </div>
           )}
         </div>
+        )}
 
       </div>
     </div>

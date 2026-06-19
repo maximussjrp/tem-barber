@@ -121,8 +121,7 @@ export async function GET(request: NextRequest) {
     where: {
       barbershopId,
       isActive: true,
-      role: { in: ["BARBER", "MANAGER"] },
-      OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+      services: { some: {} },
     },
     include: { user: { select: { name: true } } },
     orderBy: { user: { name: "asc" } },
@@ -168,8 +167,7 @@ export async function POST(request: NextRequest) {
             id: memberId,
             barbershopId,
             isActive: true,
-            role: { in: ["BARBER", "MANAGER"] },
-            OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+            services: { some: {} },
           },
         });
       if (!member) {

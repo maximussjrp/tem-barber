@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ComandaItemCard } from "@/components/admin/comanda/ComandaItemCard";
 import { PaymentModal } from "@/components/admin/comanda/PaymentModal";
@@ -47,7 +47,6 @@ function brl(value: string | number) {
 
 export default function ComandaDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
   const [comanda, setComanda] = useState<Comanda | null>(null);
   const [services, setServices] = useState<Service[]>([]);
@@ -375,7 +374,8 @@ export default function ComandaDetailPage() {
           )}
           {comanda.status === "PENDING_PAYMENT" && (
             <>
-              <button disabled={busy} onClick={() => setShowPaymentModal(true)} className="col-span-2 py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Receber Pagamento</button>
+              <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "IN_SERVICE" }, "PATCH")} className="py-3 rounded-lg border border-stone-700 text-stone-300 text-sm font-bold disabled:opacity-40">Voltar para edicao</button>
+              <button disabled={busy} onClick={() => setShowPaymentModal(true)} className="py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Receber Pagamento</button>
             </>
           )}
           {!comandaClosed && Number(comanda.remainingTotal) <= 0 && Number(comanda.total) >= 0 && (

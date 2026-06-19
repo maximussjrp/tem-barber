@@ -149,8 +149,7 @@ describe("agendamento administrativo", () => {
         id: "member-a",
         barbershopId: "shop-a",
         isActive: true,
-        role: { in: ["BARBER", "MANAGER"] },
-        OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+        services: { some: {} },
       },
     });
     expect(prismaMock.service.findMany).toHaveBeenCalledWith({
@@ -170,6 +169,27 @@ describe("agendamento administrativo", () => {
 
     expect(response.status).toBe(404);
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("permite owner configurado com servicos como profissional de agenda", async () => {
+    prismaMock.barbershopMember.findFirst.mockResolvedValue({
+      id: "member-a",
+      barbershopId: "shop-a",
+      role: "OWNER",
+      isActive: true,
+    });
+
+    const response = await POST(jsonRequest(body));
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.barbershopMember.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "member-a",
+        barbershopId: "shop-a",
+        isActive: true,
+        services: { some: {} },
+      },
+    });
   });
 
   it("rejeita criacao administrativa com sobreposicao de agenda", async () => {

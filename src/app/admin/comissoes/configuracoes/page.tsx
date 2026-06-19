@@ -23,6 +23,20 @@ const priority = [
   "6. Padrao da barbearia",
 ];
 
+function scopeLabel(config: Config) {
+  const parts = [config.member?.user.name, config.service?.name, config.category?.name].filter(Boolean);
+  return parts.join(" / ") || "Padrao da barbearia";
+}
+
+function scopeTypeLabel(config: Config) {
+  if (config.member && config.service) return "Profissional + servico";
+  if (config.member && config.category) return "Profissional + categoria";
+  if (config.member) return "Profissional padrao";
+  if (config.service) return "Servico geral";
+  if (config.category) return "Categoria geral";
+  return "Padrao da barbearia";
+}
+
 export default function CommissionConfigsPage() {
   const [configs, setConfigs] = useState<Config[]>([]);
   const [members, setMembers] = useState<Option[]>([]);
@@ -134,13 +148,13 @@ export default function CommissionConfigsPage() {
           {configs.map((config) => (
             <div key={config.id} className="rounded-xl border border-stone-800 bg-stone-950 p-4">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-stone-100 font-semibold">{config.scopeKey}</p>
+                <p className="text-stone-100 font-semibold">{scopeLabel(config)}</p>
                 <span className={`text-xs px-2 py-1 rounded-full ${config.active ? "bg-emerald-950 text-emerald-300" : "bg-stone-800 text-stone-400"}`}>
                   {config.active ? "Ativa" : "Inativa"}
                 </span>
               </div>
               <p className="text-sm text-stone-500 mt-1">
-                {[config.member?.user.name, config.service?.name, config.category?.name].filter(Boolean).join(" / ") || "Padrao da barbearia"}
+                {scopeTypeLabel(config)}
               </p>
               <p className="text-amber-300 mt-3 font-bold">{config.type === "PERCENTAGE" ? `${config.value}%` : Number(config.value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
             </div>
