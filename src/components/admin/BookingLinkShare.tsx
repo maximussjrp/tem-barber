@@ -4,11 +4,12 @@ import { useState } from "react";
 
 export default function BookingLinkShare({ slug }: { slug: string }) {
   const [copied, setCopied] = useState(false);
+  const relativeBookingUrl = `/${slug}/agendar`;
 
-  const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-  const bookingUrl = `${baseUrl}/${slug}/agendar`;
+  const getAbsoluteBookingUrl = () => `${window.location.origin}${relativeBookingUrl}`;
 
   const copy = async () => {
+    const bookingUrl = getAbsoluteBookingUrl();
     try {
       await navigator.clipboard.writeText(bookingUrl);
       setCopied(true);
@@ -27,6 +28,7 @@ export default function BookingLinkShare({ slug }: { slug: string }) {
   };
 
   const shareWhatsApp = () => {
+    const bookingUrl = getAbsoluteBookingUrl();
     const scissors = String.fromCodePoint(0x2702, 0xFE0F);
     const calendar = String.fromCodePoint(0x1F4C5);
     const link = String.fromCodePoint(0x1F517);
@@ -51,7 +53,7 @@ export default function BookingLinkShare({ slug }: { slug: string }) {
       {/* URL + copy */}
       <div className="flex items-center gap-2 bg-[var(--surface-2)] border border-[var(--border-subtle)] rounded-xl px-3 py-2">
         <p className="flex-1 text-xs text-[var(--text-muted)] font-mono truncate min-w-0">
-          {bookingUrl || `/${slug}/agendar`}
+          {relativeBookingUrl}
         </p>
         <button
           onClick={copy}
