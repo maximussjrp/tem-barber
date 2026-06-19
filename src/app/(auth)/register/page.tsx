@@ -88,8 +88,8 @@ export default function RegisterPage() {
       setTimeout(() => {
         router.push("/login?registered=true");
       }, 2000);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Erro de conexão com o servidor.");
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Erro de conexão com o servidor.");
     } finally {
       setLoading(false);
     }
@@ -112,7 +112,7 @@ export default function RegisterPage() {
             CADASTRAR MEU NEGÓCIO
           </h1>
           <p className="text-sm text-stone-400 mt-2">
-            Cadastre sua barbearia no Match Barber e gerencie com facilidade
+            Cadastre sua barbearia no Tem Barber e gerencie com facilidade
           </p>
         </div>
 

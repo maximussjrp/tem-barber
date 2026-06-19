@@ -10,7 +10,7 @@ export default function HomePage() {
       {/* Hero */}
       <div className="text-center max-w-xl">
         <h1 className="font-serif text-5xl md:text-6xl font-bold tracking-wide text-amber-500 drop-shadow-md mb-4">
-          MATCH BARBER
+          TEM BARBER
         </h1>
         <p className="text-stone-300 text-lg md:text-xl font-light mb-2">
           Seu estilo no horário marcado.
@@ -37,7 +37,7 @@ export default function HomePage() {
 
       {/* Rodapé mínimo */}
       <p className="absolute bottom-6 text-stone-700 text-xs">
-        © {new Date().getFullYear()} Match Barber · Todos os direitos reservados
+        © {new Date().getFullYear()} Tem Barber · Todos os direitos reservados
       </p>
     </div>
   );

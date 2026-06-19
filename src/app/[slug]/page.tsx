@@ -20,7 +20,7 @@ export async function generateMetadata({
   const barbershop = await prisma.barbershop.findUnique({ where: { slug } });
   if (!barbershop) return { title: "Barbearia não encontrada" };
   return {
-    title: `${barbershop.name} | Match Barber`,
+    title: `${barbershop.name} | Tem Barber`,
     description: barbershop.description ?? `Agende agora na ${barbershop.name}`,
   };
 }

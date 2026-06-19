@@ -18,7 +18,7 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "Match Barber",
+  title: "Tem Barber",
   description: "Agende seu horário na melhor barbearia da cidade.",
 };
 

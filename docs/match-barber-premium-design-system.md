@@ -1,8 +1,8 @@
-# Match Barber Premium Design System
+# Tem Barber Premium Design System
 
 **Versão:** 1.0 (Fase 1 - Fundação)
 
-Este documento descreve a fundação visual oficial e reutilizável do Match Barber. O Design System foi projetado com a filosofia de **"Luxo Operacional"**: interfaces confortáveis para uso longo e intenso no balcão da barbearia, mas com uma estética premium, sofisticada e rápida.
+Este documento descreve a fundação visual oficial e reutilizável do Tem Barber. O Design System foi projetado com a filosofia de **"Luxo Operacional"**: interfaces confortáveis para uso longo e intenso no balcão da barbearia, mas com uma estética premium, sofisticada e rápida.
 
 ## 1. Princípios do Design System
 
@@ -74,4 +74,4 @@ Componente de Drawer que aparece pela lateral (esquerda/direita) utilizado forte
 
 ## 4. Integração
 
-Todas as novas páginas e refatorações devem obrigatoriamente importar e utilizar estes componentes primitivos ao invés de codificar classes tailwind estáticas diretamente nas páginas. Essa premissa garante o **"Luxo Operacional"** ao longo dos anos para o Match Barber.
+Todas as novas páginas e refatorações devem obrigatoriamente importar e utilizar estes componentes primitivos ao invés de codificar classes tailwind estáticas diretamente nas páginas. Essa premissa garante o **"Luxo Operacional"** ao longo dos anos para o Tem Barber.

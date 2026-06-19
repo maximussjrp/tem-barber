@@ -239,10 +239,10 @@ function LoginContent() {
             {/* Logo */}
             <div className="text-center mb-8">
               <div className="w-14 h-14 rounded-2xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center mx-auto mb-4 glow-gold-sm">
-                <span className="font-serif font-bold text-[var(--gold)] text-xl">MB</span>
+                <span className="font-serif font-bold text-[var(--gold)] text-xl">TB</span>
               </div>
               <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-wide text-[var(--gold)]">
-                MATCH BARBER
+                TEM BARBER
               </h1>
               <p className="text-sm text-[var(--text-muted)] mt-2">Seu estilo no horário marcado</p>
             </div>

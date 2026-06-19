@@ -1,4 +1,4 @@
-# Match Barber — Roadmap de Implementação v2.0
+# Tem Barber — Roadmap de Implementação v2.0
 
 **Última atualização:** 2026-06-16
 **Versão:** 2.0
@@ -59,7 +59,7 @@ As funcionalidades abaixo estão **confirmadas no código atual** (auditoria 202
 - [x] Área do cliente (`/minha-conta`)
 - [x] Área do barbeiro (`/member/agenda`)
 - [x] Configurações da barbearia (nome, logo, slug, contato)
-- [x] `SaasPlan` + `TenantSaasSubscription` (plano comercial do Match Barber)
+- [x] `SaasPlan` + `TenantSaasSubscription` (plano comercial do Tem Barber)
 - [x] Upload de arquivos (filesystem local — migração na Fase 8)
 - [x] Dashboard admin com KPIs básicos e gráficos
 - [x] Design premium com tokens CSS (Tailwind v4 + Outfit + Playfair Display)

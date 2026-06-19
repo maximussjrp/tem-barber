@@ -13,7 +13,7 @@ export default async function AdminLayout({
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-stone-950">
       <AdminSidebar
-        barbershopName={barbershop?.name ?? "Match Barber"}
+        barbershopName={barbershop?.name ?? "Tem Barber"}
         barbershopLogo={barbershop?.logoUrl}
         subtitle={subtitle}
         userName={session.user?.name ?? "Admin"}

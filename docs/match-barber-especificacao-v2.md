@@ -1,4 +1,4 @@
-# Match Barber — Especificação Funcional e Técnica Revisada v2.0
+# Tem Barber — Especificação Funcional e Técnica Revisada v2.0
 
 **Data de criação:** 2026-06-15
 **Versão:** 2.0
@@ -27,7 +27,7 @@
 
 ### Estado atual (confirmado por auditoria em 2026-06-15)
 
-O Match Barber é um SaaS funcional de agendamento online para barbearias com arquitetura multi-tenant, autenticação dual (cliente sem senha + admin com CPF/email+senha), agenda diária multiprofissional com colunas por barbeiro, link público de agendamento com validação real de disponibilidade, e gestão básica de equipe, serviços e configurações da barbearia.
+O Tem Barber é um SaaS funcional de agendamento online para barbearias com arquitetura multi-tenant, autenticação dual (cliente sem senha + admin com CPF/email+senha), agenda diária multiprofissional com colunas por barbeiro, link público de agendamento com validação real de disponibilidade, e gestão básica de equipe, serviços e configurações da barbearia.
 
 Os seguintes módulos **não existem ou são insuficientes**: financeiro real, múltiplas formas de pagamento, comandas, comissões, Plano Clube, fidelidade, lembretes automáticos, lista de espera, relatórios gerenciais completos e histórico completo do cliente.
 
@@ -84,7 +84,7 @@ As seguintes funcionalidades estão confirmadas no código e serão **evoluídas
 | SaasPlan + TenantSaasSubscription | `Plan` + `TenantSubscription` no schema | Renomear conceitualmente; dados mantidos |
 | Upload de arquivos | `api/admin/upload` | Migrar para armazenamento externo (Fase 8) |
 
-> **Nota:** As entidades existentes `Plan` e `TenantSubscription` representam o plano comercial do SaaS (plataforma Match Barber), não o Plano Clube vendido ao cliente da barbearia. Neste documento, são referenciadas como `SaasPlan` e `TenantSaasSubscription` para eliminar ambiguidade conceitual. Renomeação física no banco é decisão a ser tomada oportunamente.
+> **Nota:** As entidades existentes `Plan` e `TenantSubscription` representam o plano comercial do SaaS (plataforma Tem Barber), não o Plano Clube vendido ao cliente da barbearia. Neste documento, são referenciadas como `SaasPlan` e `TenantSaasSubscription` para eliminar ambiguidade conceitual. Renomeação física no banco é decisão a ser tomada oportunamente.
 
 ---
 
@@ -274,7 +274,7 @@ As seguintes funcionalidades estão confirmadas no código e serão **evoluídas
 
 #### Distinção conceitual obrigatória
 
-- **`SaasPlan` / `TenantSaasSubscription`:** plano comercial do Match Barber (plataforma). Entidades físicas atuais: `Plan` e `TenantSubscription`.
+- **`SaasPlan` / `TenantSaasSubscription`:** plano comercial do Tem Barber (plataforma). Entidades físicas atuais: `Plan` e `TenantSubscription`.
 - **`ClubPlan` / `ClubSubscription`:** plano da barbearia vendido ao cliente. Entidades novas.
 
 #### Configurações do ClubPlan
@@ -469,7 +469,7 @@ Correções via `ClubAdjustment` na próxima competência, com `AuditLog` obriga
 
 | Perfil | Acesso |
 |---|---|
-| `SUPER_ADMIN` | Acesso total à plataforma Match Barber |
+| `SUPER_ADMIN` | Acesso total à plataforma Tem Barber |
 | `OWNER` | Acesso total à barbearia |
 | `MANAGER` | Acesso operacional e financeiro básico |
 | `RECEPTIONIST` | Agenda, clientes, comandas, pagamentos, lista de espera — sem acesso a fechamentos, rateio, comissões da equipe, configurações financeiras sensíveis |

@@ -107,7 +107,7 @@ export function MemberNav({ barbershopName, barbershopLogo, subtitle, memberName
         </button>
         <div className="text-center pb-1">
           <p className="text-[9px] text-text-muted/40 uppercase tracking-widest font-semibold">
-            Powered by <span className="text-text-muted/60">Match Barber</span>
+            Powered by <span className="text-text-muted/60">Tem Barber</span>
           </p>
         </div>
       </div>
