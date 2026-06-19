@@ -7,7 +7,7 @@ export interface AppShellProps {
 
 export function AppShell({ sidebar, children }: AppShellProps) {
   return (
-    <div className="flex min-h-screen w-full bg-background">
+    <div className="flex flex-col lg:flex-row min-h-screen w-full bg-background">
       {/* Sidebar - Fixa à esquerda no desktop */}
       <aside className="hidden lg:flex flex-col w-64 h-screen fixed left-0 top-0 border-r border-border-subtle bg-surface z-30">
         {sidebar}

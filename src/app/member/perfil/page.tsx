@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Avatar } from "@/components/ui/Avatar";
 
 interface MemberProfile {
   id: string;
@@ -67,8 +68,12 @@ export default function PerfilPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Erro no upload.");
       setAvatarUrl(data.url);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("Erro desconhecido.");
+      }
     } finally {
       setUploading(false);
     }
@@ -97,8 +102,12 @@ export default function PerfilPage() {
       setProfile(updated);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("Erro ao salvar.");
+      }
     } finally {
       setSaving(false);
     }
@@ -128,17 +137,11 @@ export default function PerfilPage() {
         {/* Avatar */}
         <div className="flex flex-col items-center gap-4">
           <div className="relative group">
-            <div className="w-24 h-24 rounded-full bg-stone-800 border-2 border-stone-700 overflow-hidden flex items-center justify-center">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-3xl font-bold text-stone-500">
-                  {name.charAt(0).toUpperCase()}
-                </span>
-              )}
+            <div className="w-24 h-24 rounded-full border-2 border-stone-700 flex items-center justify-center relative">
+              <Avatar src={avatarUrl} alt={name} size="2xl" fallbackText={name} />
               {uploading && (
-                <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-full">
-                  <span className="text-white text-xs">...</span>
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-full z-10">
+                  <span className="text-white text-xs font-bold">...</span>
                 </div>
               )}
             </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
+import { Avatar } from "@/components/ui/Avatar";
 
 interface Member {
   id: string;
@@ -61,8 +62,6 @@ export default function EquipePage() {
     setTimeout(() => setSuccess(null), 3000);
   }
 
-  useEffect(() => { loadMembers(); }, []);
-
   async function loadMembers() {
     setLoading(true);
     try {
@@ -73,6 +72,14 @@ export default function EquipePage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => { loadMembers(); }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  function getErrorMessage(error: unknown, fallback: string) {
+    return error instanceof Error ? error.message : fallback;
   }
 
   function handlePhoneChange(value: string) {
@@ -117,8 +124,8 @@ export default function EquipePage() {
       setModalOpen(false);
       setForm(emptyForm);
       showSuccess("Colaborador adicionado com sucesso!");
-    } catch (e: any) {
-      setError(e.message ?? "Erro ao cadastrar.");
+    } catch (e) {
+      setError(getErrorMessage(e, "Erro ao cadastrar."));
     } finally {
       setSaving(false);
     }
@@ -136,8 +143,8 @@ export default function EquipePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, isActive: data.isActive } : m)));
-    } catch (e: any) {
-      setError(e.message ?? "Erro ao alterar status.");
+    } catch (e) {
+      setError(getErrorMessage(e, "Erro ao alterar status."));
     } finally {
       setTogglingId(null);
     }
@@ -184,12 +191,8 @@ export default function EquipePage() {
             >
               {/* Header */}
               <div className="flex items-start gap-4 mb-4">
-                <div className="w-12 h-12 rounded-full bg-stone-800 border border-stone-700 overflow-hidden flex items-center justify-center shrink-0">
-                  {member.user.avatarUrl ? (
-                    <img src={member.user.avatarUrl} alt={member.user.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-xl leading-none">✂️</span>
-                  )}
+                <div className="w-12 h-12 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0 relative">
+                  <Avatar src={member.user.avatarUrl} alt={member.user.name} size="lg" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-stone-100 font-semibold text-sm truncate">

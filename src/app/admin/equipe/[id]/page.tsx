@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { Avatar } from "@/components/ui/Avatar";
 
 // ─────────── Types ───────────
 interface Service { id: string; name: string; price: string; category: { name: string } }
@@ -107,7 +108,13 @@ export default function MemberDetailPage() {
     }
   }, [memberId, router]);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => { load(); }, [load]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  function getErrorMessage(error: unknown, fallback = "Erro.") {
+    return error instanceof Error ? error.message : fallback;
+  }
 
   // ── Perfil ──
   async function saveProfile(e: React.FormEvent) {
@@ -123,7 +130,7 @@ export default function MemberDetailPage() {
       if (!res.ok) throw new Error(data.error);
       setMember((prev) => prev ? { ...prev, role: data.role, bio: data.bio } : prev);
       showSuccess("Perfil atualizado!");
-    } catch (e: any) { setError(e.message ?? "Erro."); }
+    } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingProfile(false); }
   }
 
@@ -131,7 +138,11 @@ export default function MemberDetailPage() {
   function toggleService(id: string) {
     setSelectedServices((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   }
@@ -147,7 +158,7 @@ export default function MemberDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       showSuccess("Serviços salvos!");
-    } catch (e: any) { setError(e.message ?? "Erro."); }
+    } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingServices(false); }
   }
 
@@ -167,7 +178,7 @@ export default function MemberDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       showSuccess("Horários salvos!");
-    } catch (e: any) { setError(e.message ?? "Erro."); }
+    } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingHours(false); }
   }
 
@@ -186,7 +197,7 @@ export default function MemberDetailPage() {
       setMember((prev) => prev ? { ...prev, timeOffs: [...prev.timeOffs, data] } : prev);
       setTimeOffStart(""); setTimeOffEnd(""); setTimeOffReason("");
       showSuccess("Folga registrada!");
-    } catch (e: any) { setError(e.message ?? "Erro."); }
+    } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingTimeOff(false); }
   }
 
@@ -202,7 +213,7 @@ export default function MemberDetailPage() {
       if (!res.ok) throw new Error(data.error);
       setMember((prev) => prev ? { ...prev, timeOffs: prev.timeOffs.filter((t) => t.id !== timeOffId) } : prev);
       showSuccess("Folga excluída!");
-    } catch (e: any) { setError(e.message ?? "Erro."); }
+    } catch (e) { setError(getErrorMessage(e)); }
     finally { setDeletingTimeOffId(null); }
   }
 
@@ -231,12 +242,8 @@ export default function MemberDetailPage() {
           ← Voltar para Equipe
         </Link>
         <div className="flex items-center gap-4 mt-4">
-          <div className="w-14 h-14 rounded-full bg-stone-800 border border-stone-700 overflow-hidden flex items-center justify-center shrink-0">
-            {member.user.avatarUrl ? (
-              <img src={member.user.avatarUrl} alt={member.user.name} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-2xl leading-none">✂️</span>
-            )}
+          <div className="w-14 h-14 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0 relative">
+            <Avatar src={member.user.avatarUrl} alt={member.user.name} size="lg" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-stone-100">{member.user.name}</h1>

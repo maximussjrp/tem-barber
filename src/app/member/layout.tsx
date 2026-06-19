@@ -8,15 +8,19 @@ export default async function MemberLayout({
 }) {
   const { barbershop, member, role } = await requireMember();
 
+  const subtitle = barbershop?.city ? barbershop.city : "Painel Profissional";
+
   return (
-    <div className="flex min-h-screen bg-stone-950">
+    <div className="flex flex-col lg:flex-row min-h-screen bg-stone-950">
       <MemberNav
         barbershopName={barbershop.name}
+        barbershopLogo={barbershop.logoUrl}
+        subtitle={subtitle}
         memberName={member.user.name}
         avatarUrl={member.user.avatarUrl}
         role={role}
       />
-      <main className="flex-1 md:ml-64 min-h-screen overflow-x-hidden pt-14 md:pt-0">
+      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden">
         {children}
       </main>
     </div>

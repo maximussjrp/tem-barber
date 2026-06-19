@@ -9,6 +9,8 @@ import { IconButton } from "@/components/ui/IconButton";
 
 interface SidebarProps {
   barbershopName: string;
+  barbershopLogo?: string | null;
+  subtitle?: string | null;
   userName: string;
 }
 
@@ -97,7 +99,7 @@ const navItems = [
   },
 ];
 
-export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
+export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName }: SidebarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -126,14 +128,20 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
       {/* Brand */}
       <div className="px-5 py-5 border-b border-border-subtle">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-brand-subtle border border-brand/20 flex items-center justify-center shrink-0">
-            <span className="font-serif font-bold text-brand text-sm">MB</span>
-          </div>
+          {barbershopLogo ? (
+            <img src={barbershopLogo} alt={barbershopName} className="w-9 h-9 rounded-xl object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" />
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-surface-raised border border-border-subtle flex items-center justify-center shrink-0 shadow-sm">
+              <span className="font-serif font-bold text-text-primary text-sm">
+                {barbershopName.charAt(0).toUpperCase()}
+              </span>
+            </div>
+          )}
           <div className="min-w-0">
-            <p className="font-serif text-sm font-bold text-brand tracking-wide leading-tight truncate">
-              MATCH BARBER
+            <p className="font-serif text-sm font-bold text-text-primary tracking-wide leading-tight truncate">
+              {barbershopName}
             </p>
-            <p className="text-[11px] text-text-muted mt-0.5 truncate">{barbershopName}</p>
+            <p className="text-[11px] text-text-muted mt-0.5 truncate">{subtitle || "Painel de Gestão"}</p>
           </div>
         </div>
       </div>
@@ -214,25 +222,48 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
         </div>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-text-muted hover:text-danger hover:bg-danger-subtle transition-colors"
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-text-muted hover:text-danger hover:bg-danger-subtle transition-colors mb-3"
         >
           {Icons.logout}
           Sair
         </button>
+        <div className="text-center pb-1">
+          <p className="text-[9px] text-text-muted/40 uppercase tracking-widest font-semibold">
+            Powered by <span className="text-text-muted/60">Match Barber</span>
+          </p>
+        </div>
       </div>
     </div>
   );
 
   return (
     <>
-      {/* Mobile toggle (temporary until AppShell is fully integrated) */}
-      <div className="fixed top-4 left-4 z-40 md:hidden">
+      {/* Mobile top bar */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-surface border-b border-border-subtle">
+        <div className="flex items-center gap-2 min-w-0 pr-4">
+          {barbershopLogo ? (
+            <img src={barbershopLogo} alt={barbershopName} className="w-8 h-8 rounded-lg object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-surface-raised border border-border-subtle flex items-center justify-center shrink-0 shadow-sm">
+              <span className="font-serif font-bold text-text-primary text-xs">
+                {barbershopName.charAt(0).toUpperCase()}
+              </span>
+            </div>
+          )}
+          <p className="font-serif text-sm font-bold text-text-primary tracking-wide truncate">
+            {barbershopName}
+          </p>
+        </div>
         <IconButton
-          variant="secondary"
-          className="shadow-sm border border-border-subtle"
+          variant="ghost"
           onClick={() => setMobileOpen(true)}
+          className="text-text-secondary"
           icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
           }
           aria-label="Abrir menu"
         />
@@ -250,7 +281,7 @@ export function AdminSidebar({ barbershopName, userName }: SidebarProps) {
       </Sheet>
 
       {/* Desktop Sidebar */}
-      <aside className="hidden md:block fixed top-0 left-0 h-full w-64 bg-surface z-30">
+      <aside className="hidden lg:flex fixed top-0 left-0 h-full w-64 flex-col bg-surface border-r border-border-subtle z-30">
         {renderSidebarContent()}
       </aside>
     </>

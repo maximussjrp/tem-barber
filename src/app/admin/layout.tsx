@@ -8,14 +8,18 @@ export default async function AdminLayout({
 }) {
   const { barbershop, session } = await requireAdmin();
 
+  const subtitle = barbershop?.city ? barbershop.city : "Painel de Gestão";
+
   return (
-    <div className="flex min-h-screen bg-stone-950">
+    <div className="flex flex-col lg:flex-row min-h-screen bg-stone-950">
       <AdminSidebar
         barbershopName={barbershop?.name ?? "Match Barber"}
+        barbershopLogo={barbershop?.logoUrl}
+        subtitle={subtitle}
         userName={session.user?.name ?? "Admin"}
       />
       {/* Offset content by sidebar width on desktop */}
-      <main className="flex-1 md:ml-64 min-h-screen overflow-x-hidden">
+      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden">
         {children}
       </main>
     </div>

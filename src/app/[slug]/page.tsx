@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
-
+import { Avatar } from "@/components/ui/Avatar";
 const DAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 interface WorkingHour {
@@ -233,18 +233,8 @@ export default async function BarbershopPublicPage({
                   key={m.id}
                   className="bg-stone-900 border border-stone-800 rounded-xl p-4 text-center"
                 >
-                  <div className="w-14 h-14 rounded-full bg-stone-800 mx-auto mb-3 overflow-hidden flex items-center justify-center">
-                    {m.user.avatarUrl ? (
-                      <img
-                        src={m.user.avatarUrl}
-                        alt={m.user.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-xl text-stone-500 font-bold">
-                        {m.user.name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
+                  <div className="w-14 h-14 rounded-full border border-stone-800 mx-auto mb-3 overflow-hidden flex items-center justify-center relative">
+                    <Avatar src={m.user.avatarUrl} alt={m.user.name} size="lg" fallbackText={m.user.name} />
                   </div>
                   <p className="text-sm font-semibold text-stone-200">{m.user.name}</p>
                   {m.ratingAvg > 0 && (
