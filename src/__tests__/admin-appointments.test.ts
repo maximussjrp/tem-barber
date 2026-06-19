@@ -145,7 +145,13 @@ describe("agendamento administrativo", () => {
     await POST(jsonRequest(body));
 
     expect(prismaMock.barbershopMember.findFirst).toHaveBeenCalledWith({
-      where: { id: "member-a", barbershopId: "shop-a", isActive: true },
+      where: {
+        id: "member-a",
+        barbershopId: "shop-a",
+        isActive: true,
+        role: { in: ["BARBER", "MANAGER"] },
+        OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+      },
     });
     expect(prismaMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-a", "svc-b"] }, barbershopId: "shop-a", isActive: true },

@@ -20,7 +20,11 @@ export async function GET(request: NextRequest) {
       where: { barbershopId: data!.barbershopId, paidAt: { gte: start, lte: end } },
     }),
     prisma.financialEntry.findMany({
-      where: { barbershopId: data!.barbershopId, entryDate: { gte: start, lte: end } },
+      where: {
+        barbershopId: data!.barbershopId,
+        entryDate: { gte: start, lte: end },
+        type: { in: ["MANUAL_IN", "MANUAL_OUT"] },
+      },
       orderBy: { entryDate: "desc" },
     }),
     prisma.comanda.groupBy({
@@ -61,7 +65,7 @@ export async function GET(request: NextRequest) {
       description: p.comandaId ? `Comanda ${p.comandaId.split("-")[0]}` : "Avulso",
       type: p.status === "REFUNDED" ? "ESTORNO" : "RECEBIMENTO",
       method: p.method,
-      amount: money(toCents(p.amount)),
+      amount: money(Math.abs(toCents(p.amount))),
       status: p.status,
     })),
     ...entries.map((e) => ({
@@ -70,7 +74,7 @@ export async function GET(request: NextRequest) {
       description: e.description,
       type: e.type,
       method: "MANUAL",
-      amount: money(toCents(e.amount)),
+      amount: money(Math.abs(toCents(e.amount))),
       status: "CONFIRMED",
     })),
   ].sort((a, b) => b.time.getTime() - a.time.getTime());

@@ -118,7 +118,12 @@ export async function GET(request: NextRequest) {
   ]);
 
   const members = await prisma.barbershopMember.findMany({
-    where: { barbershopId, isActive: true },
+    where: {
+      barbershopId,
+      isActive: true,
+      role: { in: ["BARBER", "MANAGER"] },
+      OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+    },
     include: { user: { select: { name: true } } },
     orderBy: { user: { name: "asc" } },
   });
@@ -159,7 +164,13 @@ export async function POST(request: NextRequest) {
     const result = await runSerializableTransaction(
       async (tx) => {
         const member = await tx.barbershopMember.findFirst({
-          where: { id: memberId, barbershopId, isActive: true },
+          where: {
+            id: memberId,
+            barbershopId,
+            isActive: true,
+            role: { in: ["BARBER", "MANAGER"] },
+            OR: [{ services: { some: {} } }, { workingHours: { some: { isActive: true } } }],
+          },
         });
       if (!member) {
         return {

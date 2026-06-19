@@ -103,18 +103,18 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const isRouteActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   const isGroupActive = (item: (typeof navItems)[number]) =>
-    pathname.startsWith(item.href) ||
-    item.children.some((c) => pathname.startsWith(c.href));
-  const isExact = (href: string) => pathname === href;
+    isRouteActive(item.href) ||
+    item.children.some((c) => isRouteActive(c.href));
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const item of navItems) {
       if (item.children.length > 0) {
         initial[item.href] =
-          pathname.startsWith(item.href) ||
-          item.children.some((c) => pathname.startsWith(c.href));
+          isRouteActive(item.href) ||
+          item.children.some((c) => isRouteActive(c.href));
       }
     }
     return initial;
@@ -179,7 +179,7 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
                         href={child.href}
                         onClick={() => setMobileOpen(false)}
                         className={`flex items-center px-3 py-2 rounded-lg text-xs transition-colors font-medium ${
-                          isExact(child.href)
+                          isRouteActive(child.href)
                             ? "bg-brand-subtle text-brand font-bold"
                             : "text-text-muted hover:bg-surface-hover hover:text-text-secondary"
                         }`}
@@ -195,12 +195,12 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                  isExact(item.href)
+                  isRouteActive(item.href)
                     ? "bg-brand-subtle text-brand font-bold"
                     : "text-text-muted hover:bg-surface-hover hover:text-text-primary"
                 }`}
               >
-                <span className={isExact(item.href) ? "text-brand" : "text-text-muted"}>{item.icon}</span>
+                <span className={isRouteActive(item.href) ? "text-brand" : "text-text-muted"}>{item.icon}</span>
                 {item.label}
               </Link>
             )}

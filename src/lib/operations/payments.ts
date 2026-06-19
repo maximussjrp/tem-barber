@@ -1,4 +1,5 @@
 import { ComandaStatus, PaymentMethod, Prisma, StockMovementType } from "@prisma/client";
+import { syncCashSessionExpectedAmount } from "./cash";
 import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "./comandas";
 import { fromCents, positiveCents, toCents } from "./money";
@@ -84,6 +85,7 @@ export async function registerPayment(
         description: `Pagamento em dinheiro da comanda ${input.comandaId}`,
       },
     });
+    await syncCashSessionExpectedAmount(tx, cashSessionId);
   }
 
   const updated = await recalculateComandaTotals(tx, input.comandaId);
@@ -157,6 +159,7 @@ export async function refundPayment(
           description: input.reason || `Estorno do pagamento ${original.id}`,
         },
       });
+      await syncCashSessionExpectedAmount(tx, cashSession.id);
     }
   }
 
