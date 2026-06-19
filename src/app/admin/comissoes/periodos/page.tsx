@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 type Period = {
   id: string;
@@ -39,10 +40,13 @@ export default function CommissionPeriodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competence]);
 
-  async function action(id: string, kind: "close" | "pay") {
-    const label = kind === "close" ? "fechar" : "marcar como pago";
-    if (!window.confirm(`Confirmar ${label} este periodo?`)) return;
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; id: string; kind: "close" | "pay" | null }>({ isOpen: false, id: "", kind: null });
+
+  async function handleConfirm() {
+    const { id, kind } = confirmDialog;
+    if (!id || !kind) return;
     setBusy(`${kind}:${id}`);
+    setConfirmDialog({ isOpen: false, id: "", kind: null });
     const res = await fetch(`/api/admin/commissions/periods/${id}/${kind}`, { method: "POST" });
     if (!res.ok) {
       const data = await res.json();
@@ -81,10 +85,10 @@ export default function CommissionPeriodsPage() {
                   <span className="text-stone-400">Saldo <b className="block text-amber-300">{brl(period.balanceAmount)}</b></span>
                 </div>
                 <div className="flex gap-2">
-                  <button disabled={period.status !== "OPEN" || busy !== ""} onClick={() => action(period.id, "close")} className="px-3 py-2 rounded-lg border border-amber-800 text-amber-300 text-sm disabled:opacity-40">
+                  <button disabled={period.status !== "OPEN" || busy !== ""} onClick={() => setConfirmDialog({ isOpen: true, id: period.id, kind: "close" })} className="px-3 py-2 rounded-lg border border-amber-800 text-amber-300 text-sm disabled:opacity-40">
                     {busy === `close:${period.id}` ? "Fechando..." : "Fechar"}
                   </button>
-                  <button disabled={period.status === "PAID" || busy !== ""} onClick={() => action(period.id, "pay")} className="px-3 py-2 rounded-lg bg-amber-600 text-stone-950 text-sm font-semibold disabled:opacity-40">
+                  <button disabled={period.status === "PAID" || busy !== ""} onClick={() => setConfirmDialog({ isOpen: true, id: period.id, kind: "pay" })} className="px-3 py-2 rounded-lg bg-amber-600 text-stone-950 text-sm font-semibold disabled:opacity-40">
                     {busy === `pay:${period.id}` ? "Pagando..." : "Marcar pago"}
                   </button>
                 </div>
@@ -93,6 +97,14 @@ export default function CommissionPeriodsPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ isOpen: false, id: "", kind: null })}
+        onConfirm={handleConfirm}
+        title={confirmDialog.kind === "close" ? "Fechar período" : "Marcar como pago"}
+        description={`Tem certeza que deseja ${confirmDialog.kind === "close" ? "fechar" : "marcar como pago"} este período?`}
+        confirmLabel="Confirmar"
+      />
     </div>
   );
 }

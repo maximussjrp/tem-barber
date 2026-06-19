@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Dialog } from "@/components/ui/Dialog";
 
 type Comanda = {
   id: string;
@@ -59,36 +60,52 @@ export default function ComandasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  async function createWalkIn() {
-    const customerName = window.prompt("Nome do cliente");
-    if (!customerName) return;
-    const customerPhone = window.prompt("Telefone do cliente");
-    if (!customerPhone) return;
+  const [walkInDialog, setWalkInDialog] = useState<{ isOpen: boolean; customerName: string; customerPhone: string }>({ isOpen: false, customerName: "", customerPhone: "" });
+
+  async function handleWalkInSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!walkInDialog.customerName || !walkInDialog.customerPhone) return;
     setCreating(true);
     try {
       const res = await fetch("/api/admin/comandas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerName, customerPhone }),
+        body: JSON.stringify({ customerName: walkInDialog.customerName, customerPhone: walkInDialog.customerPhone }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message ?? data.error ?? "Erro ao criar comanda.");
       window.location.href = `/admin/comandas/${data.id}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar comanda.");
-    } finally {
       setCreating(false);
     }
   }
 
   return (
     <div className="p-4 md:p-6 space-y-5">
+      <Dialog isOpen={walkInDialog.isOpen} onClose={() => setWalkInDialog((prev) => ({ ...prev, isOpen: false }))} title="Nova comanda (avulso)" className="max-w-md">
+        <form onSubmit={handleWalkInSubmit} className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">Nome do cliente</label>
+            <input type="text" value={walkInDialog.customerName} onChange={(e) => setWalkInDialog((p) => ({ ...p, customerName: e.target.value }))} className="w-full bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]" autoFocus required />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">Telefone</label>
+            <input type="tel" value={walkInDialog.customerPhone} onChange={(e) => setWalkInDialog((p) => ({ ...p, customerPhone: e.target.value }))} className="w-full bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]" required />
+          </div>
+          <div className="flex justify-end gap-3 pt-4">
+            <button type="button" onClick={() => setWalkInDialog((prev) => ({ ...prev, isOpen: false }))} disabled={creating} className="px-4 py-2 rounded-lg border border-[var(--border-medium)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors text-sm font-semibold">Cancelar</button>
+            <button type="submit" disabled={creating} className="px-4 py-2 rounded-lg bg-[var(--gold)] text-stone-950 font-bold transition-colors text-sm hover:brightness-110">Criar comanda</button>
+          </div>
+        </form>
+      </Dialog>
+
       <div className="flex flex-col md:flex-row md:items-center gap-3 justify-between">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">Comandas</h1>
           <p className="text-sm text-[var(--text-muted)]">Atendimentos, consumo e recebimento.</p>
         </div>
-        <button onClick={createWalkIn} disabled={creating} className="btn-gold px-4 py-2 disabled:opacity-50">
+        <button onClick={() => setWalkInDialog({ isOpen: true, customerName: "", customerPhone: "" })} disabled={creating} className="btn-gold px-4 py-2 disabled:opacity-50">
           Nova comanda
         </button>
       </div>
