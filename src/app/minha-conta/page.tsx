@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import { Avatar } from "@/components/ui/Avatar";
 
 type AppStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
@@ -52,6 +53,7 @@ export default function MinhaContaPage() {
   const router = useRouter();
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
+  const [linkedBarbershops, setLinkedBarbershops] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState("");
@@ -64,9 +66,14 @@ export default function MinhaContaPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      fetch("/api/client/appointments")
-        .then((r) => r.json())
-        .then(setAppointments)
+      Promise.all([
+        fetch("/api/client/appointments").then((r) => r.json()),
+        fetch("/api/client/linked-barbershops").then((r) => r.json())
+      ])
+        .then(([appointmentsData, linkedData]) => {
+          setAppointments(appointmentsData);
+          setLinkedBarbershops(linkedData.linkedBarbershopIds || []);
+        })
         .finally(() => setLoading(false));
     }
   }, [status]);
@@ -87,8 +94,12 @@ export default function MinhaContaPage() {
       setAppointments((prev) =>
         prev.map((a) => (a.id === id ? { ...a, status: "CANCELLED" as AppStatus } : a))
       );
-    } catch (e: any) {
-      setCancelError(e.message);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setCancelError(e.message);
+      } else {
+        setCancelError("Erro desconhecido ao cancelar.");
+      }
     } finally {
       setCancelling(null);
     }
@@ -135,12 +146,8 @@ export default function MinhaContaPage() {
         {/* Barbershop header */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] overflow-hidden flex items-center justify-center shrink-0">
-              {a.barbershop.logoUrl ? (
-                <img src={a.barbershop.logoUrl} alt={a.barbershop.name} className="w-full h-full object-cover" />
-              ) : (
-                <span className="font-serif font-bold text-[var(--gold)] text-sm">{a.barbershop.name.charAt(0)}</span>
-              )}
+            <div className="w-10 h-10 rounded-xl border border-[var(--border-subtle)] overflow-hidden flex items-center justify-center shrink-0 relative">
+              <Avatar src={a.barbershop.logoUrl} alt={a.barbershop.name} size="md" fallbackText={a.barbershop.name} />
             </div>
             <div>
               <p className="text-sm font-semibold text-[var(--text-primary)]">{a.barbershop.name}</p>
@@ -230,19 +237,34 @@ export default function MinhaContaPage() {
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-6 space-y-8">
-        {appointments.length === 0 && (
-          <div className="text-center py-20">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--surface-2)] border border-[var(--border-subtle)] flex items-center justify-center mx-auto mb-5">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        {/* Empty States */}
+        {!loading && upcoming.length === 0 && past.length === 0 && (
+          <div className="text-center py-12 px-4 border border-[var(--border-subtle)] border-dashed rounded-2xl bg-[var(--surface-1)]">
+            <div className="w-16 h-16 bg-[var(--surface-2)] rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
+              {linkedBarbershops.length === 0 ? "🏪" : "📅"}
             </div>
-            <p className="text-[var(--text-secondary)] font-semibold">Nenhum agendamento ainda</p>
-            <p className="text-[var(--text-muted)] text-sm mt-1">Encontre uma barbearia e agende seu horário</p>
-            <Link
-              href="/"
-              className="mt-5 inline-block btn-gold px-6 py-2.5 text-sm"
-            >
-              Explorar barbearias
-            </Link>
+            {linkedBarbershops.length === 0 ? (
+              <>
+                <p className="text-[var(--text-primary)] font-semibold mb-2">
+                  Você ainda não está vinculado a uma barbearia.
+                </p>
+                <p className="text-[var(--text-muted)] text-sm mb-6 max-w-[280px] mx-auto">
+                  Escolha uma barbearia parceira para agendar seu horário.
+                </p>
+                <Link href="/login#parceiras" className="btn-gold inline-flex items-center gap-2">
+                  Ver barbearias parceiras
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="text-[var(--text-primary)] font-semibold mb-2">
+                  Você ainda não possui agendamentos.
+                </p>
+                <p className="text-[var(--text-muted)] text-sm">
+                  Escolha um horário para começar.
+                </p>
+              </>
+            )}
           </div>
         )}
 
