@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOperationalSession } from "@/lib/operations/permissions";
-
-function cents(value: unknown) {
-  return Math.round(Number(value ?? 0) * 100);
-}
+import { toCents } from "@/lib/operations/money";
 
 function money(value: number) {
   return Number((value / 100).toFixed(2));
@@ -43,19 +40,40 @@ export async function GET(request: NextRequest) {
   const byMethod: Record<string, number> = { CASH: 0, PIX: 0, DEBIT: 0, CREDIT: 0, OTHER: 0 };
   let refunds = 0;
   for (const payment of payments) {
-    if (payment.status === "REFUNDED") refunds += Math.abs(cents(payment.amount));
-    else byMethod[payment.method] += cents(payment.amount);
+    if (payment.status === "REFUNDED") refunds += Math.abs(toCents(payment.amount));
+    else byMethod[payment.method] += toCents(payment.amount);
   }
 
   const manualIn = entries
     .filter((entry) => entry.type === "MANUAL_IN")
-    .reduce((sum, entry) => sum + cents(entry.amount), 0);
+    .reduce((sum, entry) => sum + toCents(entry.amount), 0);
   const manualOut = entries
     .filter((entry) => entry.type === "MANUAL_OUT")
-    .reduce((sum, entry) => sum + Math.abs(cents(entry.amount)), 0);
+    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
 
   const totalReceived = Object.values(byMethod).reduce((sum, value) => sum + value, 0);
   const counts = Object.fromEntries(commandCounts.map((row) => [row.status, row._count._all]));
+
+  const movements = [
+    ...payments.map((p) => ({
+      id: p.id,
+      time: p.paidAt,
+      description: p.comandaId ? `Comanda ${p.comandaId.split("-")[0]}` : "Avulso",
+      type: p.status === "REFUNDED" ? "ESTORNO" : "RECEBIMENTO",
+      method: p.method,
+      amount: money(toCents(p.amount)),
+      status: p.status,
+    })),
+    ...entries.map((e) => ({
+      id: e.id,
+      time: e.entryDate,
+      description: e.description,
+      type: e.type,
+      method: "MANUAL",
+      amount: money(toCents(e.amount)),
+      status: "CONFIRMED",
+    })),
+  ].sort((a, b) => b.time.getTime() - a.time.getTime());
 
   return NextResponse.json({
     date,
@@ -72,8 +90,8 @@ export async function GET(request: NextRequest) {
     openCommands: counts.OPEN ?? 0,
     pendingCommands: counts.PENDING_PAYMENT ?? 0,
     closedCommands: counts.CLOSED ?? 0,
-    receivable: money(cents(receivables._sum.remainingTotal)),
-    entries,
+    receivable: money(toCents(receivables._sum.remainingTotal)),
+    movements,
   });
 }
 
