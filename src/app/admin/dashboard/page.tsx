@@ -4,6 +4,7 @@ import Link from "next/link";
 import BookingLinkShare from "@/components/admin/BookingLinkShare";
 import DashboardCharts from "@/components/admin/DashboardCharts";
 import { nowBR, toBR, startOfDayUTC, endOfDayUTC, formatHeaderDate } from "@/lib/time-utils";
+import { buildOnboardingSteps, countCompletedOnboardingSteps } from "@/lib/onboarding";
 
 // ——————————————————————————————————————————————————————————————————————————————
 
@@ -168,6 +169,7 @@ export default async function DashboardPage() {
     where: { barbershopId: barbershopId!, isActive: true },
     include: {
       user: { select: { name: true } },
+      services: { select: { serviceId: true } },
       workingHours: { where: { dayOfWeek, isActive: true } },
       timeOffs: {
         where: {
@@ -277,7 +279,15 @@ export default async function DashboardPage() {
       done: activeMembers.length > 1,
     },
   ];
-  const setupComplete = checkItems.every((i) => i.done);
+  const onboardingSteps = buildOnboardingSteps({
+    barbershop,
+    activeServicesCount: servicesCount,
+    activeWorkingHoursCount: workingHoursCount,
+    schedulableProfessionalsCount: activeMembers.filter((member) => member.services.length > 0).length,
+  });
+  const onboardingDone = countCompletedOnboardingSteps(onboardingSteps);
+  const onboardingTotal = onboardingSteps.length;
+  const setupComplete = onboardingDone === onboardingTotal;
 
   // â”€â”€ Occupancy summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const occupancyData = {
@@ -600,56 +610,35 @@ export default async function DashboardPage() {
             <BookingLinkShare slug={barbershop?.slug ?? ""} />
           </div>
 
-          {/* Checklist */}
-          {!setupComplete && (
-            <div className="bg-[var(--surface-1)] border border-[var(--gold-border)] rounded-2xl p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-6 h-6 rounded-lg bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                </div>
-                <h2 className="text-sm font-bold text-[var(--gold)] uppercase tracking-widest">Checklist inicial</h2>
+          {/* Configuracao da barbearia */}
+          <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-2xl p-5">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-sm font-bold text-[var(--text-primary)]">Configuracao da barbearia</h2>
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  {setupComplete
+                    ? "Sua barbearia esta pronta para operar."
+                    : `${onboardingDone} de ${onboardingTotal} etapas concluidas`}
+                </p>
               </div>
-              <div className="space-y-2">
-                {checkItems.map((item) =>
-                  item.done ? (
-                    <div
-                      key={item.href}
-                      className="flex items-center gap-3 p-2.5 rounded-xl text-[var(--text-muted)]"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ADE80" strokeWidth="2.5">
-                        <polyline points="20 6 9 17 4 12"/>
-                      </svg>
-                      <span className="text-xs line-through">{item.label}</span>
-                    </div>
-                  ) : (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="flex items-center gap-3 p-2.5 rounded-xl border border-[var(--border-subtle)] hover:border-[var(--gold-border)] hover:bg-[var(--gold-surface)] text-[var(--text-secondary)] transition-all group"
-                    >
-                      <div className="w-3.5 h-3.5 rounded border-2 border-[var(--border-medium)] shrink-0" />
-                      <span className="text-xs flex-1">{item.label}</span>
-                      <svg
-                        className="text-[var(--text-muted)] group-hover:text-[var(--gold)] transition-colors"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="9 18 15 12 9 6"/>
-                      </svg>
-                    </Link>
-                  )
-                )}
-              </div>
+              <span className={`text-[11px] px-2 py-1 rounded-full border font-semibold shrink-0 ${
+                setupComplete
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                  : "border-[var(--gold-border)] bg-[var(--gold-surface)] text-[var(--gold)]"
+              }`}>
+                {setupComplete ? "Pronta" : "Em andamento"}
+              </span>
             </div>
-          )}
+            <div className="h-1.5 rounded-full bg-[var(--surface-3)] overflow-hidden mb-4">
+              <div
+                className="h-full rounded-full bg-[var(--gold)]"
+                style={{ width: `${Math.round((onboardingDone / onboardingTotal) * 100)}%` }}
+              />
+            </div>
+            <Link href="/admin/onboarding" className="btn-outline-gold w-full justify-center px-4 py-2 text-sm">
+              {setupComplete ? "Revisar configuracao" : "Continuar configuracao"}
+            </Link>
+          </div>
 
           {/* Clientes recentes */}
           <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-2xl p-5">
