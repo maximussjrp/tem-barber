@@ -5,7 +5,7 @@ const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
-  appointment: { create: vi.fn() },
+  appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
@@ -70,6 +70,10 @@ beforeEach(() => {
     isActive: true,
   });
   txMock.service.findMany.mockResolvedValue(services);
+  txMock.appointment.findMany.mockResolvedValue([
+    { customer: { id: "customer-existing", name: "Cliente A", phone: "11999999999" } },
+  ]);
+  txMock.appointment.findFirst.mockResolvedValue(null);
   txMock.$queryRaw.mockResolvedValueOnce([]).mockResolvedValue([]);
   txMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   txMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
@@ -169,7 +173,11 @@ describe("agendamento publico", () => {
   it("usa cliente existente localizado pelo telefone limpo", async () => {
     await POST(request(validBody), params);
 
-    expect(txMock.user.findFirst).toHaveBeenCalledWith({ where: { phone: "11999999999" } });
+    expect(txMock.appointment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ barbershopId: "shop-a" }),
+      })
+    );
     expect(txMock.user.create).not.toHaveBeenCalled();
     expect(txMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -179,13 +187,15 @@ describe("agendamento publico", () => {
   });
 
   it("cria novo cliente quando telefone nao existe", async () => {
-    txMock.user.findFirst.mockResolvedValue(null);
+    txMock.appointment.findMany.mockResolvedValue([]);
 
     await POST(request(validBody), params);
 
-    expect(txMock.user.create).toHaveBeenCalledWith({
-      data: { name: "Cliente A", phone: "11999999999", role: "USER" },
-    });
+    expect(txMock.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { name: "Cliente A", phone: "11999999999", role: "USER" },
+      })
+    );
     expect(txMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ customerId: "customer-new" }),

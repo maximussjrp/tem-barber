@@ -5,6 +5,7 @@ import { getAdminSession } from "@/lib/api-auth";
 import { AppointmentConflictError } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
+import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
 
 interface AdminAppointmentBody {
   memberId?: string;
@@ -32,6 +33,14 @@ function isRetryableTransactionError(error: unknown) {
     error.message.includes("write conflict") ||
     error.message.includes("deadlock")
   );
+}
+
+function isUserPhoneUniqueConstraint(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  return Array.isArray(target) ? target.includes("phone") : String(target ?? "").includes("phone");
 }
 
 async function runSerializableTransaction<T>(
@@ -176,9 +185,22 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      let resolvedCustomerId = customerId;
-      if (!resolvedCustomerId) {
-        if (!customerPhone) {
+      let resolvedCustomerId: string;
+      try {
+        const customer = await resolveBarbershopCustomerForBooking(tx, {
+          barbershopId,
+          customerId,
+          customerName,
+          customerPhone: normalizePhone(customerPhone),
+        });
+        resolvedCustomerId = customer.id;
+      } catch (resolveError) {
+        if (resolveError instanceof Error && resolveError.message === "CUSTOMER_NOT_FOUND_IN_BARBERSHOP") {
+          return {
+            error: NextResponse.json({ error: "Cliente nao encontrado nesta barbearia." }, { status: 404 }),
+          };
+        }
+        if (resolveError instanceof Error && resolveError.message === "CUSTOMER_PHONE_REQUIRED") {
           return {
             error: NextResponse.json(
               { error: "Informe customerId ou customerPhone." },
@@ -186,14 +208,7 @@ export async function POST(request: NextRequest) {
             ),
           };
         }
-        const cleanPhone = customerPhone.replace(/\D/g, "");
-        let customer = await tx.user.findFirst({ where: { phone: cleanPhone } });
-        if (!customer) {
-          customer = await tx.user.create({
-            data: { name: customerName ?? "Cliente", phone: cleanPhone, role: "USER" },
-          });
-        }
-        resolvedCustomerId = customer.id;
+        throw resolveError;
       }
 
       const services = await tx.service.findMany({
@@ -234,6 +249,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return conflictResponse(error);
+    }
+    if (isUserPhoneUniqueConstraint(error)) {
+      return NextResponse.json(
+        { error: "Telefone ja cadastrado fora desta barbearia. Nao foi criado cliente duplicado." },
+        { status: 409 }
+      );
     }
     throw error;
   }

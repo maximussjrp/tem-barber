@@ -12,6 +12,11 @@ import {
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
 import {
+  findBarbershopCustomerById,
+  normalizePhone,
+  resolveBarbershopCustomerForBooking,
+} from "@/lib/customers";
+import {
   getIdempotencyExpiresAt,
   getIdempotencyKeyFromRequest,
   hashPublicBookingPayload,
@@ -47,8 +52,21 @@ function jsonError(error: unknown) {
   throw error;
 }
 
-function isUniqueConstraintError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+function isIdempotencyUniqueConstraintError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  const targetText = Array.isArray(target) ? target.join("_") : String(target ?? "");
+  return targetText.includes("barbershop_id") && targetText.includes("key");
+}
+
+function isUserPhoneUniqueConstraint(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  return Array.isArray(target) ? target.includes("phone") : String(target ?? "").includes("phone");
 }
 
 function isRetryableTransactionError(error: unknown) {
@@ -245,7 +263,15 @@ export async function POST(
 
       let customerId: string | undefined;
       if (session?.user) {
-        customerId = (session.user as SessionUser).id;
+        const sessionCustomerId = (session.user as SessionUser).id;
+        if (sessionCustomerId) {
+          const scopedCustomer = await findBarbershopCustomerById(
+            tx,
+            barbershop.id,
+            sessionCustomerId
+          );
+          customerId = scopedCustomer?.id ?? sessionCustomerId;
+        }
       } else {
         if (!customerPhone) {
           return {
@@ -256,23 +282,18 @@ export async function POST(
           };
         }
 
-        const cleanPhone = customerPhone.replace(/\D/g, "");
+        const cleanPhone = normalizePhone(customerPhone);
         if (cleanPhone.length < 10) {
           return {
             error: NextResponse.json({ error: "Telefone invalido." }, { status: 400 }),
           };
         }
 
-        let customer = await tx.user.findFirst({ where: { phone: cleanPhone } });
-        if (!customer) {
-          customer = await tx.user.create({
-            data: {
-              name: customerName?.trim() || "Cliente",
-              phone: cleanPhone,
-              role: "USER",
-            },
-          });
-        }
+        const customer = await resolveBarbershopCustomerForBooking(tx, {
+          barbershopId: barbershop.id,
+          customerName,
+          customerPhone: cleanPhone,
+        });
         customerId = customer.id;
       }
 
@@ -312,8 +333,14 @@ export async function POST(
       headers: transactionResult.replay ? { "Idempotent-Replay": "true" } : undefined,
     });
   } catch (error) {
-    if (isUniqueConstraintError(error)) {
+    if (isIdempotencyUniqueConstraintError(error)) {
       return replayAfterConcurrentInsert(barbershop.id, idempotencyKey, requestHash);
+    }
+    if (isUserPhoneUniqueConstraint(error)) {
+      return NextResponse.json(
+        { error: "Telefone ja cadastrado fora desta barbearia. Nao foi criado cliente duplicado." },
+        { status: 409 }
+      );
     }
     return jsonError(error);
   }

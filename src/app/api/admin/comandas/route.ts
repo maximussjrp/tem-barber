@@ -4,6 +4,11 @@ import { ComandaStatus, Prisma } from "@prisma/client";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
+import {
+  findBarbershopCustomerById,
+  normalizePhone,
+  resolveBarbershopCustomerForBooking,
+} from "@/lib/customers";
 
 interface CreateComandaBody {
   appointmentId?: string;
@@ -113,9 +118,9 @@ export async function POST(request: NextRequest) {
 
       let customerId = body.customerId;
       let customerName = body.customerName?.trim();
-      let customerPhone = body.customerPhone?.replace(/\D/g, "") || undefined;
+      let customerPhone = normalizePhone(body.customerPhone) || undefined;
       if (customerId) {
-        const customer = await tx.user.findUnique({ where: { id: customerId } });
+        const customer = await findBarbershopCustomerById(tx, data!.barbershopId, customerId);
         if (!customer) throw new OperationalError("CUSTOMER_NOT_FOUND", "Cliente nao encontrado.", 404);
         customerName = customer.name;
         customerPhone = customer.phone;
@@ -123,12 +128,11 @@ export async function POST(request: NextRequest) {
         if (!customerName || !customerPhone) {
           throw new OperationalError("CUSTOMER_REQUIRED", "Informe cliente, nome e telefone.", 400);
         }
-        let customer = await tx.user.findFirst({ where: { phone: customerPhone } });
-        if (!customer) {
-          customer = await tx.user.create({
-            data: { name: customerName, phone: customerPhone, role: "USER" },
-          });
-        }
+        const customer = await resolveBarbershopCustomerForBooking(tx, {
+          barbershopId: data!.barbershopId,
+          customerName,
+          customerPhone,
+        });
         customerId = customer.id;
         customerName = customer.name;
         customerPhone = customer.phone;

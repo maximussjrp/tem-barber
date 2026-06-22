@@ -52,6 +52,9 @@ beforeEach(() => {
   prismaMock.$executeRaw.mockResolvedValue(0);
   prismaMock.$queryRaw.mockResolvedValue([]);
   prismaMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
+  prismaMock.appointment.findFirst.mockResolvedValue({
+    customer: { id: "customer-a", name: "Cliente A", phone: "11999999999" },
+  });
   prismaMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   prismaMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
   prismaMock.service.findMany.mockResolvedValue(services);
@@ -99,7 +102,7 @@ describe("agendamento administrativo", () => {
   });
 
   it("cria novo cliente quando suportado por customerPhone", async () => {
-    prismaMock.user.findFirst.mockResolvedValue(null);
+    prismaMock.appointment.findMany.mockResolvedValue([]);
     prismaMock.service.findMany.mockResolvedValue([{ id: "svc-a", price: "40.00", durationMin: 30 }]);
 
     await POST(
@@ -112,9 +115,11 @@ describe("agendamento administrativo", () => {
       })
     );
 
-    expect(prismaMock.user.create).toHaveBeenCalledWith({
-      data: { name: "Cliente Novo", phone: "11988887777", role: "USER" },
-    });
+    expect(prismaMock.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { name: "Cliente Novo", phone: "11988887777", role: "USER" },
+      })
+    );
     expect(prismaMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ customerId: "customer-new" }),
@@ -169,6 +174,30 @@ describe("agendamento administrativo", () => {
 
     expect(response.status).toBe(404);
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("reusa cliente da mesma barbearia quando telefone normalizado ja existe", async () => {
+    prismaMock.appointment.findMany.mockResolvedValue([
+      { customer: { id: "customer-existing", name: "Cliente Existente", phone: "+55 (11) 98888-7777" } },
+    ]);
+    prismaMock.service.findMany.mockResolvedValue([{ id: "svc-a", price: "40.00", durationMin: 30 }]);
+
+    await POST(
+      jsonRequest({
+        memberId: "member-a",
+        customerName: "Outro Nome",
+        customerPhone: "11 98888-7777",
+        serviceIds: ["svc-a"],
+        dateTime: "2026-07-20T13:00:00.000Z",
+      })
+    );
+
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+    expect(prismaMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ customerId: "customer-existing" }),
+      })
+    );
   });
 
   it("permite owner configurado com servicos como profissional de agenda", async () => {

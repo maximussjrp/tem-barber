@@ -37,6 +37,18 @@ interface Service {
   durationMin: number;
 }
 
+interface NewAppointmentInitialState {
+  memberId?: string;
+  dateTime?: string;
+}
+
+interface CustomerSearchResult {
+  id: string;
+  name: string;
+  phone: string;
+  lastAppointmentAt?: string;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 type UIStatus = "PENDING" | "CONFIRMED" | "OPEN_COMANDA" | "IN_SERVICE" | "PENDING_PAYMENT" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -127,6 +139,12 @@ function minutesToHeight(durationMin: number) {
   return (durationMin / SLOT_MIN) * ROW_HEIGHT;
 }
 
+function minutesToLocalInput(dateStr: string, minutes: number) {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 // ─── Appointment Modal ────────────────────────────────────────────────────────
 
 function AppointmentModal({
@@ -134,6 +152,7 @@ function AppointmentModal({
   members,
   barbershopServices,
   currentDate,
+  initialState,
   onClose,
   onSaved,
 }: {
@@ -141,11 +160,12 @@ function AppointmentModal({
   members: Member[];
   barbershopServices: Service[];
   currentDate: string;
+  initialState?: NewAppointmentInitialState | null;
   onClose: () => void;
   onSaved: (a: Appointment) => void;
 }) {
   const isEdit = !!appointment;
-  const [memberId, setMemberId] = useState(appointment?.barber.id ?? "");
+  const [memberId, setMemberId] = useState(appointment?.barber.id ?? initialState?.memberId ?? "");
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
     appointment
       ? appointment.services
@@ -162,13 +182,101 @@ function AppointmentModal({
       const pad = (n: number) => String(n).padStart(2, "0");
       return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
     }
-    return `${currentDate}T09:00`;
+    return initialState?.dateTime ?? `${currentDate}T09:00`;
   });
   const [customerName, setCustomerName] = useState(appointment?.customer.name ?? "");
   const [customerPhone, setCustomerPhone] = useState(appointment?.customer.phone ?? "");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(
+    appointment ? appointment.customer : null
+  );
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
+  const [searchingCustomers, setSearchingCustomers] = useState(false);
+  const [phoneSuggestion, setPhoneSuggestion] = useState<CustomerSearchResult | null>(null);
   const [notes, setNotes] = useState(appointment?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (isEdit) return;
+    const query = customerSearch.trim();
+    if (!query) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearchingCustomers(true);
+      try {
+        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Erro ao buscar clientes.");
+        const data = await res.json();
+        setCustomerResults(data.clients ?? []);
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setCustomerResults([]);
+        }
+      } finally {
+        setSearchingCustomers(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customerSearch, isEdit]);
+
+  useEffect(() => {
+    if (isEdit || selectedCustomer) {
+      return;
+    }
+    const phoneDigits = customerPhone.replace(/\D/g, "");
+    if (phoneDigits.length < 8) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(customerPhone)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setPhoneSuggestion(data.clients?.[0] ?? null);
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setPhoneSuggestion(null);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customerPhone, isEdit, selectedCustomer]);
+
+  const chooseCustomer = (customer: CustomerSearchResult) => {
+    setSelectedCustomer(customer);
+    setCustomerName(customer.name);
+    setCustomerPhone(customer.phone);
+    setCustomerSearch("");
+    setCustomerResults([]);
+    setPhoneSuggestion(null);
+  };
+
+  const clearCustomer = () => {
+    setSelectedCustomer(null);
+    setCustomerName("");
+    setCustomerPhone("");
+    setPhoneSuggestion(null);
+  };
+
+  const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 8;
 
   const toggleService = (id: string) =>
     setSelectedServiceIds((prev) =>
@@ -199,6 +307,7 @@ function AppointmentModal({
             memberId,
             serviceIds: selectedServiceIds,
             dateTime,
+            customerId: selectedCustomer?.id,
             customerName: customerName.trim() || undefined,
             customerPhone: customerPhone.trim(),
             notes: notes || undefined,
@@ -261,15 +370,90 @@ function AppointmentModal({
             <input type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)} title="Data e hora" className={INPUT_CLASS} />
           </div>
           {!isEdit && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div className="space-y-1.5">
-                <label className={LABEL_INPUT}>Nome do cliente</label>
-                <input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Nome" title="Nome do cliente" className={INPUT_CLASS} />
+                <label className={LABEL_INPUT}>Buscar cliente cadastrado</label>
+                <input
+                  type="search"
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                  placeholder="Nome ou telefone"
+                  title="Buscar cliente cadastrado"
+                  className={INPUT_CLASS}
+                />
+                {customerSearch.trim() && (
+                  <div className="border border-stone-800 rounded-lg overflow-hidden bg-[var(--surface-1)]">
+                    {searchingCustomers ? (
+                      <p className="px-4 py-3 text-sm text-stone-500">Buscando...</p>
+                    ) : customerResults.length === 0 ? (
+                      <p className="px-4 py-3 text-sm text-stone-500">Nenhum cliente encontrado.</p>
+                    ) : (
+                      customerResults.map((customer) => (
+                        <button
+                          key={customer.id}
+                          type="button"
+                          onClick={() => chooseCustomer(customer)}
+                          className="w-full px-4 py-3 text-left hover:bg-stone-800/60 border-b last:border-b-0 border-stone-800 transition-colors"
+                        >
+                          <span className="block text-sm font-semibold text-stone-200">{customer.name}</span>
+                          <span className="block text-xs text-stone-500">{customer.phone}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <label className={LABEL_INPUT}>Telefone</label>
-                <input type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="(11) 99999-9999" title="Telefone do cliente" className={INPUT_CLASS} />
+
+              {selectedCustomer && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                  <p className="text-sm font-semibold text-amber-100">Cliente selecionado: {selectedCustomer.name}</p>
+                  <p className="text-xs text-amber-200/80">Telefone: {selectedCustomer.phone}</p>
+                  <button type="button" onClick={clearCustomer} className="mt-2 text-xs font-bold text-amber-300 hover:text-amber-200">
+                    Trocar cliente
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className={LABEL_INPUT}>Nome do cliente</label>
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => {
+                      setCustomerName(e.target.value);
+                      if (selectedCustomer) setSelectedCustomer(null);
+                    }}
+                    placeholder="Nome"
+                    title="Nome do cliente"
+                    className={INPUT_CLASS}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={LABEL_INPUT}>Telefone</label>
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => {
+                      setCustomerPhone(e.target.value);
+                      if (selectedCustomer) setSelectedCustomer(null);
+                    }}
+                    placeholder="(11) 99999-9999"
+                    title="Telefone do cliente"
+                    className={INPUT_CLASS}
+                  />
+                </div>
               </div>
+
+              {phoneSuggestion && canShowPhoneSuggestion && !selectedCustomer && (
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3">
+                  <p className="text-sm font-semibold text-sky-100">Cliente encontrado com este telefone:</p>
+                  <p className="text-xs text-sky-200/80">{phoneSuggestion.name} - {phoneSuggestion.phone}</p>
+                  <button type="button" onClick={() => chooseCustomer(phoneSuggestion)} className="mt-2 text-xs font-bold text-sky-300 hover:text-sky-200">
+                    Usar este cliente
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <div className="space-y-1.5">
@@ -552,6 +736,7 @@ function CalendarGrid({
   onStatusChange,
   onOpenComanda,
   currentDate,
+  onEmptySlotClick,
 }: {
   appointments: Appointment[];
   members: Member[];
@@ -561,9 +746,14 @@ function CalendarGrid({
   onStatusChange: (id: string, status: AppStatus) => void;
   onOpenComanda: (a: Appointment) => void;
   currentDate: string;
+  onEmptySlotClick: (initialState: NewAppointmentInitialState) => void;
 }) {
   const hours: number[] = [];
   for (let h = HOUR_START; h < HOUR_END; h++) hours.push(h);
+  const slotMinutes: number[] = [];
+  for (let minutes = HOUR_START * 60; minutes < HOUR_END * 60; minutes += SLOT_MIN) {
+    slotMinutes.push(minutes);
+  }
   const totalHeight = ((HOUR_END - HOUR_START) * 60 / SLOT_MIN) * ROW_HEIGHT;
 
   const visibleMembers = filterMember
@@ -638,6 +828,22 @@ function CalendarGrid({
 
               {/* Appointments */}
               <div className="relative" style={{ height: totalHeight }}>
+                {slotMinutes.map((minutes) => (
+                  <button
+                    key={`${m.id}-${minutes}`}
+                    type="button"
+                    onClick={() =>
+                      onEmptySlotClick({
+                        memberId: m.id,
+                        dateTime: minutesToLocalInput(currentDate, minutes),
+                      })
+                    }
+                    className="absolute left-0 right-0 z-0 text-left hover:bg-amber-500/5 focus:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-500/50 transition-colors"
+                    style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
+                    title={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                    aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                  />
+                ))}
                 {(byMember[m.id] ?? []).map((a) => (
                   <AppointmentBlock
                     key={a.id}
@@ -674,6 +880,8 @@ function AgendamentosContent() {
   const [filterMember, setFilterMember] = useState("");
 
   const [editTarget, setEditTarget] = useState<Appointment | null | "new">(null);
+  const [newAppointmentInitial, setNewAppointmentInitial] =
+    useState<NewAppointmentInitialState | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
 
   const fetchData = useCallback(async (date: string) => {
@@ -711,6 +919,7 @@ function AgendamentosContent() {
       return [...prev, a];
     });
     setEditTarget(null);
+    setNewAppointmentInitial(null);
   };
 
   const handleCancelled = (a: Appointment) => {
@@ -736,6 +945,11 @@ function AgendamentosContent() {
     }
   };
 
+  const openNewAppointment = (initialState: NewAppointmentInitialState | null = null) => {
+    setNewAppointmentInitial(initialState);
+    setEditTarget("new");
+  };
+
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
   const pending = appointments.filter((a) => a.status === "PENDING").length;
   const revenue = appointments
@@ -750,7 +964,11 @@ function AgendamentosContent() {
           members={members}
           barbershopServices={barbershopServices}
           currentDate={currentDate}
-          onClose={() => setEditTarget(null)}
+          initialState={editTarget === "new" ? newAppointmentInitial : null}
+          onClose={() => {
+            setEditTarget(null);
+            setNewAppointmentInitial(null);
+          }}
           onSaved={handleSaved}
         />
       )}
@@ -799,7 +1017,7 @@ function AgendamentosContent() {
               {revenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
             </span>
             <button
-              onClick={() => setEditTarget("new")}
+              onClick={() => openNewAppointment()}
               className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm px-4 py-2 rounded-lg transition-colors"
             >
               + Novo
@@ -852,6 +1070,7 @@ function AgendamentosContent() {
               onStatusChange={handleStatusChange}
               onOpenComanda={handleOpenComanda}
               currentDate={currentDate}
+              onEmptySlotClick={openNewAppointment}
             />
           )}
         </div>
