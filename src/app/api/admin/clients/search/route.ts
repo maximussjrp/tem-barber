@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
-import { normalizePhone } from "@/lib/customers";
+import { normalizePhone, phoneSearchFragments } from "@/lib/customers";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await getAdminSession();
@@ -23,11 +23,8 @@ export async function GET(request: NextRequest) {
     { customer: { name: { contains: query, mode: "insensitive" } } },
   ];
 
-  if (normalizedQueryPhone) {
-    filters.push({ customer: { phone: { contains: normalizedQueryPhone } } });
-    if (normalizedQueryPhone.length >= 8) {
-      filters.push({ customer: { phone: { contains: normalizedQueryPhone.slice(-8) } } });
-    }
+  for (const fragment of phoneSearchFragments(query)) {
+    filters.push({ customer: { phone: { contains: fragment } } });
   }
 
   const rows = await prisma.appointment.findMany({

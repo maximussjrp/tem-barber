@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { normalizePhone, phonesMatch } from "@/lib/customers";
+import { normalizePhone, phoneSearchFragments, phonesMatch } from "@/lib/customers";
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -24,6 +24,12 @@ describe("normalizacao de telefone", () => {
   it("compara telefones equivalentes", () => {
     expect(phonesMatch("+55 (17) 99999-9999", "17 99999-9999")).toBe(true);
     expect(phonesMatch("(17) 99999-9999", "(11) 99999-9999")).toBe(false);
+  });
+
+  it("gera fragmentos para buscar telefone com ou sem mascara", () => {
+    expect(phoneSearchFragments("+55 17 99999-9999")).toEqual(
+      expect.arrayContaining(["17999999999", "99999999", "99999"])
+    );
   });
 });
 
@@ -91,6 +97,7 @@ describe("busca admin de clientes", () => {
           OR: expect.arrayContaining([
             { customer: { phone: { contains: "17999999999" } } },
             { customer: { phone: { contains: "99999999" } } },
+            { customer: { phone: { contains: "99999" } } },
           ]),
         }),
       })

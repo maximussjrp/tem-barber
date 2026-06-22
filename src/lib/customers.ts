@@ -22,6 +22,18 @@ export function phonesMatch(left: string | null | undefined, right: string | nul
   return !!normalizedLeft && normalizedLeft === normalizedRight;
 }
 
+export function phoneSearchFragments(phone: string | null | undefined) {
+  const normalizedPhone = normalizePhone(phone);
+  const fragments = new Set<string>();
+
+  if (normalizedPhone) fragments.add(normalizedPhone);
+  if (normalizedPhone.length >= 8) fragments.add(normalizedPhone.slice(-8));
+  if (normalizedPhone.length >= 9) fragments.add(normalizedPhone.slice(-9, -4));
+  if (normalizedPhone.length >= 5) fragments.add(normalizedPhone.slice(-5));
+
+  return [...fragments].filter(Boolean);
+}
+
 export async function findBarbershopCustomerByPhone(
   tx: CustomerTx,
   barbershopId: string,
@@ -30,11 +42,13 @@ export async function findBarbershopCustomerByPhone(
   const normalizedPhone = normalizePhone(phone);
   if (normalizedPhone.length < 8) return null;
 
-  const phoneTail = normalizedPhone.slice(-8);
+  const phoneFragments = phoneSearchFragments(normalizedPhone);
   const rows = await tx.appointment.findMany({
     where: {
       barbershopId,
-      customer: { phone: { contains: phoneTail } },
+      OR: phoneFragments.map((fragment) => ({
+        customer: { phone: { contains: fragment } },
+      })),
     },
     distinct: ["customerId"],
     take: 50,

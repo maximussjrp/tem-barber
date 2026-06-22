@@ -189,7 +189,6 @@ export function AppointmentModal({
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(
     appointment ? appointment.customer : null
   );
-  const [customerSearch, setCustomerSearch] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
@@ -235,7 +234,7 @@ export function AppointmentModal({
       return;
     }
     const phoneDigits = customerPhone.replace(/\D/g, "");
-    if (phoneDigits.length < 8) {
+    if (phoneDigits.length < 5) {
       return;
     }
 
@@ -265,7 +264,6 @@ export function AppointmentModal({
     setSelectedCustomer(customer);
     setCustomerName(customer.name);
     setCustomerPhone(customer.phone);
-    setCustomerSearch("");
     setCustomerLookupQuery("");
     setCustomerResults([]);
     setPhoneSuggestion(null);
@@ -275,13 +273,12 @@ export function AppointmentModal({
     setSelectedCustomer(null);
     setCustomerName("");
     setCustomerPhone("");
-    setCustomerSearch("");
     setCustomerLookupQuery("");
     setCustomerResults([]);
     setPhoneSuggestion(null);
   };
 
-  const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 8;
+  const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 5;
   const canShowCustomerResults = customerLookupQuery.trim().length > 0 && !selectedCustomer;
 
   const toggleService = (id: string) =>
@@ -377,19 +374,40 @@ export function AppointmentModal({
           </div>
           {!isEdit && (
             <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className={LABEL_INPUT}>Buscar cliente cadastrado</label>
-                <input
-                  type="search"
-                  value={customerSearch}
-                  onChange={(e) => {
-                    setCustomerSearch(e.target.value);
-                    setCustomerLookupQuery(e.target.value);
-                  }}
-                  placeholder="Digite nome ou telefone"
-                  title="Buscar cliente cadastrado"
-                  className={INPUT_CLASS}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className={LABEL_INPUT}>Cliente</label>
+                  <input
+                    type="search"
+                    value={customerName}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCustomerName(value);
+                      setCustomerLookupQuery(value);
+                      if (!value.trim()) setCustomerResults([]);
+                      if (selectedCustomer) setSelectedCustomer(null);
+                    }}
+                    placeholder="Digite nome ou telefone"
+                    title="Cliente"
+                    className={INPUT_CLASS}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={LABEL_INPUT}>Telefone</label>
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCustomerPhone(value);
+                      if (value.replace(/\D/g, "").length < 5) setPhoneSuggestion(null);
+                      if (selectedCustomer) setSelectedCustomer(null);
+                    }}
+                    placeholder="(11) 99999-9999"
+                    title="Telefone do cliente"
+                    className={INPUT_CLASS}
+                  />
+                </div>
               </div>
 
               {canShowCustomerResults && (
@@ -401,7 +419,7 @@ export function AppointmentModal({
                     {searchingCustomers ? (
                       <p className="px-4 py-3 text-sm text-stone-500">Buscando...</p>
                     ) : customerResults.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-stone-500">Nenhum cliente encontrado. Você pode continuar como novo cliente.</p>
+                      <p className="px-4 py-3 text-sm text-stone-500">Nenhum cliente encontrado. Continue preenchendo para criar um novo cliente.</p>
                     ) : (
                       customerResults.map((customer) => (
                         <button
@@ -429,42 +447,9 @@ export function AppointmentModal({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className={LABEL_INPUT}>Nome do cliente</label>
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => {
-                      setCustomerName(e.target.value);
-                      setCustomerLookupQuery(e.target.value);
-                      if (selectedCustomer) setSelectedCustomer(null);
-                    }}
-                    placeholder="Digite nome ou busque cliente cadastrado"
-                    title="Nome do cliente"
-                    className={INPUT_CLASS}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={LABEL_INPUT}>Telefone</label>
-                  <input
-                    type="tel"
-                    value={customerPhone}
-                    onChange={(e) => {
-                      setCustomerPhone(e.target.value);
-                      setCustomerLookupQuery(e.target.value);
-                      if (selectedCustomer) setSelectedCustomer(null);
-                    }}
-                    placeholder="(11) 99999-9999"
-                    title="Telefone do cliente"
-                    className={INPUT_CLASS}
-                  />
-                </div>
-              </div>
-
               {phoneSuggestion && canShowPhoneSuggestion && !selectedCustomer && (
                 <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3">
-                  <p className="text-sm font-semibold text-sky-100">Cliente encontrado com este telefone:</p>
+                  <p className="text-sm font-semibold text-sky-100">Já existe um cliente com este telefone:</p>
                   <p className="text-xs text-sky-200/80">{phoneSuggestion.name} - {phoneSuggestion.phone}</p>
                   <button type="button" onClick={() => chooseCustomer(phoneSuggestion)} className="mt-2 text-xs font-bold text-sky-300 hover:text-sky-200">
                     Usar este cliente

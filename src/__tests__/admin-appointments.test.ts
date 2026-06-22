@@ -193,11 +193,37 @@ describe("agendamento administrativo", () => {
     );
 
     expect(prismaMock.user.create).not.toHaveBeenCalled();
+    expect(prismaMock.appointment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          barbershopId: "shop-a",
+          OR: expect.arrayContaining([
+            { customer: { phone: { contains: "11988887777" } } },
+            { customer: { phone: { contains: "88887777" } } },
+          ]),
+        }),
+      })
+    );
     expect(prismaMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ customerId: "customer-existing" }),
       })
     );
+  });
+
+  it("nao vincula customerId de outra barbearia", async () => {
+    prismaMock.appointment.findFirst.mockResolvedValue(null);
+
+    const response = await POST(jsonRequest(body));
+
+    expect(response.status).toBe(404);
+    expect(prismaMock.appointment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { barbershopId: "shop-a", customerId: "customer-a" },
+      })
+    );
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
   });
 
   it("permite owner configurado com servicos como profissional de agenda", async () => {
