@@ -147,7 +147,7 @@ function minutesToLocalInput(dateStr: string, minutes: number) {
 
 // ─── Appointment Modal ────────────────────────────────────────────────────────
 
-function AppointmentModal({
+export function AppointmentModal({
   appointment,
   members,
   barbershopServices,
@@ -190,6 +190,7 @@ function AppointmentModal({
     appointment ? appointment.customer : null
   );
   const [customerSearch, setCustomerSearch] = useState("");
+  const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [phoneSuggestion, setPhoneSuggestion] = useState<CustomerSearchResult | null>(null);
@@ -199,7 +200,7 @@ function AppointmentModal({
 
   useEffect(() => {
     if (isEdit) return;
-    const query = customerSearch.trim();
+    const query = customerLookupQuery.trim();
     if (!query) {
       return;
     }
@@ -227,7 +228,7 @@ function AppointmentModal({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [customerSearch, isEdit]);
+  }, [customerLookupQuery, isEdit]);
 
   useEffect(() => {
     if (isEdit || selectedCustomer) {
@@ -265,6 +266,7 @@ function AppointmentModal({
     setCustomerName(customer.name);
     setCustomerPhone(customer.phone);
     setCustomerSearch("");
+    setCustomerLookupQuery("");
     setCustomerResults([]);
     setPhoneSuggestion(null);
   };
@@ -273,10 +275,14 @@ function AppointmentModal({
     setSelectedCustomer(null);
     setCustomerName("");
     setCustomerPhone("");
+    setCustomerSearch("");
+    setCustomerLookupQuery("");
+    setCustomerResults([]);
     setPhoneSuggestion(null);
   };
 
   const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 8;
+  const canShowCustomerResults = customerLookupQuery.trim().length > 0 && !selectedCustomer;
 
   const toggleService = (id: string) =>
     setSelectedServiceIds((prev) =>
@@ -376,17 +382,26 @@ function AppointmentModal({
                 <input
                   type="search"
                   value={customerSearch}
-                  onChange={(e) => setCustomerSearch(e.target.value)}
-                  placeholder="Nome ou telefone"
+                  onChange={(e) => {
+                    setCustomerSearch(e.target.value);
+                    setCustomerLookupQuery(e.target.value);
+                  }}
+                  placeholder="Digite nome ou telefone"
                   title="Buscar cliente cadastrado"
                   className={INPUT_CLASS}
                 />
-                {customerSearch.trim() && (
-                  <div className="border border-stone-800 rounded-lg overflow-hidden bg-[var(--surface-1)]">
+              </div>
+
+              {canShowCustomerResults && (
+                <div className="rounded-lg border border-stone-800 bg-[var(--surface-1)] overflow-hidden">
+                  <div className="px-4 py-2 border-b border-stone-800 bg-stone-950/50">
+                    <p className="text-xs font-bold uppercase tracking-widest text-stone-400">Clientes encontrados</p>
+                  </div>
+                  <div>
                     {searchingCustomers ? (
                       <p className="px-4 py-3 text-sm text-stone-500">Buscando...</p>
                     ) : customerResults.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-stone-500">Nenhum cliente encontrado.</p>
+                      <p className="px-4 py-3 text-sm text-stone-500">Nenhum cliente encontrado. Você pode continuar como novo cliente.</p>
                     ) : (
                       customerResults.map((customer) => (
                         <button
@@ -401,15 +416,15 @@ function AppointmentModal({
                       ))
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {selectedCustomer && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-                  <p className="text-sm font-semibold text-amber-100">Cliente selecionado: {selectedCustomer.name}</p>
-                  <p className="text-xs text-amber-200/80">Telefone: {selectedCustomer.phone}</p>
+                  <p className="text-sm font-semibold text-amber-100">Cliente selecionado:</p>
+                  <p className="text-xs text-amber-200/80">{selectedCustomer.name} - {selectedCustomer.phone}</p>
                   <button type="button" onClick={clearCustomer} className="mt-2 text-xs font-bold text-amber-300 hover:text-amber-200">
-                    Trocar cliente
+                    Limpar seleção
                   </button>
                 </div>
               )}
@@ -422,9 +437,10 @@ function AppointmentModal({
                     value={customerName}
                     onChange={(e) => {
                       setCustomerName(e.target.value);
+                      setCustomerLookupQuery(e.target.value);
                       if (selectedCustomer) setSelectedCustomer(null);
                     }}
-                    placeholder="Nome"
+                    placeholder="Digite nome ou busque cliente cadastrado"
                     title="Nome do cliente"
                     className={INPUT_CLASS}
                   />
@@ -436,6 +452,7 @@ function AppointmentModal({
                     value={customerPhone}
                     onChange={(e) => {
                       setCustomerPhone(e.target.value);
+                      setCustomerLookupQuery(e.target.value);
                       if (selectedCustomer) setSelectedCustomer(null);
                     }}
                     placeholder="(11) 99999-9999"

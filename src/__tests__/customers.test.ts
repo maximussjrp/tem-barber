@@ -55,7 +55,14 @@ describe("busca admin de clientes", () => {
     const data = await response.json();
 
     expect(prismaMock.appointment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { barbershopId: "shop-a" } })
+      expect.objectContaining({
+        where: expect.objectContaining({
+          barbershopId: "shop-a",
+          OR: expect.arrayContaining([
+            { customer: { name: { contains: "joao", mode: "insensitive" } } },
+          ]),
+        }),
+      })
     );
     expect(data.clients).toHaveLength(1);
     expect(data.clients[0]).toMatchObject({ id: "customer-a", name: "Joao Martins" });
@@ -67,6 +74,27 @@ describe("busca admin de clientes", () => {
     );
     const data = await response.json();
 
+    expect(data.clients).toHaveLength(1);
+    expect(data.clients[0]).toMatchObject({ id: "customer-a" });
+  });
+
+  it("filtra por telefone com mascara e prefixo normalizado", async () => {
+    const response = await SEARCH_CLIENTS(
+      new NextRequest("http://localhost/api/admin/clients/search?q=%2B55%2017%2099999-9999")
+    );
+    const data = await response.json();
+
+    expect(prismaMock.appointment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          barbershopId: "shop-a",
+          OR: expect.arrayContaining([
+            { customer: { phone: { contains: "17999999999" } } },
+            { customer: { phone: { contains: "99999999" } } },
+          ]),
+        }),
+      })
+    );
     expect(data.clients).toHaveLength(1);
     expect(data.clients[0]).toMatchObject({ id: "customer-a" });
   });
