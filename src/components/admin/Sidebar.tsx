@@ -99,9 +99,26 @@ const navItems = [
   },
 ];
 
+function getInitials(name: string): string {
+  if (!name) return "";
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const initials = words.map((w) => w[0]).join("").toUpperCase();
+  return initials.slice(0, 3);
+}
+
 export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName }: SidebarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [prevLogo, setPrevLogo] = useState(barbershopLogo);
+  const [imageError, setImageError] = useState(false);
+
+  if (barbershopLogo !== prevLogo) {
+    setPrevLogo(barbershopLogo);
+    setImageError(false);
+  }
+
+  const showFallback = !barbershopLogo || imageError;
+  const initials = getInitials(barbershopName);
 
   const isRouteActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   const isGroupActive = (item: (typeof navItems)[number]) =>
@@ -128,12 +145,17 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
       {/* Brand */}
       <div className="px-5 py-5 border-b border-border-subtle">
         <div className="flex items-center gap-3">
-          {barbershopLogo ? (
-            <img src={barbershopLogo} alt={barbershopName} className="w-9 h-9 rounded-xl object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" />
+          {!showFallback ? (
+            <img 
+              src={barbershopLogo!} 
+              alt={barbershopName} 
+              onError={() => setImageError(true)}
+              className="w-9 h-9 rounded-xl object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" 
+            />
           ) : (
             <div className="w-9 h-9 rounded-xl bg-surface-raised border border-border-subtle flex items-center justify-center shrink-0 shadow-sm">
               <span className="font-serif font-bold text-text-primary text-sm">
-                {barbershopName.charAt(0).toUpperCase()}
+                {initials}
               </span>
             </div>
           )}
@@ -241,12 +263,17 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
       {/* Mobile top bar */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-surface border-b border-border-subtle">
         <div className="flex items-center gap-2 min-w-0 pr-4">
-          {barbershopLogo ? (
-            <img src={barbershopLogo} alt={barbershopName} className="w-8 h-8 rounded-lg object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" />
+          {!showFallback ? (
+            <img 
+              src={barbershopLogo!} 
+              alt={barbershopName} 
+              onError={() => setImageError(true)}
+              className="w-8 h-8 rounded-lg object-contain p-0.5 bg-surface-raised shrink-0 border border-border-subtle" 
+            />
           ) : (
             <div className="w-8 h-8 rounded-lg bg-surface-raised border border-border-subtle flex items-center justify-center shrink-0 shadow-sm">
               <span className="font-serif font-bold text-text-primary text-xs">
-                {barbershopName.charAt(0).toUpperCase()}
+                {initials}
               </span>
             </div>
           )}

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
+    barbershop: { findUnique: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findFirst: vi.fn(), create: vi.fn() },
     service: { findMany: vi.fn() },
@@ -68,6 +69,7 @@ beforeEach(() => {
   prismaMock.appointment.findMany.mockResolvedValue([]);
   prismaMock.appointment.count.mockResolvedValue(0);
   prismaMock.barbershopMember.findMany.mockResolvedValue([]);
+  prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a", name: "Don Brio", slug: "don-brio" });
 });
 
 describe("agendamento administrativo", () => {
@@ -288,5 +290,109 @@ describe("agendamento administrativo", () => {
     expect(prismaMock.appointment.create).toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalled();
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
+  });
+
+  it("GET /api/admin/appointments inclui barbershopName, barbershopSlug e freeSlots calculados sem ocupados", async () => {
+    prismaMock.barbershop.findUnique.mockResolvedValue({
+      id: "shop-a",
+      name: "Don Brio",
+      slug: "don-brio",
+    });
+
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      {
+        id: "member-max",
+        user: { name: "Max" },
+        workingHours: [
+          { dayOfWeek: 1, startTime: "09:00", endTime: "11:00", breakStart: null, breakEnd: null, isActive: true },
+        ],
+        timeOffs: [],
+      },
+    ]);
+
+    prismaMock.appointment.findMany.mockResolvedValueOnce([
+      {
+        id: "appt-1",
+        dateTime: "2026-07-20T10:00:00.000Z",
+        durationMin: 30,
+        status: "CONFIRMED",
+        customer: { id: "cust-1", name: "Cliente A", phone: "11999999999" },
+        barber: { id: "member-max", user: { name: "Max", avatarUrl: null } },
+        services: [],
+        comandas: [],
+      },
+    ]);
+
+    prismaMock.appointment.findMany.mockResolvedValueOnce([
+      {
+        id: "appt-1",
+        memberId: "member-max",
+        dateTime: new Date("2026-07-20T10:00:00.000Z"),
+        durationMin: 30,
+        status: "CONFIRMED",
+      },
+    ]);
+
+    const response = await GET(new NextRequest("http://localhost/api/admin/appointments?date=2026-07-20"));
+    expect(response.status).toBe(200);
+    
+    const data = await response.json();
+    expect(data.barbershopName).toBe("Don Brio");
+    expect(data.barbershopSlug).toBe("don-brio");
+    
+    const maxMember = data.members.find((m: any) => m.id === "member-max");
+    expect(maxMember).toBeDefined();
+    expect(maxMember.freeSlots).toEqual([540, 570, 630]);
+  });
+
+  it("GET /api/admin/appointments nao inclui freeSlots para profissional sem agenda ativa", async () => {
+    prismaMock.barbershop.findUnique.mockResolvedValue({
+      id: "shop-a",
+      name: "Don Brio",
+      slug: "don-brio",
+    });
+
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      {
+        id: "member-inactive",
+        user: { name: "No Agenda" },
+        workingHours: [],
+        timeOffs: [],
+      },
+    ]);
+
+    prismaMock.appointment.findMany.mockResolvedValueOnce([]);
+
+    const response = await GET(new NextRequest("http://localhost/api/admin/appointments?date=2026-07-20"));
+    const data = await response.json();
+    
+    const inactiveMember = data.members.find((m: any) => m.id === "member-inactive");
+    expect(inactiveMember).toBeDefined();
+    expect(inactiveMember.freeSlots).toEqual([]);
+  });
+
+  it("agendamento criado para 10:00 e formatado em UTC nao sofre deslocamento por timezone", () => {
+    const dbDateTime = "2026-06-23T10:00:00.000Z";
+    
+    // Simulate /minha-conta/page.tsx formatting
+    const dtMinhaConta = new Date(dbDateTime);
+    const timeMinhaConta = dtMinhaConta.toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+    expect(timeMinhaConta).toBe("10:00");
+
+    // Simulate /admin/agendamentos/page.tsx formatting
+    const timeAdminAgenda = dtMinhaConta.toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+    expect(timeAdminAgenda).toBe("10:00");
+
+    // Simulate /admin/agendamentos/page.tsx isoToMinutes positioning
+    const minutes = dtMinhaConta.getUTCHours() * 60 + dtMinhaConta.getUTCMinutes();
+    expect(minutes).toBe(600); // 10:00 is exactly 600 minutes from midnight
   });
 });

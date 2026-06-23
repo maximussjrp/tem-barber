@@ -120,7 +120,9 @@ export async function PUT(
   }
 
   const targetMemberId = memberId ?? existing.memberId;
-  const targetDateTime = dateTime ? new Date(dateTime) : existing.dateTime;
+  const targetDateTime = dateTime
+    ? new Date(dateTime.endsWith("Z") ? dateTime : dateTime + "Z")
+    : existing.dateTime;
 
   if (Number.isNaN(targetDateTime.getTime())) {
     return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });

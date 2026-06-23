@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import WhatsAppShareSlots from "@/components/admin/WhatsAppShareSlots";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ interface Appointment {
 interface Member {
   id: string;
   user: { name: string };
+  startTime?: string;
+  endTime?: string;
+  freeSlots?: number[];
 }
 
 interface Service {
@@ -122,13 +126,13 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "America/Sao_Paulo",
+    timeZone: "UTC",
   });
 }
 
 function isoToMinutes(iso: string) {
-  const br = toBR(new Date(iso));
-  return br.getUTCHours() * 60 + br.getUTCMinutes();
+  const d = new Date(iso);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
 function minutesToTop(minutes: number) {
@@ -327,7 +331,7 @@ export function AppointmentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="relative bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
         <div className="sticky top-0 bg-[var(--surface-2)] border-b border-[var(--border-subtle)] px-6 py-4 flex items-center justify-between rounded-t-2xl">
@@ -507,7 +511,7 @@ function CancelModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="relative bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4">
         <h2 className="text-base font-bold text-[var(--text-primary)]">Cancelar agendamento</h2>
@@ -539,14 +543,17 @@ function AppointmentBlock({
   onCancel,
   onStatusChange,
   onOpenComanda,
+  isOpen,
+  onToggleOpen,
 }: {
   appointment: Appointment;
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
   onOpenComanda: (a: Appointment) => void;
+  isOpen: boolean;
+  onToggleOpen: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
   const router = useRouter();
 
@@ -573,7 +580,7 @@ function AppointmentBlock({
       if (res.ok) {
         const updated: Appointment = await res.json();
         onStatusChange(updated.id, updated.status);
-        setOpen(false);
+        onToggleOpen(false);
       }
     } finally {
       setLoadingStatus(false);
@@ -602,10 +609,10 @@ function AppointmentBlock({
   };
 
   return (
-    <div className="absolute left-1 right-1 z-10" style={{ top, height }}>
+    <div className={`absolute left-1 right-1 ${isOpen ? "z-50" : "z-10"}`} style={{ top, height }}>
       {/* Block */}
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onToggleOpen(!isOpen)}
         className={`w-full h-full rounded-lg border px-2 py-1 text-left overflow-hidden transition-all shadow-sm ${UI_STATUS_BG[uiStatus]} ${isTerminal ? "opacity-50" : "hover:brightness-110 cursor-pointer"}`}
       >
         <p className="text-[11px] font-bold tabular-nums leading-tight">
@@ -618,9 +625,9 @@ function AppointmentBlock({
       </button>
 
       {/* Detail Popup (Fixed Modal/Bottom Sheet) */}
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-0">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 sm:p-0">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => onToggleOpen(false)} />
           <div className="relative w-full max-w-sm bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:fade-in sm:zoom-in-95">
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -658,7 +665,7 @@ function AppointmentBlock({
               )}
 
               {uiStatus === "CONFIRMED" && (
-                <button onClick={() => { setOpen(false); onOpenComanda(appointment); }} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-[var(--gold)] hover:bg-[#c99833] text-stone-900 transition-colors disabled:opacity-50">
+                <button onClick={() => { onToggleOpen(false); onOpenComanda(appointment); }} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-[var(--gold)] hover:bg-[#c99833] text-stone-900 transition-colors disabled:opacity-50">
                   Abrir Atendimento
                 </button>
               )}
@@ -700,10 +707,10 @@ function AppointmentBlock({
               {/* Botões secundários (apenas para não-terminais e sem comanda avançada) */}
               {!isTerminal && uiStatus !== "IN_SERVICE" && uiStatus !== "PENDING_PAYMENT" && (
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button onClick={() => { setOpen(false); onEdit(appointment); }} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors">
+                  <button onClick={() => { onToggleOpen(false); onEdit(appointment); }} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors">
                     Editar
                   </button>
-                  <button onClick={() => { setOpen(false); onCancel(appointment); }} disabled={loadingStatus} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-red-400 hover:bg-red-500/10 border border-red-500/20 transition-colors disabled:opacity-50">
+                  <button onClick={() => { onToggleOpen(false); onCancel(appointment); }} disabled={loadingStatus} className="text-sm font-bold px-3 py-2 rounded-xl bg-transparent text-red-400 hover:bg-red-500/10 border border-red-500/20 transition-colors disabled:opacity-50">
                     Cancelar
                   </button>
                 </div>
@@ -716,7 +723,7 @@ function AppointmentBlock({
                 </button>
               )}
 
-              <button onClick={() => setOpen(false)} className="w-full text-sm font-semibold px-3 py-2 mt-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+              <button onClick={() => onToggleOpen(false)} className="w-full text-sm font-semibold px-3 py-2 mt-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
                 Fechar
               </button>
             </div>
@@ -750,6 +757,7 @@ function CalendarGrid({
   currentDate: string;
   onEmptySlotClick: (initialState: NewAppointmentInitialState) => void;
 }) {
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const hours: number[] = [];
   for (let h = HOUR_START; h < HOUR_END; h++) hours.push(h);
   const slotMinutes: number[] = [];
@@ -807,58 +815,66 @@ function CalendarGrid({
             Nenhum barbeiro encontrado
           </div>
         ) : (
-          visibleMembers.map((m) => (
-            <div key={m.id} className="flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] snap-start">
-              {/* Grid lines */}
-              <div className="absolute inset-0 pointer-events-none">
-                {hours.map((h) => (
-                  <div key={h}>
-                    <div className="absolute left-0 right-0 border-t border-[var(--border-subtle)]" style={{ top: minutesToTop(h * 60) }} />
-                    <div className="absolute left-0 right-0" style={{ top: minutesToTop(h * 60 + 30), borderTop: "1px solid rgba(255,255,255,0.03)" }} />
-                  </div>
-                ))}
-                <div className="absolute left-0 right-0 border-t border-[var(--border-subtle)]" style={{ top: totalHeight }} />
-              </div>
-
-              {/* Now line */}
-              {showNowLine && (
-                <div className="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: nowTop }}>
-                  <div className="h-0.5 bg-red-500/70" />
-                  <div className="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-red-500" />
+          visibleMembers.map((m) => {
+            const hasActiveBlock = activeBlockId && (byMember[m.id] ?? []).some((a) => a.id === activeBlockId);
+            return (
+              <div
+                key={m.id}
+                className={`flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] snap-start ${hasActiveBlock ? "z-30" : "z-10"}`}
+              >
+                {/* Grid lines */}
+                <div className="absolute inset-0 pointer-events-none">
+                  {hours.map((h) => (
+                    <div key={h}>
+                      <div className="absolute left-0 right-0 border-t border-[var(--border-subtle)]" style={{ top: minutesToTop(h * 60) }} />
+                      <div className="absolute left-0 right-0" style={{ top: minutesToTop(h * 60 + 30), borderTop: "1px solid rgba(255,255,255,0.03)" }} />
+                    </div>
+                  ))}
+                  <div className="absolute left-0 right-0 border-t border-[var(--border-subtle)]" style={{ top: totalHeight }} />
                 </div>
-              )}
 
-              {/* Appointments */}
-              <div className="relative" style={{ height: totalHeight }}>
-                {slotMinutes.map((minutes) => (
-                  <button
-                    key={`${m.id}-${minutes}`}
-                    type="button"
-                    onClick={() =>
-                      onEmptySlotClick({
-                        memberId: m.id,
-                        dateTime: minutesToLocalInput(currentDate, minutes),
-                      })
-                    }
-                    className="absolute left-0 right-0 z-0 text-left hover:bg-amber-500/5 focus:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-500/50 transition-colors"
-                    style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
-                    title={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
-                    aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
-                  />
-                ))}
-                {(byMember[m.id] ?? []).map((a) => (
-                  <AppointmentBlock
-                    key={a.id}
-                    appointment={a}
-                    onEdit={onEdit}
-                    onCancel={onCancel}
-                    onStatusChange={onStatusChange}
-                    onOpenComanda={onOpenComanda}
-                  />
-                ))}
+                {/* Now line */}
+                {showNowLine && (
+                  <div className="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: nowTop }}>
+                    <div className="h-0.5 bg-red-500/70" />
+                    <div className="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-red-500" />
+                  </div>
+                )}
+
+                {/* Appointments */}
+                <div className="relative" style={{ height: totalHeight }}>
+                  {slotMinutes.map((minutes) => (
+                    <button
+                      key={`${m.id}-${minutes}`}
+                      type="button"
+                      onClick={() =>
+                        onEmptySlotClick({
+                          memberId: m.id,
+                          dateTime: minutesToLocalInput(currentDate, minutes),
+                        })
+                      }
+                      className="absolute left-0 right-0 z-0 text-left hover:bg-amber-500/5 focus:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-500/50 transition-colors"
+                      style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
+                      title={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                      aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                    />
+                  ))}
+                  {(byMember[m.id] ?? []).map((a) => (
+                    <AppointmentBlock
+                      key={a.id}
+                      appointment={a}
+                      onEdit={onEdit}
+                      onCancel={onCancel}
+                      onStatusChange={onStatusChange}
+                      onOpenComanda={onOpenComanda}
+                      isOpen={activeBlockId === a.id}
+                      onToggleOpen={(open) => setActiveBlockId(open ? a.id : null)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
@@ -878,6 +894,8 @@ function AgendamentosContent() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [barbershopServices, setBarbershopServices] = useState<Service[]>([]);
+  const [barbershopName, setBarbershopName] = useState("");
+  const [barbershopSlug, setBarbershopSlug] = useState("");
   const [loading, setLoading] = useState(true);
   const [filterMember, setFilterMember] = useState("");
 
@@ -899,6 +917,8 @@ function AgendamentosContent() {
       const svcData = await svcRes.json();
       setAppointments(apptData.appointments ?? []);
       setMembers(apptData.members ?? []);
+      setBarbershopName(apptData.barbershopName ?? "");
+      setBarbershopSlug(apptData.barbershopSlug ?? "");
       setBarbershopServices(Array.isArray(svcData) ? svcData : (svcData.services ?? []));
     } finally {
       setLoading(false);
@@ -957,6 +977,13 @@ function AgendamentosContent() {
   const revenue = appointments
     .filter((a) => a.status === "COMPLETED")
     .reduce((s, a) => s + parseFloat(a.totalPrice), 0);
+
+  const shareMembersData = members.map((m) => ({
+    memberName: m.user.name,
+    startTime: m.startTime || "",
+    endTime: m.endTime || "",
+    freeSlots: m.freeSlots || [],
+  }));
 
   return (
     <>
@@ -1018,6 +1045,12 @@ function AgendamentosContent() {
             <span className="text-xs text-emerald-400 font-semibold">
               {revenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
             </span>
+            <WhatsAppShareSlots
+              members={shareMembersData}
+              barbershopName={barbershopName}
+              barbershopSlug={barbershopSlug}
+              todayStr={currentDate}
+            />
             <button
               onClick={() => openNewAppointment()}
               className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm px-4 py-2 rounded-lg transition-colors"

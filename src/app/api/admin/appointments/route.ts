@@ -6,6 +6,7 @@ import { AppointmentConflictError } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
+import { todayIsoBR, nowBR } from "@/lib/time-utils";
 
 interface AdminAppointmentBody {
   memberId?: string;
@@ -80,14 +81,17 @@ export async function GET(request: NextRequest) {
 
   let startOfDay: Date;
   let endOfDay: Date;
+  let targetDateStr: string;
   if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    targetDateStr = dateStr;
     const [y, m, d] = dateStr.split("-").map(Number);
     startOfDay = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
     endOfDay = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
   } else {
-    const now = new Date();
-    startOfDay = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0));
-    endOfDay = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999));
+    targetDateStr = todayIsoBR();
+    const [y, m, d] = targetDateStr.split("-").map(Number);
+    startOfDay = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+    endOfDay = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
   }
 
   const where: Prisma.AppointmentWhereInput = {
@@ -104,7 +108,7 @@ export async function GET(request: NextRequest) {
     where.status = statusFilter as AppointmentStatus;
   }
 
-  const [appointments, total] = await Promise.all([
+  const [appointments, total, barbershop] = await Promise.all([
     prisma.appointment.findMany({
       where,
       include: {
@@ -124,19 +128,124 @@ export async function GET(request: NextRequest) {
       take: pageSize,
     }),
     prisma.appointment.count({ where }),
+    prisma.barbershop.findUnique({
+      where: { id: barbershopId },
+      select: { name: true, slug: true },
+    }),
   ]);
 
-  const members = await prisma.barbershopMember.findMany({
+  const dayOfWeek = startOfDay.getUTCDay();
+  const rawMembers = await prisma.barbershopMember.findMany({
     where: {
       barbershopId,
       isActive: true,
       services: { some: {} },
     },
-    include: { user: { select: { name: true } } },
+    include: { 
+      user: { select: { name: true } },
+      workingHours: {
+        where: { dayOfWeek, isActive: true },
+      },
+      timeOffs: {
+        where: {
+          startDate: { lte: endOfDay },
+          endDate: { gte: startOfDay },
+        },
+      },
+    },
     orderBy: { user: { name: "asc" } },
   });
 
-  return NextResponse.json({ appointments, total, page, pageSize, members });
+  const toMinutes = (time: string) => {
+    const [h, m] = time.split(":").map(Number);
+    return h * 60 + m;
+  };
+
+  const isToday = targetDateStr === todayIsoBR();
+  const brNow = nowBR();
+  const brNowMinutes = brNow.getUTCHours() * 60 + brNow.getUTCMinutes();
+
+  const members = [];
+  for (const member of rawMembers) {
+    if (member.timeOffs.length > 0) {
+      members.push({
+        id: member.id,
+        user: { name: member.user.name },
+        startTime: "",
+        endTime: "",
+        freeSlots: [],
+      });
+      continue;
+    }
+
+    const wh = member.workingHours[0];
+    if (!wh) {
+      members.push({
+        id: member.id,
+        user: { name: member.user.name },
+        startTime: "",
+        endTime: "",
+        freeSlots: [],
+      });
+      continue;
+    }
+
+    const workStart = toMinutes(wh.startTime);
+    const workEnd = toMinutes(wh.endTime);
+    const breakStart = wh.breakStart ? toMinutes(wh.breakStart) : null;
+    const breakEnd = wh.breakEnd ? toMinutes(wh.breakEnd) : null;
+
+    // Get busy times for this member today
+    const appts = await prisma.appointment.findMany({
+      where: {
+        memberId: member.id,
+        dateTime: { gte: startOfDay, lte: endOfDay },
+        status: { in: ["PENDING", "CONFIRMED"] },
+      },
+    });
+
+    const busy = appts.map((a) => {
+      const dt = new Date(a.dateTime);
+      const startMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
+      return { start: startMin, end: startMin + a.durationMin };
+    });
+
+    const freeSlots: number[] = [];
+    const SLOT_INTERVAL = 30;
+
+    for (let start = workStart; start + SLOT_INTERVAL <= workEnd; start += SLOT_INTERVAL) {
+      const end = start + SLOT_INTERVAL;
+
+      if (breakStart !== null && breakEnd !== null) {
+        if (start < breakEnd && end > breakStart) continue;
+      }
+
+      const conflict = busy.some((b) => start < b.end && end > b.start);
+      if (conflict) continue;
+
+      if (isToday && start <= brNowMinutes) continue;
+
+      freeSlots.push(start);
+    }
+
+    members.push({
+      id: member.id,
+      user: { name: member.user.name },
+      startTime: wh.startTime,
+      endTime: wh.endTime,
+      freeSlots,
+    });
+  }
+
+  return NextResponse.json({
+    appointments,
+    total,
+    page,
+    pageSize,
+    members,
+    barbershopName: barbershop?.name ?? "",
+    barbershopSlug: barbershop?.slug ?? "",
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -163,7 +272,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });
   }
   const barbershopId = data!.barbershopId;
-  const requestedDateTime = new Date(dateTime);
+  const requestedDateTime = new Date(dateTime.endsWith("Z") ? dateTime : dateTime + "Z");
   if (Number.isNaN(requestedDateTime.getTime())) {
     return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
   }

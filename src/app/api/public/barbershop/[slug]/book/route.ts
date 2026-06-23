@@ -179,7 +179,7 @@ export async function POST(
     );
   }
 
-  const requestedDateTime = new Date(dateTime);
+  const requestedDateTime = new Date(dateTime.endsWith("Z") ? dateTime : dateTime + "Z");
   if (Number.isNaN(requestedDateTime.getTime())) {
     return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
   }
