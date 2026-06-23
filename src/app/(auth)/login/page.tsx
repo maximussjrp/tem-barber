@@ -68,6 +68,7 @@ function LoginContent() {
   const [partnersLoading, setPartnersLoading] = useState(true);
   const [locationPermitted, setLocationPermitted] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
+  const [showDiscovery, setShowDiscovery] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -87,9 +88,10 @@ function LoginContent() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (activeTab !== "client") {
+    if (!showDiscovery) {
       return;
     }
+    setPartnersLoading(true);
     fetch("/api/public/barbershops")
       .then((r) => r.json())
       .then((data) => {
@@ -97,11 +99,12 @@ function LoginContent() {
       })
       .catch(() => setPartners([]))
       .finally(() => setPartnersLoading(false));
-  }, [activeTab]);
+  }, [showDiscovery]);
 
   const selectTab = (tab: "client" | "admin") => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    setShowDiscovery(false);
 
     const nextParams = new URLSearchParams(searchParams.toString());
     if (tab === "admin") {
@@ -137,19 +140,55 @@ function LoginContent() {
     setSuccessMsg(null);
 
     try {
-      const res = await signIn("credentials", {
-        redirect: false,
-        loginType: "client",
-        name: clientName,
-        phone: clientPhone,
+      const cleanPhone = clientPhone.replace(/\D/g, "");
+      if (cleanPhone.length < 10) {
+        setErrorMsg("Telefone inválido. Informe o DDD + Número.");
+        setLoading(false);
+        return;
+      }
+
+      // Consulta se o telefone possui barbearias vinculadas
+      const lookupRes = await fetch("/api/public/client-lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: clientName, phone: clientPhone }),
       });
 
-      if (res?.error) {
-        setErrorMsg(res.error);
+      if (!lookupRes.ok) {
+        const errData = await lookupRes.json();
+        setErrorMsg(errData.error || "Erro ao consultar telefone.");
+        setLoading(false);
+        return;
+      }
+
+      const lookupData = await lookupRes.json();
+      const linked = lookupData.linkedBarbershops || [];
+
+      if (linked.length > 0) {
+        // Encontrou barbearia vinculada, realiza o login
+        const res = await signIn("credentials", {
+          redirect: false,
+          loginType: "client",
+          name: clientName,
+          phone: clientPhone,
+        });
+
+        if (res?.error) {
+          setErrorMsg(res.error);
+        } else {
+          const callbackUrl = searchParams.get("callbackUrl");
+          if (callbackUrl) {
+            router.push(callbackUrl);
+          } else if (linked.length === 1) {
+            router.push(`/${linked[0].slug}/agendar`);
+          } else {
+            router.push("/minha-conta");
+          }
+          router.refresh();
+        }
       } else {
-        const callbackUrl = searchParams.get("callbackUrl");
-        router.push(callbackUrl || "/minha-conta");
-        router.refresh();
+        // Não possui barbearias vinculadas: exibe o buscador de barbearias
+        setShowDiscovery(true);
       }
     } catch {
       setErrorMsg("Ocorreu um erro no servidor.");
@@ -231,7 +270,11 @@ function LoginContent() {
       <div className="fixed top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl -z-10 bg-[var(--gold-surface)] pointer-events-none" />
       <div className="fixed bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-3xl -z-10 bg-[var(--gold-surface)] opacity-50 pointer-events-none" />
 
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start relative z-10">
+      <div className={`w-full relative z-10 transition-all duration-300 ${
+        showDiscovery
+          ? "max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start"
+          : "max-w-md mx-auto"
+      }`}>
 
         {/* Lado Esquerdo - LOGIN */}
         <div className="w-full max-w-md mx-auto relative z-20 lg:sticky lg:top-8">
@@ -241,9 +284,11 @@ function LoginContent() {
 
             {/* Logo */}
             <div className="text-center mb-8">
-              <div className="w-14 h-14 rounded-2xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center mx-auto mb-4 glow-gold-sm">
-                <span className="font-serif font-bold text-[var(--gold)] text-xl">TB</span>
-              </div>
+              <img
+                src="/tem-barber-logo.png"
+                alt="Tem Barber Logo"
+                className="w-20 md:w-28 h-auto mx-auto mb-4 object-contain"
+              />
               <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-wide text-[var(--gold)]">
                 TEM BARBER
               </h1>
@@ -378,12 +423,12 @@ function LoginContent() {
         </div>
 
         {/* Descoberta de barbearias para clientes */}
-        {activeTab === "client" && (
+        {activeTab === "client" && showDiscovery && (
         <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Encontrar minha barbearia</h2>
-              <p className="text-sm text-[var(--text-muted)]">Barbearias disponiveis para agendamento</p>
+              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Não encontramos uma barbearia vinculada a este telefone.</h2>
+              <p className="text-sm text-[var(--text-muted)] mt-1">Escolha uma barbearia para agendar.</p>
             </div>
 
             {!locationPermitted && (

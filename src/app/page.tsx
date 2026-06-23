@@ -8,8 +8,13 @@ export default function HomePage() {
       <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-amber-600/5 rounded-full blur-3xl -z-10" />
 
       {/* Hero */}
-      <div className="text-center max-w-xl">
-        <h1 className="font-serif text-5xl md:text-6xl font-bold tracking-wide text-amber-500 drop-shadow-md mb-4">
+      <div className="text-center max-w-xl flex flex-col items-center">
+        <img
+          src="/tem-barber-logo.png"
+          alt="Tem Barber Logo"
+          className="w-28 md:w-36 h-auto mx-auto mb-6 object-contain drop-shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+        />
+        <h1 className="font-serif text-4xl md:text-5xl font-bold tracking-wide text-amber-500 drop-shadow-md mb-4">
           TEM BARBER
         </h1>
         <p className="text-stone-300 text-lg md:text-xl font-light mb-2">

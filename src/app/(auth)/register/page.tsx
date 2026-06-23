@@ -108,6 +108,11 @@ export default function RegisterPage() {
 
         {/* Logo/Nome */}
         <div className="text-center mb-8">
+          <img
+            src="/tem-barber-logo.png"
+            alt="Tem Barber Logo"
+            className="w-20 md:w-28 h-auto mx-auto mb-4 object-contain"
+          />
           <h1 className="font-serif text-3xl font-bold tracking-wide text-amber-500 drop-shadow-md">
             CADASTRAR MEU NEGÓCIO
           </h1>
