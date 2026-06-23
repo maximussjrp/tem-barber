@@ -1,0 +1,10 @@
+app.tembarber.com.br {
+    reverse_proxy app:3000
+}
+
+# tembarber.com.br será usado pela landing comercial em projeto separado.
+# A landing ainda não está pronta para deploy.
+# Não apontar o domínio raiz para o app principal sem aprovação humana.
+# tembarber.com.br {
+#     reverse_proxy app:3000
+# }

@@ -3,6 +3,12 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
+interface CustomAuthUser {
+  id: string;
+  role?: string;
+  phone?: string;
+}
+
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
@@ -11,7 +17,7 @@ export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
       id: "credentials",
-      name: "Match Barber Auth",
+      name: "Tem Barber Auth",
       credentials: {
         // Campos para login administrativo
         email: { label: "E-mail ou CPF", type: "text" },
@@ -129,16 +135,16 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = (user as any).role;
-        token.phone = (user as any).phone;
+        token.role = (user as CustomAuthUser).role;
+        token.phone = (user as CustomAuthUser).phone;
       }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
-        (session.user as any).id = token.id;
-        (session.user as any).role = token.role;
-        (session.user as any).phone = token.phone;
+        (session.user as CustomAuthUser).id = token.id as string;
+        (session.user as CustomAuthUser).role = token.role as string;
+        (session.user as CustomAuthUser).phone = token.phone as string;
       }
       return session;
     },
