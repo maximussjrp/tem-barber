@@ -2,6 +2,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
+COPY prisma ./prisma/
 RUN npm ci
 COPY . .
 RUN npx prisma generate
@@ -16,6 +17,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 
 EXPOSE 3000
 CMD ["npx", "next", "start", "-p", "3000"]
