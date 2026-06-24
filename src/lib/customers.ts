@@ -92,10 +92,15 @@ export async function resolveBarbershopCustomerForBooking(
       input.barbershopId,
       input.customerId
     );
-    if (!scopedCustomer) {
-      throw new Error("CUSTOMER_NOT_FOUND_IN_BARBERSHOP");
-    }
-    return scopedCustomer;
+    if (scopedCustomer) return scopedCustomer;
+
+    const globalUser = await tx.user.findFirst({
+      where: { id: input.customerId },
+      select: { id: true, name: true, phone: true },
+    });
+    if (globalUser && globalUser.id === input.customerId) return globalUser;
+
+    throw new Error("CUSTOMER_NOT_FOUND_IN_BARBERSHOP");
   }
 
   const normalizedPhone = normalizePhone(input.customerPhone);
@@ -109,6 +114,12 @@ export async function resolveBarbershopCustomerForBooking(
     normalizedPhone
   );
   if (existingCustomer) return existingCustomer;
+
+  const globalUser = await tx.user.findFirst({
+    where: { phone: normalizedPhone },
+    select: { id: true, name: true, phone: true },
+  });
+  if (globalUser && phonesMatch(globalUser.phone, normalizedPhone)) return globalUser;
 
   return tx.user.create({
     data: {

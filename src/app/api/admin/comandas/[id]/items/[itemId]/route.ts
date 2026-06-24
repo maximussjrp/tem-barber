@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { recalculateComandaTotals, OperationalError } from "@/lib/operations/comandas";
+import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
@@ -41,7 +42,9 @@ export async function PATCH(
           ...(body.status === "CANCELLED" && { cancelledAt: new Date() }),
         },
       });
-      return recalculateComandaTotals(tx, id);
+      const updated = await recalculateComandaTotals(tx, id);
+      await syncCommissionReleaseForComanda(tx, data!.barbershopId, id);
+      return updated;
     });
     return result instanceof Response ? result : NextResponse.json(result);
   } catch (err) {
@@ -72,7 +75,9 @@ export async function DELETE(
         where: { id: itemId },
         data: { status: "CANCELLED", cancelledAt: new Date() },
       });
-      return recalculateComandaTotals(tx, id);
+      const updated = await recalculateComandaTotals(tx, id);
+      await syncCommissionReleaseForComanda(tx, data!.barbershopId, id);
+      return updated;
     });
     return NextResponse.json(result);
   } catch (err) {

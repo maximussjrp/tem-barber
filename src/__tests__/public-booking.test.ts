@@ -188,6 +188,7 @@ describe("agendamento publico", () => {
 
   it("cria novo cliente quando telefone nao existe", async () => {
     txMock.appointment.findMany.mockResolvedValue([]);
+    txMock.user.findFirst.mockResolvedValue(null);
 
     await POST(request(validBody), params);
 

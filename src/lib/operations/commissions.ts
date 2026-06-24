@@ -5,6 +5,7 @@ import {
   ComandaItemStatus,
   ComandaItemType,
   Prisma,
+  CommissionType,
 } from "@prisma/client";
 import { fromCents, nonNegativeCents, toCents } from "./money";
 
@@ -22,16 +23,33 @@ export function competenceFromDate(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+export function nextCompetence(competence: string): string {
+  const [year, month] = competence.split("-").map(Number);
+  let nextMonth = month + 1;
+  let nextYear = year;
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear += 1;
+  }
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
 export function buildCommissionScopeKey(input: {
   memberId?: string | null;
   serviceId?: string | null;
   categoryId?: string | null;
+  productId?: string | null;
+  isProductDefault?: boolean;
 }) {
   if (input.memberId && input.serviceId) return `member:${input.memberId}:service:${input.serviceId}`;
   if (input.memberId && input.categoryId) return `member:${input.memberId}:category:${input.categoryId}`;
+  if (input.memberId && input.productId) return `member:${input.memberId}:product:${input.productId}`;
+  if (input.memberId && input.isProductDefault) return `member:${input.memberId}:product_default`;
   if (input.memberId) return `member:${input.memberId}:default`;
   if (input.serviceId) return `service:${input.serviceId}`;
   if (input.categoryId) return `category:${input.categoryId}`;
+  if (input.productId) return `product:${input.productId}`;
+  if (input.isProductDefault) return "product_default";
   return "barbershop:default";
 }
 
@@ -41,20 +59,22 @@ export function validateCommissionConfig(input: {
   memberId?: string | null;
   serviceId?: string | null;
   categoryId?: string | null;
+  productId?: string | null;
 }) {
   const value = nonNegativeCents(input.value, "Comissao");
   if (input.type === "PERCENTAGE" && value > 10000) {
     throw new CommissionError("INVALID_PERCENTAGE", "Percentual deve estar entre 0 e 100.", 422);
   }
-  if (input.serviceId && input.categoryId) {
-    throw new CommissionError("AMBIGUOUS_SCOPE", "Use servico ou categoria, nao ambos.", 422);
+  const scopes = [input.serviceId, input.categoryId, input.productId].filter(Boolean);
+  if (scopes.length > 1) {
+    throw new CommissionError("AMBIGUOUS_SCOPE", "Use apenas um escopo (servico, categoria ou produto).", 422);
   }
 }
 
 async function assertScopeBelongsToTenant(
   tx: Prisma.TransactionClient,
   barbershopId: string,
-  input: { memberId?: string | null; serviceId?: string | null; categoryId?: string | null }
+  input: { memberId?: string | null; serviceId?: string | null; categoryId?: string | null; productId?: string | null }
 ) {
   const checks: Promise<unknown>[] = [];
   if (input.memberId) {
@@ -67,6 +87,9 @@ async function assertScopeBelongsToTenant(
   }
   if (input.categoryId) {
     checks.push(tx.category.findFirstOrThrow({ where: { id: input.categoryId, barbershopId } }));
+  }
+  if (input.productId) {
+    checks.push(tx.product.findFirstOrThrow({ where: { id: input.productId, barbershopId } }));
   }
   try {
     await Promise.all(checks);
@@ -82,6 +105,8 @@ export async function upsertCommissionConfig(
     memberId?: string | null;
     serviceId?: string | null;
     categoryId?: string | null;
+    productId?: string | null;
+    isProductDefault?: boolean;
     type: CommissionConfigType;
     value: string | number | Prisma.Decimal;
     active?: boolean;
@@ -98,6 +123,7 @@ export async function upsertCommissionConfig(
       memberId: input.memberId ?? null,
       serviceId: input.serviceId ?? null,
       categoryId: input.categoryId ?? null,
+      productId: input.productId ?? null,
       scopeKey,
       type: input.type,
       value: input.value,
@@ -116,28 +142,51 @@ async function resolveCommissionConfig(
   input: {
     barbershopId: string;
     memberId: string;
-    serviceId: string;
+    serviceId?: string | null;
+    productId?: string | null;
+    itemType: ComandaItemType;
   }
 ) {
-  const service = await tx.service.findFirst({
-    where: { id: input.serviceId, barbershopId: input.barbershopId },
-    select: { id: true, categoryId: true },
-  });
-  if (!service) return null;
+  if (input.itemType === ComandaItemType.SERVICE) {
+    if (!input.serviceId) return null;
+    const service = await tx.service.findFirst({
+      where: { id: input.serviceId, barbershopId: input.barbershopId },
+      select: { id: true, categoryId: true },
+    });
+    if (!service) return null;
 
-  const priority = [
-    buildCommissionScopeKey({ memberId: input.memberId, serviceId: input.serviceId }),
-    buildCommissionScopeKey({ memberId: input.memberId, categoryId: service.categoryId }),
-    buildCommissionScopeKey({ memberId: input.memberId }),
-    buildCommissionScopeKey({ serviceId: input.serviceId }),
-    buildCommissionScopeKey({ categoryId: service.categoryId }),
-    buildCommissionScopeKey({}),
-  ];
+    const priority = [
+      buildCommissionScopeKey({ memberId: input.memberId, serviceId: input.serviceId }),
+      buildCommissionScopeKey({ memberId: input.memberId, categoryId: service.categoryId }),
+      buildCommissionScopeKey({ memberId: input.memberId }),
+      buildCommissionScopeKey({ serviceId: input.serviceId }),
+      buildCommissionScopeKey({ categoryId: service.categoryId }),
+      buildCommissionScopeKey({}),
+    ];
 
-  const configs = await tx.commissionConfig.findMany({
-    where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priority } },
-  });
-  return priority.map((scopeKey) => configs.find((config) => config.scopeKey === scopeKey)).find(Boolean) ?? null;
+    const configs = await tx.commissionConfig.findMany({
+      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priority } },
+    });
+    return priority.map((scopeKey) => configs.find((config) => config.scopeKey === scopeKey)).find(Boolean) ?? null;
+  } else if (input.itemType === ComandaItemType.PRODUCT) {
+    const priority = [];
+    if (input.memberId && input.productId) {
+      priority.push(buildCommissionScopeKey({ memberId: input.memberId, productId: input.productId }));
+    }
+    if (input.memberId) {
+      priority.push(buildCommissionScopeKey({ memberId: input.memberId, isProductDefault: true }));
+    }
+    if (input.productId) {
+      priority.push(buildCommissionScopeKey({ productId: input.productId }));
+    }
+    priority.push(buildCommissionScopeKey({ isProductDefault: true }));
+
+    const configs = await tx.commissionConfig.findMany({
+      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priority } },
+    });
+    return priority.map((scopeKey) => configs.find((config) => config.scopeKey === scopeKey)).find(Boolean) ?? null;
+  }
+  return null;
 }
 
 function calculateCommissionAmount(
@@ -163,25 +212,33 @@ function nextEntryStatus(input: {
   return "GENERATED";
 }
 
-async function syncOpenCommissionPeriod(
+export async function syncOpenCommissionPeriod(
   tx: Prisma.TransactionClient,
   barbershopId: string,
   memberId: string,
-  competence: string
+  competence: string,
+  recursive = true
 ) {
   const entries = await tx.commissionEntry.findMany({ where: { barbershopId, memberId, competence } });
   const generated = entries.reduce((sum, entry) => sum + toCents(entry.generatedAmount), 0);
   const released = entries.reduce((sum, entry) => sum + toCents(entry.releasedAmount), 0);
   const paid = entries.reduce((sum, entry) => sum + toCents(entry.paidAmount), 0);
   const reversed = entries.reduce((sum, entry) => sum + toCents(entry.reversedAmount), 0);
-  const balance = Math.max(0, released - paid);
+
+  const adjustments = await tx.commissionAdjustment.findMany({
+    where: { barbershopId, memberId, competence, type: "PAID_ADJUSTMENT" },
+  });
+  const adjustmentSum = adjustments.reduce((sum, adj) => sum + toCents(adj.amount), 0);
+
+  const balance = released - paid + adjustmentSum;
+  const balanceAmount = Math.max(0, balance);
 
   const existing = await tx.commissionPeriod.findUnique({
     where: { barbershopId_memberId_competence: { barbershopId, memberId, competence } },
   });
   if (existing && existing.status !== "OPEN") return existing;
 
-  return tx.commissionPeriod.upsert({
+  const period = await tx.commissionPeriod.upsert({
     where: { barbershopId_memberId_competence: { barbershopId, memberId, competence } },
     create: {
       barbershopId,
@@ -191,16 +248,59 @@ async function syncOpenCommissionPeriod(
       releasedAmount: fromCents(released),
       paidAmount: fromCents(paid),
       reversedAmount: fromCents(reversed),
-      balanceAmount: fromCents(balance),
+      balanceAmount: fromCents(balanceAmount),
     },
     update: {
       generatedAmount: fromCents(generated),
       releasedAmount: fromCents(released),
       paidAmount: fromCents(paid),
       reversedAmount: fromCents(reversed),
-      balanceAmount: fromCents(balance),
+      balanceAmount: fromCents(balanceAmount),
     },
   });
+
+  const nextComp = nextCompetence(competence);
+  if (balance < 0) {
+    await tx.commissionAdjustment.upsert({
+      where: {
+        barbershopId_memberId_competence_rolloverFromCompetence: {
+          barbershopId,
+          memberId,
+          competence: nextComp,
+          rolloverFromCompetence: competence,
+        },
+      },
+      create: {
+        barbershopId,
+        memberId,
+        competence: nextComp,
+        type: "PAID_ADJUSTMENT",
+        amount: fromCents(balance),
+        description: `Saldo devedor acumulado do periodo anterior (${competence})`,
+        rolloverFromCompetence: competence,
+      },
+      update: {
+        amount: fromCents(balance),
+      },
+    });
+    if (recursive) {
+      await syncOpenCommissionPeriod(tx, barbershopId, memberId, nextComp, false);
+    }
+  } else {
+    const deleted = await tx.commissionAdjustment.deleteMany({
+      where: {
+        barbershopId,
+        memberId,
+        competence: nextComp,
+        rolloverFromCompetence: competence,
+      },
+    });
+    if (deleted.count > 0 && recursive) {
+      await syncOpenCommissionPeriod(tx, barbershopId, memberId, nextComp, false);
+    }
+  }
+
+  return period;
 }
 
 export async function generateCommissionsForComanda(
@@ -214,56 +314,194 @@ export async function generateCommissionsForComanda(
   });
   if (!comanda) throw new CommissionError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
 
-  const createdMembers = new Set<string>();
+  const touchedMembers = new Set<string>();
+
+  // 1. Identify all comissionable items and their executors and configurations
+  const commissionableItems: {
+    item: typeof comanda.items[0];
+    executorId: string;
+    config: any;
+    basePriceCents: number;
+    finalBaseAmountCents: number;
+  }[] = [];
+
   for (const item of comanda.items) {
     if (
-      item.type !== ComandaItemType.SERVICE ||
       item.status === ComandaItemStatus.CANCELLED ||
-      item.status !== ComandaItemStatus.DONE ||
-      !item.executorId ||
-      !item.serviceId ||
+      (item.type !== ComandaItemType.SERVICE && item.type !== ComandaItemType.PRODUCT) ||
       toCents(item.total) <= 0
     ) {
       continue;
     }
 
-    const existing = await tx.commissionEntry.findUnique({ where: { comandaItemId: item.id } });
-    if (existing) {
-      createdMembers.add(existing.memberId);
-      continue;
+    let executorId: string | null = item.executorId;
+    if (item.type === ComandaItemType.PRODUCT && !executorId) {
+      if (comanda.appointmentId) {
+        const appt = await tx.appointment.findUnique({
+          where: { id: comanda.appointmentId },
+          select: { memberId: true },
+        });
+        if (appt) {
+          executorId = appt.memberId;
+        }
+      }
     }
+    if (!executorId) continue;
 
     const config = await resolveCommissionConfig(tx, {
       barbershopId,
-      memberId: item.executorId,
+      memberId: executorId,
       serviceId: item.serviceId,
+      productId: item.productId,
+      itemType: item.type,
     });
     if (!config) continue;
 
-    const generatedAmount = calculateCommissionAmount(item.total, config.type, config.value);
-    const competence = competenceFromDate(item.completedAt ?? comanda.closedAt ?? comanda.openedAt);
-    const entry = await tx.commissionEntry.create({
-      data: {
-        barbershopId,
-        comandaItemId: item.id,
-        memberId: item.executorId,
-        configId: config.id,
-        configSnapshot: {
-          id: config.id,
-          scopeKey: config.scopeKey,
-          type: config.type,
-          value: config.value.toString(),
-          createdAt: config.createdAt.toISOString(),
-        },
-        baseAmount: item.total,
-        generatedAmount,
-        competence,
-      },
+    commissionableItems.push({
+      item,
+      executorId,
+      config,
+      basePriceCents: toCents(item.total),
+      finalBaseAmountCents: toCents(item.total),
     });
-    createdMembers.add(entry.memberId);
   }
 
-  for (const memberId of createdMembers) {
+  // 2. Proportional partition of global comanda discounts
+  const discountItems = comanda.items.filter(
+    (item) => item.type === ComandaItemType.DISCOUNT && item.status !== ComandaItemStatus.CANCELLED
+  );
+  const globalDiscountCents = discountItems.reduce((sum, item) => sum + toCents(item.total), 0);
+
+  if (globalDiscountCents > 0 && commissionableItems.length > 0) {
+    const totalCommissionableCents = commissionableItems.reduce((sum, entry) => sum + entry.basePriceCents, 0);
+    if (totalCommissionableCents > 0) {
+      let distributedCents = 0;
+      for (let i = 0; i < commissionableItems.length; i++) {
+        const entry = commissionableItems[i];
+        let itemDiscountCents = 0;
+        if (i === commissionableItems.length - 1) {
+          itemDiscountCents = globalDiscountCents - distributedCents;
+        } else {
+          itemDiscountCents = Math.round((entry.basePriceCents * globalDiscountCents) / totalCommissionableCents);
+          distributedCents += itemDiscountCents;
+        }
+        entry.finalBaseAmountCents = Math.max(0, entry.basePriceCents - itemDiscountCents);
+      }
+    }
+  }
+
+  // 3. Upsert commission entries
+  for (const entry of commissionableItems) {
+    const { item, executorId, config, finalBaseAmountCents } = entry;
+
+    const existing = await tx.commissionEntry.findUnique({ where: { comandaItemId: item.id } });
+    if (existing) {
+      if (existing.memberId !== executorId) {
+        if (toCents(existing.paidAmount) > 0) {
+          throw new CommissionError(
+            "EXECUTOR_CHANGE_PAID",
+            "Nao eh possivel alterar o executor de um item que ja teve comissao paga.",
+            409
+          );
+        } else {
+          await tx.commissionAdjustment.deleteMany({
+            where: { entryId: existing.id },
+          });
+
+          const generatedAmount = calculateCommissionAmount(fromCents(finalBaseAmountCents), config.type, config.value);
+          const competence = competenceFromDate(item.completedAt ?? comanda.closedAt ?? comanda.openedAt);
+
+          await tx.commissionEntry.update({
+            where: { id: existing.id },
+            data: {
+              memberId: executorId,
+              configId: config.id,
+              configSnapshot: {
+                id: config.id,
+                scopeKey: config.scopeKey,
+                type: config.type,
+                value: config.value.toString(),
+                createdAt: config.createdAt.toISOString(),
+              },
+              baseAmount: fromCents(finalBaseAmountCents),
+              generatedAmount,
+              releasedAmount: 0,
+              reversedAmount: 0,
+              status: "GENERATED",
+              competence,
+              type: item.type === ComandaItemType.PRODUCT ? CommissionType.PRODUCT : CommissionType.SERVICE,
+            },
+          });
+
+          touchedMembers.add(existing.memberId);
+          touchedMembers.add(executorId);
+        }
+      } else {
+        const generatedAmount = calculateCommissionAmount(fromCents(finalBaseAmountCents), config.type, config.value);
+        const competence = competenceFromDate(item.completedAt ?? comanda.closedAt ?? comanda.openedAt);
+
+        await tx.commissionEntry.update({
+          where: { id: existing.id },
+          data: {
+            baseAmount: fromCents(finalBaseAmountCents),
+            generatedAmount,
+            competence,
+            type: item.type === ComandaItemType.PRODUCT ? CommissionType.PRODUCT : CommissionType.SERVICE,
+          },
+        });
+        touchedMembers.add(executorId);
+      }
+    } else {
+      const generatedAmount = calculateCommissionAmount(fromCents(finalBaseAmountCents), config.type, config.value);
+      const competence = competenceFromDate(item.completedAt ?? comanda.closedAt ?? comanda.openedAt);
+
+      const created = await tx.commissionEntry.create({
+        data: {
+          barbershopId,
+          comandaItemId: item.id,
+          memberId: executorId,
+          configId: config.id,
+          configSnapshot: {
+            id: config.id,
+            scopeKey: config.scopeKey,
+            type: config.type,
+            value: config.value.toString(),
+            createdAt: config.createdAt.toISOString(),
+          },
+          baseAmount: fromCents(finalBaseAmountCents),
+          generatedAmount,
+          competence,
+          type: item.type === ComandaItemType.PRODUCT ? CommissionType.PRODUCT : CommissionType.SERVICE,
+        },
+      });
+      touchedMembers.add(created.memberId);
+    }
+  }
+
+  // 4. Handle removed/cancelled items' existing commission entries
+  const existingEntries = await tx.commissionEntry.findMany({
+    where: { comandaItem: { comandaId } },
+  });
+
+  for (const existing of existingEntries) {
+    const isStillCommissionable = commissionableItems.some((c) => c.item.id === existing.comandaItemId);
+    if (!isStillCommissionable) {
+      if (toCents(existing.paidAmount) > 0) {
+        const toReverse = toCents(existing.releasedAmount);
+        if (toReverse > 0) {
+          await reverseCommissionEntry(tx, barbershopId, existing.id, toReverse, null, "Estorno por cancelamento de item");
+        }
+        touchedMembers.add(existing.memberId);
+      } else {
+        await tx.commissionAdjustment.deleteMany({ where: { entryId: existing.id } });
+        await tx.commissionEntry.delete({ where: { id: existing.id } });
+        touchedMembers.add(existing.memberId);
+      }
+    }
+  }
+
+  // 5. Synchronize open commission periods for all touched members
+  for (const memberId of touchedMembers) {
     const competences = await tx.commissionEntry.findMany({
       where: { barbershopId, memberId },
       distinct: ["competence"],
@@ -290,21 +528,44 @@ export async function syncCommissionReleaseForComanda(
   comandaId: string,
   description = "Liberacao proporcional por pagamento"
 ) {
-  await generateCommissionsForComanda(tx, barbershopId, comandaId);
   const comanda = await tx.comanda.findFirst({
     where: { id: comandaId, barbershopId },
     include: { items: { include: { commissionEntry: true } } },
   });
-  if (!comanda || toCents(comanda.total) <= 0) return;
+  if (!comanda) return;
 
-  const netPaid = Math.min(toCents(comanda.total), await getNetPaidCents(tx, barbershopId, comandaId));
+  const isComandaCancelled = comanda.status === "CANCELLED";
+  
+  if (!isComandaCancelled) {
+    await generateCommissionsForComanda(tx, barbershopId, comandaId);
+  }
+
+  // Re-fetch comanda to get up-to-date items and entries
+  const updatedComanda = await tx.comanda.findFirstOrThrow({
+    where: { id: comandaId, barbershopId },
+    include: { items: { include: { commissionEntry: true } } },
+  });
+
+  const comandaTotalCents = toCents(updatedComanda.total);
+  const netPaid = isComandaCancelled
+    ? 0
+    : Math.min(comandaTotalCents, await getNetPaidCents(tx, barbershopId, comandaId));
+
   const touched = new Set<string>();
 
-  for (const item of comanda.items) {
+  for (const item of updatedComanda.items) {
     const entry = item.commissionEntry;
     if (!entry) continue;
+    
+    const isItemCancelled = item.status === ComandaItemStatus.CANCELLED || isComandaCancelled;
     const generated = toCents(entry.generatedAmount);
-    const targetReleased = Math.min(generated, Math.round((generated * netPaid) / toCents(comanda.total)));
+    
+    const targetReleased = isItemCancelled
+      ? 0
+      : comandaTotalCents <= 0
+      ? 0
+      : Math.min(generated, Math.round((generated * netPaid) / comandaTotalCents));
+
     const currentReleased = toCents(entry.releasedAmount);
     const delta = targetReleased - currentReleased;
     if (delta === 0) {
@@ -338,7 +599,7 @@ export async function syncCommissionReleaseForComanda(
         },
       });
     } else {
-      await reverseCommissionEntry(tx, barbershopId, entry.id, Math.abs(delta), null, "Reversao proporcional por estorno");
+      await reverseCommissionEntry(tx, barbershopId, entry.id, Math.abs(delta), null, isComandaCancelled ? "Reversao por cancelamento de comanda" : "Reversao proporcional por estorno");
     }
     touched.add(entry.memberId);
   }
@@ -378,8 +639,9 @@ export async function reverseCommissionEntry(
         paymentId,
         type: "PAID_ADJUSTMENT",
         amount: fromCents(-cents),
-        competence: competenceFromDate(new Date()),
+        competence: nextCompetence(entry.competence),
         description: `${description}. Ajuste negativo para proximo periodo.`,
+        rolloverFromCompetence: entry.competence,
       },
     });
     return;

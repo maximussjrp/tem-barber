@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ComandaStatus } from "@prisma/client";
 import { closeComanda } from "@/lib/operations/payments";
+import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
@@ -77,12 +78,24 @@ export async function PATCH(
       if (body.status === "CLOSED") {
         return closeComanda(tx, data!.barbershopId, id);
       }
+      if (body.status === "CANCELLED") {
+        await tx.comandaItem.updateMany({
+          where: { comandaId: id, status: { not: "CANCELLED" } },
+          data: { status: "CANCELLED", cancelledAt: new Date() },
+        });
+        const cancelledComanda = await tx.comanda.update({
+          where: { id },
+          data: { status: "CANCELLED", cancelledAt: new Date() },
+          include: comandaInclude,
+        });
+        await syncCommissionReleaseForComanda(tx, data!.barbershopId, id);
+        return cancelledComanda;
+      }
       return tx.comanda.update({
         where: { id },
         data: {
           status: body.status,
           ...(body.status === "IN_SERVICE" && { startedAt: new Date() }),
-          ...(body.status === "CANCELLED" && { cancelledAt: new Date() }),
         },
         include: comandaInclude,
       });

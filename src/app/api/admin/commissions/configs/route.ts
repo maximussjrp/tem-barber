@@ -36,6 +36,8 @@ export async function POST(request: Request) {
         memberId: body.memberId || null,
         serviceId: body.serviceId || null,
         categoryId: body.categoryId || null,
+        productId: body.productId || null,
+        isProductDefault: body.isProductDefault === true,
         type: body.type,
         value: body.value,
         active: body.active !== false,

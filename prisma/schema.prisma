@@ -508,6 +508,7 @@ model Product {
   barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   items      ComandaItem[]
   movements  StockMovement[]
+  commissionConfigs CommissionConfig[]
 
   @@index([barbershopId, isActive])
   @@map("products")
@@ -616,6 +617,11 @@ model FinancialEntry {
   @@map("financial_entries")
 }
 
+enum CommissionType {
+  SERVICE
+  PRODUCT
+}
+
 enum CommissionConfigType {
   PERCENTAGE
   FIXED_VALUE
@@ -647,6 +653,7 @@ model CommissionConfig {
   memberId     String?              @map("member_id")
   serviceId    String?              @map("service_id")
   categoryId   String?              @map("category_id")
+  productId    String?              @map("product_id")
   scopeKey     String               @map("scope_key")
   type         CommissionConfigType
   value        Decimal              @db.Decimal(10, 2)
@@ -658,6 +665,7 @@ model CommissionConfig {
   member     BarbershopMember? @relation(fields: [memberId], references: [id], onDelete: Cascade)
   service    Service?          @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   category   Category?         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  product    Product?          @relation(fields: [productId], references: [id], onDelete: Cascade)
   entries    CommissionEntry[]
 
   @@unique([barbershopId, scopeKey])
@@ -665,6 +673,7 @@ model CommissionConfig {
   @@index([memberId])
   @@index([serviceId])
   @@index([categoryId])
+  @@index([productId])
   @@map("commission_configs")
 }
 
@@ -682,6 +691,7 @@ model CommissionEntry {
   reversedAmount    Decimal               @default(0) @map("reversed_amount") @db.Decimal(10, 2)
   competence        String
   status            CommissionEntryStatus @default(GENERATED)
+  type              CommissionType        @default(SERVICE)
   createdAt         DateTime              @default(now()) @map("created_at")
   updatedAt         DateTime              @updatedAt @map("updated_at")
 
@@ -725,24 +735,27 @@ model CommissionPeriod {
 }
 
 model CommissionAdjustment {
-  id           String                   @id @default(uuid())
-  barbershopId String                   @map("barbershop_id")
-  entryId      String                   @map("entry_id")
-  memberId     String                   @map("member_id")
-  paymentId    String?                  @map("payment_id")
-  type         CommissionAdjustmentType
-  amount       Decimal                  @db.Decimal(10, 2)
-  competence   String
-  description  String
-  createdAt    DateTime                 @default(now()) @map("created_at")
+  id                     String                   @id @default(uuid())
+  barbershopId           String                   @map("barbershop_id")
+  entryId                String?                  @map("entry_id")
+  memberId               String                   @map("member_id")
+  paymentId              String?                  @map("payment_id")
+  type                   CommissionAdjustmentType
+  amount                 Decimal                  @db.Decimal(10, 2)
+  competence             String
+  description            String
+  rolloverFromCompetence String?                  @map("rollover_from_competence")
+  createdAt              DateTime                 @default(now()) @map("created_at")
 
-  barbershop Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  entry      CommissionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
-  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  payment    Payment?         @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  entry      CommissionEntry?  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  member     BarbershopMember  @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  payment    Payment?          @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
+  @@unique([barbershopId, memberId, competence, rolloverFromCompetence])
   @@index([barbershopId, competence])
   @@index([memberId, competence])
   @@index([paymentId])
+  @@index([rolloverFromCompetence])
   @@map("commission_adjustments")
 }

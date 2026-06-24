@@ -91,6 +91,10 @@ async function seedTenant(label: string) {
     },
   });
 
+  await prisma.barberService.create({
+    data: { barberId: member.id, serviceId: service.id },
+  });
+
   return { shop, admin, owner, barberUser, customer, member, category, service };
 }
 

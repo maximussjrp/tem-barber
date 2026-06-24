@@ -4,6 +4,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { fromCents, nonNegativeCents, positiveCents, toCents } from "./money";
+import { syncCommissionReleaseForComanda } from "./commissions";
 
 export const comandaInclude = {
   customer: { select: { id: true, name: true, phone: true } },
@@ -188,7 +189,9 @@ export async function addServiceItem(
     },
   });
 
-  return recalculateComandaTotals(tx, input.comandaId);
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  return updated;
 }
 
 export async function addProductItem(
@@ -250,7 +253,9 @@ export async function addProductItem(
     },
   });
 
-  return recalculateComandaTotals(tx, input.comandaId);
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  return updated;
 }
 
 export async function addAdjustmentItem(
@@ -278,7 +283,9 @@ export async function addAdjustmentItem(
     },
   });
 
-  return recalculateComandaTotals(tx, input.comandaId);
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  return updated;
 }
 
 export async function upsertDiscountItem(
@@ -347,6 +354,8 @@ export async function upsertDiscountItem(
     }
   }
 
-  return recalculateComandaTotals(tx, input.comandaId);
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  return updated;
 }
 

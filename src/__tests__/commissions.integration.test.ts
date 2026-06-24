@@ -235,12 +235,16 @@ describeIf("release operacional 1B - comissoes", () => {
     );
     await prisma.$transaction((tx) => closeComanda(tx, tenant.shop.id, tenant.comanda.id));
 
-    let period = await prisma.commissionPeriod.findFirstOrThrow();
+    let period = await prisma.commissionPeriod.findFirstOrThrow({
+      where: { competence: "2026-07" },
+    });
     await prisma.$transaction(async (tx) => {
       const { closeCommissionPeriod } = await import("@/lib/operations/commissions");
       await closeCommissionPeriod(tx, { barbershopId: tenant.shop.id, memberId: tenant.barber.id, competence: period.competence, userId: tenant.ownerUser.id });
     });
-    period = await prisma.commissionPeriod.findFirstOrThrow();
+    period = await prisma.commissionPeriod.findFirstOrThrow({
+      where: { competence: "2026-07" },
+    });
 
     await expect(
       prisma.$transaction(async (tx) => {
@@ -253,7 +257,9 @@ describeIf("release operacional 1B - comissoes", () => {
       const { payCommissionPeriod } = await import("@/lib/operations/commissions");
       await payCommissionPeriod(tx, { barbershopId: tenant.shop.id, periodId: period.id, paidByMemberId: tenant.manager.id, userId: tenant.ownerUser.id });
     });
-    const paid = await prisma.commissionPeriod.findFirstOrThrow();
+    const paid = await prisma.commissionPeriod.findFirstOrThrow({
+      where: { competence: "2026-07" },
+    });
     expect(paid.status).toBe("PAID");
     expect(paid.balanceAmount.toString()).toBe("0");
   });
