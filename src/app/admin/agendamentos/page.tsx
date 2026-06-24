@@ -1009,54 +1009,64 @@ function AgendamentosContent() {
         />
       )}
 
-      <div className="flex flex-col" style={{ height: "calc(100vh - 64px)" }}>
+      <div className="flex flex-col h-[calc(100vh-57px)] lg:h-[calc(100vh-64px)]">
         {/* ── Top bar ─────────────────────────────────────────────────── */}
-        <div className="shrink-0 px-4 md:px-6 py-3 border-b border-stone-800 flex flex-wrap items-center gap-3 bg-stone-950">
-          {/* Date nav */}
-          <div className="flex items-center gap-1">
-            <button onClick={() => navigate(-1)} className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors" title="Dia anterior">←</button>
-            <div className="text-center min-w-[200px]">
-              <p className="text-sm font-semibold text-stone-100 capitalize">{formatDateFull(currentDate)}</p>
+        <div className="shrink-0 px-4 md:px-6 py-3 border-b border-stone-800 bg-stone-950 flex flex-col md:flex-row md:items-center gap-3">
+          {/* Row 1 on mobile: Date Nav & Hoje */}
+          <div className="flex items-center justify-between md:justify-start gap-3 w-full md:w-auto">
+            <div className="flex items-center gap-1">
+              <button onClick={() => navigate(-1)} className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors" title="Dia anterior">←</button>
+              <div className="text-center min-w-[140px] xs:min-w-[180px] md:min-w-[200px]">
+                <p className="text-sm font-semibold text-stone-100 capitalize truncate">{formatDateFull(currentDate)}</p>
+              </div>
+              <button onClick={() => navigate(1)} className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors" title="Próximo dia">→</button>
             </div>
-            <button onClick={() => navigate(1)} className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors" title="Próximo dia">→</button>
+
+            {currentDate !== today && (
+              <button onClick={() => router.push("/admin/agendamentos")} className="text-xs text-amber-500 hover:text-amber-400 font-semibold transition-colors px-2 py-1.5 rounded border border-amber-800/50 hover:border-amber-600/50 shrink-0">
+                Hoje
+              </button>
+            )}
           </div>
 
-          {currentDate !== today && (
-            <button onClick={() => router.push("/admin/agendamentos")} className="text-xs text-amber-500 hover:text-amber-400 font-semibold transition-colors px-2 py-1 rounded border border-amber-800/50 hover:border-amber-600/50">
-              Hoje
-            </button>
-          )}
-
-          <select
-            value={filterMember}
-            onChange={(e) => setFilterMember(e.target.value)}
-            title="Filtrar por barbeiro"
-            className="bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 text-sm text-stone-300 focus:border-amber-500/80 focus:outline-none transition-colors"
-          >
-            <option value="">Todos os barbeiros</option>
-            {members.map((m) => <option key={m.id} value={m.id}>{m.user.name}</option>)}
-          </select>
-
-          {/* Stats */}
-          <div className="flex items-center gap-3 ml-auto flex-wrap">
-            <span className="text-xs text-stone-500">{appointments.length} total</span>
-            {confirmed > 0 && <span className="text-xs text-sky-400">{confirmed} confirm.</span>}
-            {pending > 0 && <span className="text-xs text-amber-400">{pending} pend.</span>}
-            <span className="text-xs text-emerald-400 font-semibold">
-              {revenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-            </span>
-            <WhatsAppShareSlots
-              members={shareMembersData}
-              barbershopName={barbershopName}
-              barbershopSlug={barbershopSlug}
-              todayStr={currentDate}
-            />
-            <button
-              onClick={() => openNewAppointment()}
-              className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm px-4 py-2 rounded-lg transition-colors"
+          {/* Row 2 on mobile: Barber select */}
+          <div className="w-full md:w-auto">
+            <select
+              value={filterMember}
+              onChange={(e) => setFilterMember(e.target.value)}
+              title="Filtrar por barbeiro"
+              className="w-full md:w-auto bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 text-sm text-stone-300 focus:border-amber-500/80 focus:outline-none transition-colors"
             >
-              + Novo
-            </button>
+              <option value="">Todos os barbeiros</option>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.user.name}</option>)}
+            </select>
+          </div>
+
+          {/* Row 3 on mobile: Stats & Actions */}
+          <div className="flex items-center justify-between md:justify-start gap-3 w-full md:w-auto md:ml-auto flex-wrap">
+            <div className="flex items-center gap-2 text-stone-500 text-xs">
+              <span>{appointments.length} tot.</span>
+              {confirmed > 0 && <span className="text-sky-400">{confirmed} conf.</span>}
+              {pending > 0 && <span className="text-amber-400">{pending} pend.</span>}
+              <span className="text-emerald-400 font-semibold">
+                {revenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2 ml-auto md:ml-0">
+              <WhatsAppShareSlots
+                members={shareMembersData}
+                barbershopName={barbershopName}
+                barbershopSlug={barbershopSlug}
+                todayStr={currentDate}
+              />
+              <button
+                onClick={() => openNewAppointment()}
+                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm px-3.5 py-2 rounded-lg transition-colors shrink-0"
+              >
+                + Novo
+              </button>
+            </div>
           </div>
         </div>
 

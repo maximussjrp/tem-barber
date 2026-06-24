@@ -19,7 +19,7 @@ export default async function AdminLayout({
         userName={session.user?.name ?? "Admin"}
       />
       {/* Offset content by sidebar width on desktop */}
-      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden">
+      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden pt-[57px] lg:pt-0">
         {children}
       </main>
     </div>
