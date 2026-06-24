@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { Avatar } from "@/components/ui/Avatar";
+import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
 const DAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 interface WorkingHour {
@@ -54,6 +55,37 @@ export default async function BarbershopPublicPage({
   });
 
   if (!barbershop) notFound();
+
+  // Verificar status de assinatura do tenant
+  const subscription = await getOrCreateSubscription(barbershop.id);
+  if (!isSubscriptionActive(subscription)) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-stone-950 text-stone-100 px-4">
+        <div className="max-w-md w-full bg-stone-900/60 backdrop-blur-xl border border-stone-800 rounded-3xl p-8 md:p-10 text-center shadow-2xl">
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 mx-auto mb-6">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-8 h-8"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold mb-3 text-stone-100">Barbearia Indisponível</h1>
+          <p className="text-stone-400 text-sm leading-relaxed">
+            Esta barbearia está temporariamente indisponível para agendamentos.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Working hours from first OWNER member
   const ownerMember = await prisma.barbershopMember.findFirst({

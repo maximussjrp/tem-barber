@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
+import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
 import {
   AppointmentConflictError,
   IdempotencyKeyInvalidError,
@@ -189,6 +190,15 @@ export async function POST(
   });
   if (!barbershop) {
     return NextResponse.json({ error: "Barbearia nao encontrada." }, { status: 404 });
+  }
+
+  // Verificar status de assinatura do tenant
+  const subscription = await getOrCreateSubscription(barbershop.id);
+  if (!isSubscriptionActive(subscription)) {
+    return NextResponse.json(
+      { error: "SUBSCRIPTION_SUSPENDED", message: "Esta barbearia está temporariamente indisponível para agendamentos." },
+      { status: 403 }
+    );
   }
 
   let idempotencyKey: string;

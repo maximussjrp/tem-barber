@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { isPlatformAdmin, isSubscriptionActive, getOrCreateSubscription } from "@/lib/subscription-utils";
 
 export async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -12,8 +13,11 @@ export async function requireAdmin() {
 
   const userId = (session.user as any).id as string;
   const role = (session.user as any).role as string;
+  const email = session.user?.email as string | null;
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role)) {
+  const isPlatform = isPlatformAdmin(email) || role === "SUPER_ADMIN";
+
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
     redirect("/acesso-negado");
   }
 
@@ -22,8 +26,16 @@ export async function requireAdmin() {
     include: { barbershop: true },
   });
 
-  if (!member && role !== "SUPER_ADMIN") {
+  if (!member && !isPlatform) {
     redirect("/acesso-negado");
+  }
+
+  // Se não for platform admin e tiver barbearia vinculada, validar assinatura
+  if (!isPlatform && member) {
+    const subscription = await getOrCreateSubscription(member.barbershopId);
+    if (!isSubscriptionActive(subscription)) {
+      redirect("/assinatura-suspensa");
+    }
   }
 
   return {

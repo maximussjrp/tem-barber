@@ -120,15 +120,22 @@ function BookingWizard() {
     totalPrice: string;
   } | null>(null);
 
+  const [subscriptionSuspended, setSubscriptionSuspended] = useState(false);
+
   // ─── Load profile ────────────────────────────────────────────────────────
 
   useEffect(() => {
     fetch(`/api/public/barbershop/${slug}`)
       .then((r) => r.json())
       .then((d) => {
-        setCategories(d.categories ?? []);
-        setMembers(d.members ?? []);
+        if (d.error === "SUBSCRIPTION_SUSPENDED") {
+          setSubscriptionSuspended(true);
+        } else {
+          setCategories(d.categories ?? []);
+          setMembers(d.members ?? []);
+        }
       })
+      .catch(() => {})
       .finally(() => setLoadingProfile(false));
   }, [slug]);
 
@@ -358,6 +365,44 @@ function BookingWizard() {
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
           <p className="text-[var(--text-muted)] text-sm">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (subscriptionSuspended) {
+    return (
+      <div className="min-h-screen bg-stone-950 flex items-center justify-center p-6 text-stone-100 relative overflow-hidden">
+        <div className="absolute w-[500px] h-[500px] rounded-full bg-amber-500/5 blur-[120px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
+        <div className="relative max-w-md w-full bg-stone-900/60 backdrop-blur-xl border border-stone-800 rounded-3xl p-8 md:p-10 text-center shadow-2xl">
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 mx-auto mb-6">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-8 h-8"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight mb-4 bg-gradient-to-r from-stone-100 to-stone-300 bg-clip-text text-transparent">
+            Agendamentos Indisponíveis
+          </h1>
+          <p className="text-stone-400 text-sm leading-relaxed mb-6">
+            Esta barbearia está temporariamente indisponível para agendamentos.
+          </p>
+          <button
+            onClick={() => router.push(`/${slug}`)}
+            className="w-full px-5 py-3 rounded-xl bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-750 transition-colors border border-stone-700/50"
+          >
+            Voltar para o Perfil
+          </button>
         </div>
       </div>
     );

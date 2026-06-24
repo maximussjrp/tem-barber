@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAvailableSlots } from "@/lib/appointments/availability";
+import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
 
 // GET /api/public/barbershop/[slug]/availability
 // Query params: memberId, serviceIds (comma-separated), date (YYYY-MM-DD)
@@ -31,6 +32,15 @@ export async function GET(
   });
   if (!barbershop) {
     return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 404 });
+  }
+
+  // Verificar status de assinatura do tenant
+  const subscription = await getOrCreateSubscription(barbershop.id);
+  if (!isSubscriptionActive(subscription)) {
+    return NextResponse.json(
+      { error: "SUBSCRIPTION_SUSPENDED", message: "Esta barbearia está temporariamente indisponível para agendamentos." },
+      { status: 403 }
+    );
   }
 
   const { results, totalDuration } = await getAvailableSlots({

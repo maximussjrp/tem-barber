@@ -339,16 +339,24 @@ enum SubscriptionStatus {
   PAST_DUE
   CANCELED
   EXPIRED
+  SUSPENDED
 }
 
 model TenantSubscription {
-  id           String             @id @default(uuid())
-  barbershopId String             @map("barbershop_id")
-  planId       String             @map("plan_id")
-  status       SubscriptionStatus @default(TRIAL)
-  trialEndsAt  DateTime?          @map("trial_ends_at")
-  periodStart  DateTime           @map("period_start")
-  periodEnd    DateTime           @map("period_end")
+  id                 String             @id @default(uuid())
+  barbershopId       String             @map("barbershop_id")
+  planId             String             @map("plan_id")
+  status             SubscriptionStatus @default(TRIAL)
+  planName           String?            @map("plan_name")
+  monthlyPrice       Decimal?           @map("monthly_price") @db.Decimal(10, 2)
+  trialEndsAt        DateTime?          @map("trial_ends_at")
+  currentPeriodStart DateTime           @map("period_start")
+  currentPeriodEnd   DateTime           @map("period_end")
+  gracePeriodEndsAt  DateTime?          @map("grace_period_ends_at")
+  paymentMethod      String?            @map("payment_method")
+  lastPaymentAt      DateTime?          @map("last_payment_at")
+  internalNotes      String?            @map("internal_notes")
+  updatedBy          String?            @map("updated_by")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
