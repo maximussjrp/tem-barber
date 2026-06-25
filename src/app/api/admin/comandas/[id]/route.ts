@@ -8,8 +8,8 @@ import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/o
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
-  OPEN: ["IN_SERVICE", "CANCELLED"],
-  IN_SERVICE: ["PENDING_PAYMENT", "CANCELLED"],
+  OPEN: ["IN_SERVICE", "PENDING_PAYMENT", "CLOSED", "CANCELLED"],
+  IN_SERVICE: ["PENDING_PAYMENT", "CLOSED", "CANCELLED"],
   PENDING_PAYMENT: ["IN_SERVICE", "CLOSED", "CANCELLED"],
   CLOSED: [],
   CANCELLED: [],
@@ -51,6 +51,22 @@ export async function PATCH(
   }
 
   if (!body.status) return NextResponse.json({ error: "status obrigatorio." }, { status: 400 });
+
+  if (data!.role === "BARBER") {
+    if (body.status === "CANCELLED") {
+      return forbidden();
+    }
+    const comanda = await prisma.comanda.findFirst({
+      where: { id, barbershopId: data!.barbershopId },
+      include: { items: true, appointment: true }
+    });
+    if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
+    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
+    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
+    if (!isExecutorOfAppt && !isExecutorOfItem) {
+      return forbidden();
+    }
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {

@@ -23,7 +23,7 @@ export async function requireOperationalSession() {
 }
 
 export function canManageComandas(role: string) {
-  return role === "OWNER" || role === "MANAGER";
+  return role === "OWNER" || role === "MANAGER" || role === "BARBER";
 }
 
 export function canManageFinancial(role: string) {

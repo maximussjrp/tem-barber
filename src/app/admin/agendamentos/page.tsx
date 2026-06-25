@@ -670,32 +670,10 @@ function AppointmentBlock({
                 </button>
               )}
 
-              {uiStatus === "OPEN_COMANDA" && (
-                <div className="flex gap-2">
-                  <button onClick={startComandaService} disabled={loadingStatus} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-50">
-                    Iniciar Atendimento
-                  </button>
-                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-[var(--surface-3)] hover:bg-[var(--surface-4)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
-                    Ver Comanda
-                  </button>
-                </div>
-              )}
-
-              {uiStatus === "IN_SERVICE" && (
-                <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors">
-                  Ver Atendimento
+              {(uiStatus === "OPEN_COMANDA" || uiStatus === "IN_SERVICE" || uiStatus === "PENDING_PAYMENT") && (
+                <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="w-full text-sm font-bold px-4 py-3 rounded-xl bg-[var(--gold)] hover:bg-[#c99833] text-stone-900 transition-colors">
+                  Ver/Finalizar Comanda
                 </button>
-              )}
-
-              {uiStatus === "PENDING_PAYMENT" && (
-                <div className="flex gap-2">
-                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-[2] text-sm font-bold px-4 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors">
-                    Ir para Pagamento
-                  </button>
-                  <button onClick={() => router.push(`/admin/comandas/${appointment.comandas![0].id}`)} className="flex-1 text-sm font-bold px-4 py-3 rounded-xl bg-[var(--surface-3)] hover:bg-[var(--surface-4)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
-                    Ver Comanda
-                  </button>
-                </div>
               )}
 
               {isTerminal && appointment.comandas?.[0] && (

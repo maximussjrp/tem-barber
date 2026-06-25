@@ -61,6 +61,19 @@ export async function DELETE(
   if (!canManageComandas(data!.role)) return forbidden();
   const { id, itemId } = await params;
 
+  if (data!.role === "BARBER") {
+    const comanda = await prisma.comanda.findFirst({
+      where: { id, barbershopId: data!.barbershopId },
+      include: { items: true, appointment: true }
+    });
+    if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
+    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
+    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
+    if (!isExecutorOfAppt && !isExecutorOfItem) {
+      return forbidden();
+    }
+  }
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.comandaItem.findFirst({

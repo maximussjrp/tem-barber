@@ -128,6 +128,15 @@ export default function ComandaDetailPage() {
     }
   }
 
+  async function handleFinalize() {
+    if (!comanda) return;
+    if (Number(comanda.remainingTotal) <= 0) {
+      await mutate(`/api/admin/comandas/${id}/finalize`, { payments: [] });
+    } else {
+      setShowPaymentModal(true);
+    }
+  }
+
   async function handleAddService(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedServiceId || !selectedExecutorId) return;
@@ -185,8 +194,8 @@ export default function ComandaDetailPage() {
     }
   }
 
-  async function handlePay(method: string, amount: string) {
-    const ok = await mutate(`/api/admin/comandas/${id}/payments`, { method, amount });
+  async function handlePay(payments: { method: string; amount: string }[]) {
+    const ok = await mutate(`/api/admin/comandas/${id}/finalize`, { payments });
     if (ok) setShowPaymentModal(false);
   }
 
@@ -246,20 +255,8 @@ export default function ComandaDetailPage() {
 
         {/* Desktop actions */}
         <div className="flex flex-wrap gap-2">
-          {comanda.status === "OPEN" && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "IN_SERVICE" }, "PATCH")} className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold disabled:opacity-40 hover:bg-amber-400">Iniciar atendimento</button>
-          )}
-          {comanda.status === "IN_SERVICE" && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "PENDING_PAYMENT" }, "PATCH")} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40 hover:bg-emerald-500">Ir para pagamento</button>
-          )}
-          {comanda.status === "PENDING_PAYMENT" && (
-            <>
-              <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "IN_SERVICE" }, "PATCH")} className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300 text-sm disabled:opacity-40 hover:bg-stone-800">Voltar para edição</button>
-              <button disabled={busy} onClick={() => setShowPaymentModal(true)} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40 hover:bg-emerald-500">Receber Pagamento</button>
-            </>
-          )}
-          {!comandaClosed && Number(comanda.remainingTotal) <= 0 && Number(comanda.total) >= 0 && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "CLOSED" }, "PATCH")} className="px-4 py-2 rounded-lg bg-stone-100 text-stone-950 text-sm font-bold disabled:opacity-40 hover:bg-stone-300">Fechar comanda</button>
+          {!comandaClosed && (
+            <button disabled={busy} onClick={handleFinalize} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40 hover:bg-emerald-500">Finalizar atendimento</button>
           )}
         </div>
       </div>
@@ -272,9 +269,9 @@ export default function ComandaDetailPage() {
             <div className="px-4 py-3 border-b border-stone-800 flex justify-between items-center bg-stone-900">
               <h2 className="font-semibold text-stone-100">Itens do Atendimento</h2>
               <div className="flex gap-2">
-                <button disabled={busy || comandaClosed || comanda.status === "PENDING_PAYMENT"} onClick={() => setShowServiceModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Serviço</button>
-                <button disabled={busy || comandaClosed || comanda.status === "PENDING_PAYMENT"} onClick={() => setShowProductModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Produto</button>
-                <button disabled={busy || comandaClosed || comanda.status === "PENDING_PAYMENT"} onClick={() => {
+                <button disabled={busy || comandaClosed} onClick={() => setShowServiceModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Serviço</button>
+                <button disabled={busy || comandaClosed} onClick={() => setShowProductModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Produto</button>
+                <button disabled={busy || comandaClosed} onClick={() => {
                   const existingDiscount = comanda.items.find(i => i.type === "DISCOUNT");
                   if (existingDiscount) {
                     setDiscountAmount(existingDiscount.unitPrice);
@@ -294,7 +291,7 @@ export default function ComandaDetailPage() {
                     key={item.id}
                     item={item}
                     busy={busy}
-                    comandaClosed={comandaClosed || comanda.status === "PENDING_PAYMENT"}
+                    comandaClosed={comandaClosed}
                     onConclude={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "DONE" }, "PATCH")}
                     onCancel={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "CANCELLED" }, "PATCH")}
                   />
@@ -365,21 +362,9 @@ export default function ComandaDetailPage() {
           <span className="text-sm text-stone-400 font-medium">Falta Pagar</span>
           <span className="text-xl font-bold text-amber-400">{brl(comanda.remainingTotal)}</span>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {comanda.status === "OPEN" && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "IN_SERVICE" }, "PATCH")} className="col-span-2 py-3 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold disabled:opacity-40">Iniciar atendimento</button>
-          )}
-          {comanda.status === "IN_SERVICE" && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "PENDING_PAYMENT" }, "PATCH")} className="col-span-2 py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Ir para pagamento</button>
-          )}
-          {comanda.status === "PENDING_PAYMENT" && (
-            <>
-              <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "IN_SERVICE" }, "PATCH")} className="py-3 rounded-lg border border-stone-700 text-stone-300 text-sm font-bold disabled:opacity-40">Voltar para edicao</button>
-              <button disabled={busy} onClick={() => setShowPaymentModal(true)} className="py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Receber Pagamento</button>
-            </>
-          )}
-          {!comandaClosed && Number(comanda.remainingTotal) <= 0 && Number(comanda.total) >= 0 && (
-            <button disabled={busy} onClick={() => mutate(`/api/admin/comandas/${id}`, { status: "CLOSED" }, "PATCH")} className="col-span-2 py-3 rounded-lg bg-stone-100 text-stone-950 text-sm font-bold disabled:opacity-40">Fechar comanda</button>
+        <div className="grid grid-cols-1">
+          {!comandaClosed && (
+            <button disabled={busy} onClick={handleFinalize} className="w-full py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Finalizar atendimento</button>
           )}
         </div>
       </div>

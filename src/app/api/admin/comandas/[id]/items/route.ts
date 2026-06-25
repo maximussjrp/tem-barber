@@ -31,6 +31,20 @@ export async function POST(
   if (!canManageComandas(data!.role)) return forbidden();
   const { id } = await params;
 
+  if (data!.role === "BARBER") {
+    const comanda = await prisma.comanda.findFirst({
+      where: { id, barbershopId: data!.barbershopId },
+      include: { items: true, appointment: true }
+    });
+    if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
+    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
+    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
+    const isCreator = comanda.customerId === null && comanda.items.length === 0;
+    if (!isExecutorOfAppt && !isExecutorOfItem && !isCreator) {
+      return forbidden();
+    }
+  }
+
   let body: ItemBody;
   try {
     body = await request.json();
