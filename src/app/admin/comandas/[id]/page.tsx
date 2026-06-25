@@ -210,8 +210,8 @@ export default function ComandaDetailPage() {
     }
   }
 
-  if (loading) return <div className="p-6 text-stone-500">Carregando...</div>;
-  if (!comanda) return <div className="p-6 text-red-300">{error || "Comanda nao encontrada."}</div>;
+  if (loading) return <div className="p-6 text-[var(--text-muted)]">Carregando...</div>;
+  if (!comanda) return <div className="p-6 text-[var(--danger)]">{error || "Comanda não encontrada."}</div>;
 
   const comandaClosed = comanda.status === "CLOSED" || comanda.status === "CANCELLED";
 
@@ -232,23 +232,23 @@ export default function ComandaDetailPage() {
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-2xl font-serif font-bold text-stone-100">{comanda.customerName}</h1>
-            <span className={`px-2 py-1 text-xs font-bold rounded-md ${
-              comanda.status === "OPEN" ? "bg-stone-800 text-stone-300" :
-              comanda.status === "IN_SERVICE" ? "bg-amber-500/20 text-amber-300" :
-              comanda.status === "PENDING_PAYMENT" ? "bg-orange-500/20 text-orange-300" :
-              comanda.status === "CLOSED" ? "bg-emerald-500/20 text-emerald-300" :
-              "bg-red-500/20 text-red-300"
+            <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">{comanda.customerName}</h1>
+            <span className={`px-2 py-1 text-xs font-bold rounded-md border ${
+              comanda.status === "OPEN" ? "bg-[var(--surface-raised)] text-[var(--text-muted)] border-[var(--border-subtle)]" :
+              comanda.status === "IN_SERVICE" ? "bg-[var(--brand-subtle)] text-[var(--gold)] border-[var(--gold-border)]" :
+              comanda.status === "PENDING_PAYMENT" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+              comanda.status === "CLOSED" ? "bg-[var(--success-subtle)] text-emerald-400 border border-emerald-950/20" :
+              "bg-[var(--danger-subtle)] text-[var(--danger)] border border-[var(--border-danger)]"
             }`}>
               {getStatusLabel(comanda.status)}
             </span>
           </div>
-          <p className="text-sm text-stone-400 mb-3">{comanda.customerPhone ?? "Sem telefone"}</p>
+          <p className="text-sm text-[var(--text-secondary)] mb-3">{comanda.customerPhone ?? "Sem telefone"}</p>
           <div className="flex gap-2 items-center">
             {comanda.appointmentId ? (
-              <Link href="/admin/agendamentos" className="text-sm text-amber-500 hover:text-amber-400 underline underline-offset-2">Voltar para agenda</Link>
+              <Link href="/admin/agendamentos" className="text-sm text-[var(--gold)] hover:text-[var(--gold-light)] underline underline-offset-2 transition-colors">Voltar para agenda</Link>
             ) : (
-              <span className="text-xs bg-stone-800 text-stone-400 px-2 py-1 rounded">Atendimento Avulso</span>
+              <span className="text-xs bg-[var(--surface-raised)] text-[var(--text-muted)] border border-[var(--border-subtle)] px-2 py-1 rounded">Atendimento Avulso</span>
             )}
           </div>
         </div>
@@ -256,21 +256,27 @@ export default function ComandaDetailPage() {
         {/* Desktop actions */}
         <div className="flex flex-wrap gap-2">
           {!comandaClosed && (
-            <button disabled={busy} onClick={handleFinalize} className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40 hover:bg-emerald-500">Finalizar atendimento</button>
+            <button
+              disabled={busy}
+              onClick={handleFinalize}
+              className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Finalizar atendimento
+            </button>
           )}
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-300">{error}</div>}
+      {error && <div className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
         <div className="md:col-span-2 space-y-6">
-          <section className="rounded-xl border border-stone-800 bg-stone-900/50 overflow-hidden">
-            <div className="px-4 py-3 border-b border-stone-800 flex justify-between items-center bg-stone-900">
-              <h2 className="font-semibold text-stone-100">Itens do Atendimento</h2>
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex justify-between items-center bg-[var(--surface-raised)]">
+              <h2 className="font-semibold text-[var(--text-primary)]">Itens do Atendimento</h2>
               <div className="flex gap-2">
-                <button disabled={busy || comandaClosed} onClick={() => setShowServiceModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Serviço</button>
-                <button disabled={busy || comandaClosed} onClick={() => setShowProductModal(true)} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Produto</button>
+                <button disabled={busy || comandaClosed} onClick={() => setShowServiceModal(true)} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Serviço</button>
+                <button disabled={busy || comandaClosed} onClick={() => setShowProductModal(true)} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Produto</button>
                 <button disabled={busy || comandaClosed} onClick={() => {
                   const existingDiscount = comanda.items.find(i => i.type === "DISCOUNT");
                   if (existingDiscount) {
@@ -281,11 +287,11 @@ export default function ComandaDetailPage() {
                     setDiscountReason("");
                   }
                   setShowDiscountModal(true);
-                }} className="text-xs px-2 py-1 rounded border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-30">Desconto</button>
+                }} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Desconto</button>
               </div>
             </div>
-            {comanda.items.length === 0 ? <p className="p-6 text-center text-sm text-stone-500">O carrinho está vazio.</p> : (
-              <div className="flex flex-col">
+            {comanda.items.length === 0 ? <p className="p-6 text-center text-sm text-[var(--text-muted)]">O carrinho está vazio.</p> : (
+              <div className="flex flex-col divide-y divide-[var(--border-subtle)]">
                 {comanda.items.map((item) => (
                   <ComandaItemCard
                     key={item.id}
@@ -300,17 +306,17 @@ export default function ComandaDetailPage() {
             )}
           </section>
 
-          <section className="rounded-xl border border-stone-800 bg-stone-900/50 overflow-hidden">
-            <div className="px-4 py-3 border-b border-stone-800 bg-stone-900">
-              <h2 className="font-semibold text-stone-100">Linha do Tempo</h2>
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+              <h2 className="font-semibold text-[var(--text-primary)]">Linha do Tempo</h2>
             </div>
             <div className="p-4 space-y-4">
               {timeline.map((event, idx) => (
                 <div key={idx} className="flex gap-4 items-start">
-                  <div className="mt-1 w-2 h-2 rounded-full bg-stone-700 shrink-0"></div>
+                  <div className="mt-1.5 w-2 h-2 rounded-full bg-[var(--border-subtle)] shrink-0"></div>
                   <div>
-                    <p className="text-sm text-stone-200">{event.label}</p>
-                    <p className="text-xs text-stone-500">{event.date.toLocaleString("pt-BR")}</p>
+                    <p className="text-sm text-[var(--text-secondary)]">{event.label}</p>
+                    <p className="text-xs text-[var(--text-muted)]">{event.date.toLocaleString("pt-BR")}</p>
                   </div>
                 </div>
               ))}
@@ -319,26 +325,26 @@ export default function ComandaDetailPage() {
         </div>
 
         {/* Resumo Financeiro */}
-        <div className="rounded-xl border border-stone-800 bg-stone-900 overflow-hidden sticky top-6">
-          <div className="px-4 py-3 border-b border-stone-800">
-            <h2 className="font-semibold text-stone-100">Resumo</h2>
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] overflow-hidden sticky top-6 shadow-md">
+          <div className="px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <h2 className="font-semibold text-[var(--text-primary)]">Resumo</h2>
           </div>
           <div className="p-4 space-y-3">
-            <div className="flex justify-between text-sm text-stone-400">
+            <div className="flex justify-between text-sm text-[var(--text-secondary)]">
               <span>Subtotal</span>
               <span>{brl(comanda.subtotal)}</span>
             </div>
-            <div className="flex justify-between text-sm text-red-400">
+            <div className="flex justify-between text-sm text-[var(--danger)]">
               <span>Descontos</span>
               <span>- {brl(comanda.discountTotal)}</span>
             </div>
             {Number(comanda.surchargeTotal) > 0 && (
-              <div className="flex justify-between text-sm text-amber-400">
+              <div className="flex justify-between text-sm text-[var(--gold)]">
                 <span>Acréscimos</span>
                 <span>+ {brl(comanda.surchargeTotal)}</span>
               </div>
             )}
-            <div className="pt-3 border-t border-stone-800 flex justify-between font-bold text-stone-100">
+            <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-between font-bold text-[var(--text-primary)]">
               <span>Total</span>
               <span>{brl(comanda.total)}</span>
             </div>
@@ -346,25 +352,29 @@ export default function ComandaDetailPage() {
               <span>Valor Pago</span>
               <span>{brl(comanda.paidTotal)}</span>
             </div>
-            <div className="pt-3 border-t border-stone-800 flex justify-between font-bold text-lg text-amber-400">
+            <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-between font-bold text-lg text-[var(--gold)] font-serif">
               <span>Restante</span>
               <span>{brl(comanda.remainingTotal)}</span>
             </div>
           </div>
-          
-          {/* Mobile Bottom Bar spacer equivalent, but action buttons here for desktop if needed. The mobile sticky handles mobile. */}
         </div>
       </div>
 
       {/* Mobile Sticky Bottom Bar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-stone-950 border-t border-stone-800 p-4 z-40 shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)] border-t border-[var(--border-strong)] p-4 z-40 shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
         <div className="flex justify-between items-center mb-3">
-          <span className="text-sm text-stone-400 font-medium">Falta Pagar</span>
-          <span className="text-xl font-bold text-amber-400">{brl(comanda.remainingTotal)}</span>
+          <span className="text-sm text-[var(--text-secondary)] font-medium">Falta Pagar</span>
+          <span className="text-xl font-bold text-[var(--gold)] font-serif">{brl(comanda.remainingTotal)}</span>
         </div>
         <div className="grid grid-cols-1">
           {!comandaClosed && (
-            <button disabled={busy} onClick={handleFinalize} className="w-full py-3 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">Finalizar atendimento</button>
+            <button
+              disabled={busy}
+              onClick={handleFinalize}
+              className="w-full py-3 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Finalizar atendimento
+            </button>
           )}
         </div>
       </div>
@@ -380,45 +390,60 @@ export default function ComandaDetailPage() {
       )}
 
       {showServiceModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/80 p-4">
-          <form onSubmit={handleAddService} className="bg-stone-900 border border-stone-800 rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-stone-800">
-              <h2 className="text-lg font-bold text-stone-100">Adicionar Serviço</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
+          <form onSubmit={handleAddService} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Adicionar Serviço</h2>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Serviço</label>
-                <select value={selectedServiceId} onChange={e => setSelectedServiceId(e.target.value)} required className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500">
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Serviço</label>
+                <select
+                  value={selectedServiceId}
+                  onChange={e => setSelectedServiceId(e.target.value)}
+                  required
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                >
                   <option value="">Selecione...</option>
                   {services.map(s => <option key={s.id} value={s.id}>{s.name} - {brl(s.price)}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Profissional</label>
-                <select value={selectedExecutorId} onChange={e => setSelectedExecutorId(e.target.value)} required className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500">
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Profissional</label>
+                <select
+                  value={selectedExecutorId}
+                  onChange={e => setSelectedExecutorId(e.target.value)}
+                  required
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                >
                   <option value="">Selecione...</option>
                   {members.map(m => <option key={m.id} value={m.id}>{m.user.name}</option>)}
                 </select>
               </div>
             </div>
-            <div className="p-5 border-t border-stone-800 flex justify-end gap-3">
-              <button type="button" onClick={() => setShowServiceModal(false)} className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300">Cancelar</button>
-              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 font-bold disabled:opacity-50">Adicionar</button>
+            <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
+              <button type="button" onClick={() => setShowServiceModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Adicionar</button>
             </div>
           </form>
         </div>
       )}
 
       {showProductModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/80 p-4">
-          <form onSubmit={handleAddProduct} className="bg-stone-900 border border-stone-800 rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-stone-800">
-              <h2 className="text-lg font-bold text-stone-100">Adicionar Produto</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
+          <form onSubmit={handleAddProduct} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Adicionar Produto</h2>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Produto</label>
-                <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)} required className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500">
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Produto</label>
+                <select
+                  value={selectedProductId}
+                  onChange={e => setSelectedProductId(e.target.value)}
+                  required
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                >
                   <option value="">Selecione...</option>
                   {products.map(p => {
                     const inCart = comanda?.items.filter(i => i.type === "PRODUCT" && i.description === p.name && i.status !== "CANCELLED").reduce((sum, i) => sum + Number(i.quantity), 0) || 0;
@@ -429,37 +454,61 @@ export default function ComandaDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Quantidade</label>
-                <input type="number" min="1" step="1" value={productQuantity} onChange={e => setProductQuantity(e.target.value)} required className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500" />
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Quantidade</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={productQuantity}
+                  onChange={e => setProductQuantity(e.target.value)}
+                  required
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                />
               </div>
             </div>
-            <div className="p-5 border-t border-stone-800 flex justify-end gap-3">
-              <button type="button" onClick={() => setShowProductModal(false)} className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300">Cancelar</button>
-              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 font-bold disabled:opacity-50">Adicionar</button>
+            <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
+              <button type="button" onClick={() => setShowProductModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Adicionar</button>
             </div>
           </form>
         </div>
       )}
 
       {showDiscountModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/80 p-4">
-          <form onSubmit={handleAddDiscount} className="bg-stone-900 border border-stone-800 rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-stone-800">
-              <h2 className="text-lg font-bold text-stone-100">Desconto Geral da Comanda</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
+          <form onSubmit={handleAddDiscount} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Desconto Geral da Comanda</h2>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Valor do Desconto (R$)</label>
-                <input type="number" step="0.01" min="0" value={discountAmount} onChange={e => setDiscountAmount(e.target.value)} placeholder="0.00 (deixe vazio para remover)" className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500" />
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor do Desconto (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={discountAmount}
+                  onChange={e => setDiscountAmount(e.target.value)}
+                  placeholder="0.00 (deixe vazio para remover)"
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Justificativa <span className="text-red-400">*</span></label>
-                <input type="text" value={discountReason} onChange={e => setDiscountReason(e.target.value)} maxLength={255} placeholder="Ex: Desconto autorizado pelo gerente" required={Number(discountAmount) > 0} className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500" />
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Justificativa <span className="text-[var(--danger)]">*</span></label>
+                <input
+                  type="text"
+                  value={discountReason}
+                  onChange={e => setDiscountReason(e.target.value)}
+                  maxLength={255}
+                  placeholder="Ex: Desconto autorizado pelo gerente"
+                  required={Number(discountAmount) > 0}
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                />
               </div>
             </div>
-            <div className="p-5 border-t border-stone-800 flex justify-end gap-3">
-              <button type="button" onClick={() => setShowDiscountModal(false)} className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300">Cancelar</button>
-              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 font-bold disabled:opacity-50">Aplicar</button>
+            <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
+              <button type="button" onClick={() => setShowDiscountModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Aplicar</button>
             </div>
           </form>
         </div>

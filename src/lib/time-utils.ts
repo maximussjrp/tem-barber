@@ -88,3 +88,23 @@ export function formatHeaderDate(dateString: string): string {
     timeZone: "UTC"
   });
 }
+
+/**
+ * Converte uma data no formato local YYYY-MM-DD para uma data UTC (início do dia local no fuso America/Sao_Paulo, que é UTC-3).
+ * Exemplo: "2026-06-25" -> 2026-06-25T03:00:00.000Z
+ */
+export function localDateToUTCBoundary(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 3, 0, 0, 0));
+}
+
+/**
+ * Desloca uma string de data ISO "YYYY-MM-DD" por N dias.
+ * Usado para calcular o início do dia seguinte (endExclusive).
+ */
+export function shiftDateISO(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+

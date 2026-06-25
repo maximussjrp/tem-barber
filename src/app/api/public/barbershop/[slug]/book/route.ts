@@ -71,6 +71,23 @@ function isUserPhoneUniqueConstraint(error: unknown) {
 }
 
 function isRetryableTransactionError(error: unknown) {
+  const errStr = String(error);
+  if (errStr.includes("TransactionWriteConflict") || errStr.includes("WriteConflict")) {
+    return true;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    const msg = String((error as any).message);
+    if (
+      msg.includes("TransactionWriteConflict") ||
+      msg.includes("could not serialize access") ||
+      msg.includes("write conflict") ||
+      msg.includes("deadlock")
+    ) {
+      return true;
+    }
+  }
+
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
 
   return (

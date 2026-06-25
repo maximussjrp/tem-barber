@@ -92,29 +92,29 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/80 p-4">
-      <div className="bg-stone-900 border border-stone-800 rounded-xl w-full max-w-lg overflow-hidden shadow-xl">
-        <div className="px-5 py-4 border-b border-stone-800 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-stone-100">Finalizar Atendimento - Receber</h2>
-          <button onClick={onClose} disabled={busy} className="text-stone-400 hover:text-stone-200 disabled:opacity-50 text-2xl leading-none">&times;</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
+      <div className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-lg overflow-hidden shadow-xl">
+        <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
+          <h2 className="text-lg font-bold text-[var(--text-primary)]">Finalizar Atendimento - Receber</h2>
+          <button onClick={onClose} disabled={busy} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-2xl leading-none cursor-pointer">&times;</button>
         </div>
         
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="flex justify-between items-center bg-stone-950/40 p-3 rounded-lg border border-stone-800">
-            <span className="text-sm text-stone-400">Total a Pagar</span>
-            <span className="text-xl font-bold text-amber-400">R$ {remainingTotal.toFixed(2)}</span>
+          <div className="flex justify-between items-center bg-[var(--surface-raised)] p-3 rounded-lg border border-[var(--border-subtle)]">
+            <span className="text-sm text-[var(--text-secondary)]">Total a Pagar</span>
+            <span className="text-xl font-bold text-[var(--gold)] font-serif">R$ {remainingTotal.toFixed(2)}</span>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-stone-300 mb-1">Tipo de Pagamento</label>
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Tipo de Pagamento</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setIsMixed(false)}
-                className={`py-2 rounded-lg text-sm font-semibold transition-colors ${
+                className={`py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
                   !isMixed
-                    ? "bg-amber-500 text-stone-950 font-bold"
-                    : "bg-stone-950 border border-stone-700 text-stone-300 hover:bg-stone-800"
+                    ? "bg-[var(--gold)] text-[var(--text-inverse)] font-bold"
+                    : "bg-[var(--surface-raised)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                 }`}
               >
                 Pagamento Único
@@ -122,10 +122,10 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
               <button
                 type="button"
                 onClick={() => setIsMixed(true)}
-                className={`py-2 rounded-lg text-sm font-semibold transition-colors ${
+                className={`py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
                   isMixed
-                    ? "bg-amber-500 text-stone-950 font-bold"
-                    : "bg-stone-950 border border-stone-700 text-stone-300 hover:bg-stone-800"
+                    ? "bg-[var(--gold)] text-[var(--text-inverse)] font-bold"
+                    : "bg-[var(--surface-raised)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                 }`}
               >
                 Pagamento Misto
@@ -137,7 +137,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
             // Formulario Pagamento Único
             <div className="space-y-4 pt-2">
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Forma de Pagamento</label>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Forma de Pagamento</label>
                 <select
                   value={singleMethod}
                   onChange={(e) => {
@@ -145,7 +145,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                     setCashReceived("");
                   }}
                   disabled={busy}
-                  className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 >
                   <option value="PIX">Pix</option>
                   <option value="CREDIT">Cartão de Crédito</option>
@@ -156,7 +156,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-stone-300 mb-1">Valor do Pagamento (R$)</label>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor do Pagamento (R$)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -164,13 +164,13 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                   value={singleAmount}
                   onChange={(e) => setSingleAmount(e.target.value)}
                   disabled={busy}
-                  className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
               </div>
 
               {singleMethod === "CASH" && (
-                <div className="pt-2 border-t border-stone-800">
-                  <label className="block text-sm font-medium text-stone-300 mb-1">Valor recebido do cliente (R$)</label>
+                <div className="pt-2 border-t border-[var(--border-subtle)]">
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor recebido do cliente (R$)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -178,10 +178,10 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                     onChange={(e) => setCashReceived(e.target.value)}
                     disabled={busy}
                     placeholder="Ex: 50.00"
-                    className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                    className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                   />
                   {showChange && (
-                    <p className="mt-2 text-sm text-amber-400 font-medium">Troco a devolver: R$ {change.toFixed(2)}</p>
+                    <p className="mt-2 text-sm text-[var(--gold)] font-serif font-medium">Troco a devolver: R$ {change.toFixed(2)}</p>
                   )}
                 </div>
               )}
@@ -189,7 +189,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
           ) : (
             // Formulario Pagamento Misto
             <div className="space-y-3 pt-2">
-              <label className="block text-sm font-medium text-stone-300">Parcelas declaradas</label>
+              <label className="block text-sm font-medium text-[var(--text-secondary)]">Parcelas declaradas</label>
               
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
                 {mixedPayments.map((p, idx) => (
@@ -198,7 +198,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                       value={p.method}
                       onChange={(e) => updateMixedRow(p.id, "method", e.target.value)}
                       disabled={busy}
-                      className="bg-stone-950 border border-stone-700 rounded-lg px-2 py-1.5 text-stone-100 focus:outline-none text-sm w-1/2"
+                      className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-[var(--text-primary)] focus:outline-none text-sm w-1/2"
                     >
                       <option value="PIX">Pix</option>
                       <option value="CREDIT">Crédito</option>
@@ -214,14 +214,14 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                       value={p.amount}
                       onChange={(e) => updateMixedRow(p.id, "amount", e.target.value)}
                       disabled={busy}
-                      className="bg-stone-950 border border-stone-700 rounded-lg px-2 py-1.5 text-stone-100 focus:outline-none text-sm w-1/3"
+                      className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-[var(--text-primary)] focus:outline-none text-sm w-1/3"
                     />
 
                     <button
                       type="button"
                       onClick={() => removeMixedRow(p.id)}
                       disabled={busy || mixedPayments.length === 1}
-                      className="p-1.5 text-red-400 hover:text-red-300 disabled:opacity-30 hover:bg-stone-850 rounded-lg"
+                      className="p-1.5 text-[var(--danger)] hover:text-red-400 disabled:opacity-30 hover:bg-[var(--surface-hover)] rounded-lg transition-colors cursor-pointer"
                     >
                       Remover
                     </button>
@@ -233,19 +233,19 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                 type="button"
                 onClick={addMixedRow}
                 disabled={busy}
-                className="text-xs text-amber-500 hover:text-amber-400 font-semibold flex items-center gap-1 mt-1"
+                className="text-xs text-[var(--gold)] hover:text-[var(--gold-light)] font-semibold flex items-center gap-1 mt-1 cursor-pointer transition-colors"
               >
                 + Adicionar Parcela
               </button>
 
-              <div className="pt-3 border-t border-stone-800 space-y-1 text-sm">
-                <div className="flex justify-between text-stone-400">
+              <div className="pt-3 border-t border-[var(--border-subtle)] space-y-1 text-sm">
+                <div className="flex justify-between text-[var(--text-secondary)]">
                   <span>Total declarado:</span>
                   <span>R$ {mixedTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-medium">
                   <span>Falta declarar:</span>
-                  <span className={Math.abs(mixedDiff) < 0.01 ? "text-emerald-400" : "text-amber-400"}>
+                  <span className={Math.abs(mixedDiff) < 0.01 ? "text-emerald-400" : "text-[var(--gold)] font-serif font-bold"}>
                     R$ {mixedDiff.toFixed(2)}
                   </span>
                 </div>
@@ -253,12 +253,12 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
             </div>
           )}
 
-          <div className="pt-4 border-t border-stone-800 flex gap-3 justify-end">
+          <div className="pt-4 border-t border-[var(--border-subtle)] flex gap-3 justify-end bg-[var(--surface-raised)] -mx-5 -mb-5 p-5">
             <button
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300 hover:bg-stone-800 disabled:opacity-50"
+              className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-50 cursor-pointer transition-colors text-sm"
             >
               Cancelar
             </button>
@@ -269,7 +269,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                 (!isMixed && (amountNum <= 0 || amountNum > remainingTotal)) ||
                 (isMixed && Math.abs(mixedDiff) >= 0.01)
               }
-              className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-500 disabled:opacity-50"
+              className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm"
             >
               {busy ? "Processando..." : "Confirmar e Finalizar"}
             </button>

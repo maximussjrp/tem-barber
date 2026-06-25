@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     },
     include: {
       customer: { select: { name: true, phone: true } },
+      barbershop: { select: { name: true } },
       services: {
         include: {
           service: { select: { name: true, durationMin: true } },
