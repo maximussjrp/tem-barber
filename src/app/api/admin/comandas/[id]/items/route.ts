@@ -20,6 +20,8 @@ interface ItemBody {
   surchargeAmount?: string | number;
   description?: string;
   amount?: string | number;
+  clubBenefitRequested?: boolean;
+  requestedClubPlanBenefitId?: string;
 }
 
 export async function POST(
@@ -64,6 +66,8 @@ export async function POST(
           quantity: body.quantity,
           discountAmount: body.discountAmount,
           surchargeAmount: body.surchargeAmount,
+          clubBenefitRequested: body.clubBenefitRequested,
+          requestedClubPlanBenefitId: body.requestedClubPlanBenefitId,
         });
       }
       if (body.type === "PRODUCT") {
@@ -75,6 +79,8 @@ export async function POST(
           quantity: body.quantity,
           discountAmount: body.discountAmount,
           surchargeAmount: body.surchargeAmount,
+          clubBenefitRequested: body.clubBenefitRequested,
+          requestedClubPlanBenefitId: body.requestedClubPlanBenefitId,
         });
       }
       if (body.type === "DISCOUNT") {

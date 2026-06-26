@@ -21,6 +21,7 @@ export const comandaInclude = {
       service: { select: { id: true, name: true } },
       product: { select: { id: true, name: true, trackStock: true } },
       executor: { include: { user: { select: { name: true } } } },
+      clubBenefitUsage: true,
     },
     orderBy: { createdAt: "asc" },
   },
@@ -63,7 +64,10 @@ export function calculateItemTotal(input: {
 
 export async function recalculateComandaTotals(tx: Prisma.TransactionClient, comandaId: string) {
   const [items, payments] = await Promise.all([
-    tx.comandaItem.findMany({ where: { comandaId, status: { not: ComandaItemStatus.CANCELLED } } }),
+    tx.comandaItem.findMany({
+      where: { comandaId, status: { not: ComandaItemStatus.CANCELLED } },
+      include: { clubBenefitUsage: true },
+    }),
     tx.payment.findMany({ where: { comandaId, status: "CONFIRMED" } }),
   ]);
 
@@ -73,7 +77,21 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   const discounts = items.filter((item) => item.type === "DISCOUNT");
   const surcharges = items.filter((item) => item.type === "SURCHARGE");
 
-  const subtotal = regularItems.reduce((sum, item) => sum + toCents(item.total), 0);
+  // Sum raw subtotal
+  const rawSubtotal = regularItems.reduce((sum, item) => sum + toCents(item.total), 0);
+
+  // Sum active applied club benefit reductions
+  const clubReductions = regularItems.reduce((sum, item) => {
+    const usage = item.clubBenefitUsage;
+    if (usage && usage.status === "APPLIED") {
+      const covered = usage.coveredAmount ? toCents(usage.coveredAmount) : 0;
+      const discount = usage.discountAmount ? toCents(usage.discountAmount) : 0;
+      return sum + covered + discount;
+    }
+    return sum;
+  }, 0);
+
+  const subtotal = Math.max(0, rawSubtotal - clubReductions);
   const discountTotal = discounts.reduce((sum, item) => sum + toCents(item.total), 0);
   const surchargeTotal = surcharges.reduce((sum, item) => sum + toCents(item.total), 0);
   const total = Math.max(0, subtotal - discountTotal + surchargeTotal);
@@ -157,6 +175,8 @@ export async function addServiceItem(
     quantity?: number;
     discountAmount?: string | number;
     surchargeAmount?: string | number;
+    clubBenefitRequested?: boolean;
+    requestedClubPlanBenefitId?: string;
   }
 ) {
   await assertEditableComanda(tx, input.barbershopId, input.comandaId);
@@ -186,6 +206,8 @@ export async function addServiceItem(
       total,
       serviceId: service.id,
       executorId: input.executorId,
+      clubBenefitRequested: input.clubBenefitRequested ?? false,
+      requestedClubPlanBenefitId: input.requestedClubPlanBenefitId ?? null,
     },
   });
 
@@ -203,6 +225,8 @@ export async function addProductItem(
     quantity?: number;
     discountAmount?: string | number;
     surchargeAmount?: string | number;
+    clubBenefitRequested?: boolean;
+    requestedClubPlanBenefitId?: string;
   }
 ) {
   await assertEditableComanda(tx, input.barbershopId, input.comandaId);
@@ -250,6 +274,8 @@ export async function addProductItem(
       surchargeAmount: input.surchargeAmount ?? 0,
       total,
       productId: product.id,
+      clubBenefitRequested: input.clubBenefitRequested ?? false,
+      requestedClubPlanBenefitId: input.requestedClubPlanBenefitId ?? null,
     },
   });
 

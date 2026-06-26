@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
+import { todayIsoBR } from "@/lib/time-utils";
 
 const { getServerSessionMock } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -386,7 +387,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     );
 
     // Obter data de hoje no formato YYYY-MM-DD
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIsoBR();
     
     // 1. Filtrar por data de hoje (startDate/endDate)
     const reqFilter = new NextRequest(`http://localhost/api/admin/commissions?startDate=${today}&endDate=${today}`);

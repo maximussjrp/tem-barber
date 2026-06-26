@@ -72,6 +72,11 @@ export default function ComandaDetailPage() {
   const [discountAmount, setDiscountAmount] = useState("");
   const [discountReason, setDiscountReason] = useState("");
 
+  // Customer Club states
+  const [clubBalance, setClubBalance] = useState<any>(null);
+  const [clubBenefitRequested, setClubBenefitRequested] = useState(false);
+  const [requestedClubPlanBenefitId, setRequestedClubPlanBenefitId] = useState("");
+
   async function load() {
     setLoading(true);
     setError("");
@@ -93,6 +98,21 @@ export default function ComandaDetailPage() {
       setServices(Array.isArray(servicesData) ? servicesData : servicesData.services ?? []);
       setProducts(productsData.products ?? []);
       setMembers(appointmentsData.members ?? []);
+
+      // Se houver cliente vinculado, buscar saldo do clube
+      if (comandaData.customerId) {
+        try {
+          const clubRes = await fetch(`/api/admin/clube/subscriptions/customer/${comandaData.customerId}/balance`);
+          if (clubRes.ok) {
+            const clubData = await clubRes.json();
+            setClubBalance(clubData);
+          }
+        } catch {
+          // silent error, club module optional
+        }
+      } else {
+        setClubBalance(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar comanda.");
     } finally {
@@ -140,11 +160,19 @@ export default function ComandaDetailPage() {
   async function handleAddService(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedServiceId || !selectedExecutorId) return;
-    const ok = await mutate(`/api/admin/comandas/${id}/items`, { type: "SERVICE", serviceId: selectedServiceId, executorId: selectedExecutorId });
+    const ok = await mutate(`/api/admin/comandas/${id}/items`, {
+      type: "SERVICE",
+      serviceId: selectedServiceId,
+      executorId: selectedExecutorId,
+      clubBenefitRequested,
+      requestedClubPlanBenefitId: requestedClubPlanBenefitId || undefined,
+    });
     if (ok) {
       setShowServiceModal(false);
       setSelectedServiceId("");
       setSelectedExecutorId("");
+      setClubBenefitRequested(false);
+      setRequestedClubPlanBenefitId("");
     }
   }
 
@@ -167,11 +195,19 @@ export default function ComandaDetailPage() {
       }
     }
 
-    const ok = await mutate(`/api/admin/comandas/${id}/items`, { type: "PRODUCT", productId: selectedProductId, quantity: qty });
+    const ok = await mutate(`/api/admin/comandas/${id}/items`, {
+      type: "PRODUCT",
+      productId: selectedProductId,
+      quantity: qty,
+      clubBenefitRequested,
+      requestedClubPlanBenefitId: requestedClubPlanBenefitId || undefined,
+    });
     if (ok) {
       setShowProductModal(false);
       setSelectedProductId("");
       setProductQuantity("1");
+      setClubBenefitRequested(false);
+      setRequestedClubPlanBenefitId("");
     }
   }
 
@@ -244,6 +280,11 @@ export default function ComandaDetailPage() {
             </span>
           </div>
           <p className="text-sm text-[var(--text-secondary)] mb-3">{comanda.customerPhone ?? "Sem telefone"}</p>
+          {clubBalance && clubBalance.clubPlan && (
+            <div className="mb-3 px-3 py-2 rounded-xl border border-[var(--gold-border)] bg-[var(--brand-subtle)] text-[var(--gold)] text-xs font-bold max-w-fit flex items-center gap-2">
+              <span>👑 Assinante Clube: {clubBalance.clubPlan.name}</span>
+            </div>
+          )}
           <div className="flex gap-2 items-center">
             {comanda.appointmentId ? (
               <Link href="/admin/agendamentos" className="text-sm text-[var(--gold)] hover:text-[var(--gold-light)] underline underline-offset-2 transition-colors">Voltar para agenda</Link>
@@ -420,6 +461,57 @@ export default function ComandaDetailPage() {
                   {members.map(m => <option key={m.id} value={m.id}>{m.user.name}</option>)}
                 </select>
               </div>
+
+              {clubBalance && clubBalance.benefits && (
+                <div className="pt-2 border-t border-[var(--border-subtle)] space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Benefícios do Clube</p>
+                  {(() => {
+                    const matchingBenefits = clubBalance.benefits.filter(
+                      (b: any) => b.serviceId === selectedServiceId
+                    );
+                    if (matchingBenefits.length === 0) {
+                      return <p className="text-xs text-[var(--text-muted)]">Nenhum benefício para este serviço.</p>;
+                    }
+                    return (
+                      <div className="space-y-1.5">
+                        {matchingBenefits.map((b: any) => {
+                          const isIncluded = b.benefitType === "INCLUDED_SERVICE";
+                          const label = isIncluded 
+                            ? `Serviço incluso (${b.availableQty} / ${b.includedQty} restantes)`
+                            : `Desconto de ${b.discountPercent}% no serviço`;
+                          const isDisabled = isIncluded && b.availableQty <= 0;
+
+                          return (
+                            <label key={b.id} className={`flex items-start gap-2 text-sm text-[var(--text-primary)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>
+                              <input
+                                type="checkbox"
+                                disabled={isDisabled}
+                                checked={clubBenefitRequested && requestedClubPlanBenefitId === b.id}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setClubBenefitRequested(true);
+                                    setRequestedClubPlanBenefitId(b.id);
+                                  } else {
+                                    setClubBenefitRequested(false);
+                                    setRequestedClubPlanBenefitId("");
+                                  }
+                                }}
+                                className="mt-1"
+                              />
+                              <div>
+                                <p className="font-semibold text-[var(--brand-hover)]">{label}</p>
+                                {isIncluded && (
+                                  <p className="text-[10px] text-[var(--text-muted)]">Gera {b.pointWeight} pontos no rateio</p>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
               <button type="button" onClick={() => setShowServiceModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
@@ -465,6 +557,49 @@ export default function ComandaDetailPage() {
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
               </div>
+
+              {clubBalance && clubBalance.benefits && (
+                <div className="pt-2 border-t border-[var(--border-subtle)] space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Benefícios do Clube</p>
+                  {(() => {
+                    const matchingBenefits = clubBalance.benefits.filter(
+                      (b: any) => b.productId === selectedProductId
+                    );
+                    if (matchingBenefits.length === 0) {
+                      return <p className="text-xs text-[var(--text-muted)]">Nenhum benefício para este produto.</p>;
+                    }
+                    return (
+                      <div className="space-y-1.5">
+                        {matchingBenefits.map((b: any) => {
+                          const label = `Desconto de ${b.discountPercent}% no produto`;
+
+                          return (
+                            <label key={b.id} className="flex items-start gap-2 text-sm text-[var(--text-primary)] cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={clubBenefitRequested && requestedClubPlanBenefitId === b.id}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setClubBenefitRequested(true);
+                                    setRequestedClubPlanBenefitId(b.id);
+                                  } else {
+                                    setClubBenefitRequested(false);
+                                    setRequestedClubPlanBenefitId("");
+                                  }
+                                }}
+                                className="mt-1"
+                              />
+                              <div>
+                                <p className="font-semibold text-[var(--brand-hover)]">{label}</p>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
               <button type="button" onClick={() => setShowProductModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>

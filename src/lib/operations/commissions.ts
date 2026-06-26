@@ -310,7 +310,11 @@ export async function generateCommissionsForComanda(
 ) {
   const comanda = await tx.comanda.findFirst({
     where: { id: comandaId, barbershopId },
-    include: { items: true },
+    include: {
+      items: {
+        include: { clubBenefitUsage: true }
+      }
+    },
   });
   if (!comanda) throw new CommissionError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
 
@@ -331,6 +335,27 @@ export async function generateCommissionsForComanda(
       (item.type !== ComandaItemType.SERVICE && item.type !== ComandaItemType.PRODUCT) ||
       toCents(item.total) <= 0
     ) {
+      continue;
+    }
+
+    // Regra da comissão com clube:
+    // Se o item tem ClubBenefitUsage e status for APPLIED:
+    // - Se for INCLUDED_SERVICE: nunca gera CommissionEntry (retorno de pontos do clube).
+    // - Se for de desconto (SERVICE_DISCOUNT ou PRODUCT_DISCOUNT): gera sobre a base líquida (preço original - desconto).
+    let isIncludedService = false;
+    let baseAmountCents = toCents(item.total);
+
+    if (item.clubBenefitUsage && item.clubBenefitUsage.status === "APPLIED") {
+      if (item.clubBenefitUsage.benefitType === "INCLUDED_SERVICE") {
+        isIncludedService = true;
+      } else {
+        const disc = item.clubBenefitUsage.discountAmount ? toCents(item.clubBenefitUsage.discountAmount) : 0;
+        baseAmountCents = Math.max(0, baseAmountCents - disc);
+      }
+    }
+
+    if (isIncludedService || baseAmountCents <= 0) {
+      // Ignora esse item para comissão tradicional
       continue;
     }
 
@@ -361,8 +386,8 @@ export async function generateCommissionsForComanda(
       item,
       executorId,
       config,
-      basePriceCents: toCents(item.total),
-      finalBaseAmountCents: toCents(item.total),
+      basePriceCents: baseAmountCents,
+      finalBaseAmountCents: baseAmountCents,
     });
   }
 

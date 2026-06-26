@@ -12,6 +12,7 @@ interface SidebarProps {
   barbershopLogo?: string | null;
   subtitle?: string | null;
   userName: string;
+  userRole?: string | null;
 }
 
 // SVG icons
@@ -53,6 +54,11 @@ const Icons = {
       <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
     </svg>
   ),
+  club: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+  ),
   chevron: (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9"/>
@@ -61,17 +67,18 @@ const Icons = {
 };
 
 const navItems = [
-  { label: "Dashboard",     href: "/admin/dashboard",    icon: Icons.dashboard, children: [] },
-  { label: "Agendamentos",  href: "/admin/agendamentos", icon: Icons.calendar,  children: [] },
-  { label: "Comandas",      href: "/admin/comandas",     icon: Icons.calendar,  children: [] },
-  { label: "Clientes",      href: "/admin/clientes",     icon: Icons.clients,   children: [] },
-  { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [] },
-  { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [] },
-  { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [] },
+  { label: "Dashboard",     href: "/admin/dashboard",    icon: Icons.dashboard, children: [], ownerOnly: false },
+  { label: "Agendamentos",  href: "/admin/agendamentos", icon: Icons.calendar,  children: [], ownerOnly: false },
+  { label: "Comandas",      href: "/admin/comandas",     icon: Icons.calendar,  children: [], ownerOnly: false },
+  { label: "Clientes",      href: "/admin/clientes",     icon: Icons.clients,   children: [], ownerOnly: false },
+  { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [], ownerOnly: false },
+  { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [], ownerOnly: false },
+  { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [], ownerOnly: false },
   {
     label: "Comissões",
     href: "/admin/comissoes",
     icon: Icons.dashboard,
+    ownerOnly: false,
     children: [
       { label: "Geral", href: "/admin/comissoes" },
       { label: "Configuracoes", href: "/admin/comissoes/configuracoes" },
@@ -82,15 +89,30 @@ const navItems = [
     label: "Serviços",
     href: "/admin/servicos",
     icon: Icons.scissors,
+    ownerOnly: false,
     children: [
       { label: "Catálogo",    href: "/admin/servicos" },
       { label: "Categorias",  href: "/admin/servicos/categorias" },
     ],
   },
   {
+    label: "Clube",
+    href: "/admin/clube",
+    icon: Icons.club,
+    ownerOnly: true,
+    children: [
+      { label: "Visão Geral",  href: "/admin/clube" },
+      { label: "Planos",       href: "/admin/clube/planos" },
+      { label: "Assinantes",   href: "/admin/clube/assinantes" },
+      { label: "Fechamentos",  href: "/admin/clube/fechamentos" },
+      { label: "Relatórios",   href: "/admin/clube/relatorios" },
+    ],
+  },
+  {
     label: "Configurações",
     href: "/admin/configuracoes",
     icon: Icons.settings,
+    ownerOnly: false,
     children: [
       { label: "Geral",     href: "/admin/configuracoes" },
       { label: "Horários",  href: "/admin/configuracoes/horarios" },
@@ -106,7 +128,9 @@ function getInitials(name: string): string {
   return initials.slice(0, 3);
 }
 
-export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName }: SidebarProps) {
+export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName, userRole }: SidebarProps) {
+  const canSeeClub = userRole === "OWNER" || userRole === "MANAGER" || userRole === "SUPER_ADMIN";
+  const visibleNavItems = navItems.filter((item) => !item.ownerOnly || canSeeClub);
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [prevLogo, setPrevLogo] = useState(barbershopLogo);
@@ -170,7 +194,7 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isOpen = openGroups[item.href];
           const active = isGroupActive(item);
           return (

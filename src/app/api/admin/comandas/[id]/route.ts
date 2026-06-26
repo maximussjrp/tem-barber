@@ -95,6 +95,19 @@ export async function PATCH(
         return closeComanda(tx, data!.barbershopId, id);
       }
       if (body.status === "CANCELLED") {
+        const items = await tx.comandaItem.findMany({
+          where: { comandaId: id, status: { not: "CANCELLED" } }
+        });
+        const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
+        for (const item of items) {
+          await reverseClubBenefitUsage({
+            barbershopId: data!.barbershopId,
+            comandaItemId: item.id,
+            reversalReason: "Cancelamento da comanda inteira",
+            tx,
+          });
+        }
+
         await tx.comandaItem.updateMany({
           where: { comandaId: id, status: { not: "CANCELLED" } },
           data: { status: "CANCELLED", cancelledAt: new Date() },

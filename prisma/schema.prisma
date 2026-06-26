@@ -33,6 +33,8 @@ model User {
   reviews       Review[]           // Avaliações feitas pelo cliente
   notifications Notification[]
   comandas      Comanda[]
+  clubSubscriptions CustomerClubSubscription[]
+  clubSubscriptionPayments ClubSubscriptionPayment[]
 
   @@map("users")
 }
@@ -80,6 +82,12 @@ model Barbershop {
   commissionEntries CommissionEntry[]
   commissionPeriods CommissionPeriod[]
   commissionAdjustments CommissionAdjustment[]
+  clubPlans                  ClubPlan[]
+  customerClubSubscriptions  CustomerClubSubscription[]
+  clubSubscriptionPayments   ClubSubscriptionPayment[]
+  clubBenefitUsages          ClubBenefitUsage[]
+  clubPointEntries           ClubPointEntry[]
+  clubSettlements            ClubSettlement[]
 
   @@map("barbershops")
 }
@@ -131,6 +139,8 @@ model BarbershopMember {
   commissionEntries CommissionEntry[]
   commissionPeriods CommissionPeriod[]
   commissionAdjustments CommissionAdjustment[]
+  clubPointEntries           ClubPointEntry[]
+  clubSettlementMembers      ClubSettlementMember[]
 
   @@unique([barbershopId, userId])
   @@map("barbershop_members")
@@ -174,6 +184,8 @@ model Service {
   appointments AppointmentService[]
   comandaItems ComandaItem[]
   commissionConfigs CommissionConfig[]
+  clubPlanBenefits           ClubPlanBenefit[]
+  clubBenefitUsages          ClubBenefitUsage[]
 
   @@map("services")
 }
@@ -483,8 +495,12 @@ model ComandaItem {
   service   Service?          @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   product   Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
   executor  BarbershopMember? @relation(fields: [executorId], references: [id], onDelete: SetNull)
-  stockMovements StockMovement[]
-  commissionEntry CommissionEntry?
+  clubBenefitRequested       Boolean           @default(false) @map("club_benefit_requested")
+  requestedClubPlanBenefitId String?           @map("requested_club_plan_benefit_id")
+  clubBenefitUsage           ClubBenefitUsage?
+  clubPointEntry             ClubPointEntry?
+  stockMovements             StockMovement[]
+  commissionEntry            CommissionEntry?
 
   @@index([barbershopId, comandaId])
   @@index([executorId, status])
@@ -509,6 +525,8 @@ model Product {
   items      ComandaItem[]
   movements  StockMovement[]
   commissionConfigs CommissionConfig[]
+  clubPlanBenefits           ClubPlanBenefit[]
+  clubBenefitUsages          ClubBenefitUsage[]
 
   @@index([barbershopId, isActive])
   @@map("products")
@@ -759,3 +777,243 @@ model CommissionAdjustment {
   @@index([rolloverFromCompetence])
   @@map("commission_adjustments")
 }
+
+// ----------------------------------------------------
+// 8. PLANO CLUBE (ASSINATURA DE CLIENTES)
+// ----------------------------------------------------
+
+enum ClubPlanBenefitType {
+  INCLUDED_SERVICE
+  SERVICE_DISCOUNT
+  PRODUCT_DISCOUNT
+}
+
+enum ClubSubscriptionStatus {
+  ACTIVE
+  GRACE_PERIOD
+  PAST_DUE
+  SUSPENDED
+  CANCELED
+  EXPIRED
+}
+
+enum ClubPaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  CANCELED
+}
+
+enum ClubPointStatus {
+  GENERATED
+  SETTLED
+  REVERSED
+}
+
+enum ClubSettlementStatus {
+  CALCULATED
+  APPROVED
+  PAID
+  CANCELED
+}
+
+enum ClubBenefitUsageStatus {
+  APPLIED
+  REVERSED
+}
+
+model ClubPlan {
+  id                String            @id @default(uuid())
+  barbershopId      String            @map("barbershop_id")
+  name              String
+  description       String?
+  monthlyPrice      Decimal           @map("monthly_price") @db.Decimal(10, 2)
+  shopSharePercent  Decimal           @map("shop_share_percent") @db.Decimal(5, 2)
+  barberPoolPercent Decimal           @map("barber_pool_percent") @db.Decimal(5, 2)
+  isActive          Boolean           @default(true) @map("is_active")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  barbershop        Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  benefits          ClubPlanBenefit[]
+  subscriptions     CustomerClubSubscription[]
+  clubSubscriptionPayments ClubSubscriptionPayment[]
+  clubBenefitUsages        ClubBenefitUsage[]
+
+  @@index([barbershopId, isActive])
+  @@map("club_plans")
+}
+
+model ClubPlanBenefit {
+  id              String              @id @default(uuid())
+  clubPlanId      String              @map("club_plan_id")
+  benefitType     ClubPlanBenefitType @map("benefit_type")
+  serviceId       String?             @map("service_id")
+  productId       String?             @map("product_id")
+  includedQty     Int?                @map("included_qty")
+  discountPercent Decimal?            @map("discount_percent") @db.Decimal(5, 2)
+  pointWeight     Decimal?            @map("point_weight") @db.Decimal(10, 4)
+
+  clubPlan        ClubPlan            @relation(fields: [clubPlanId], references: [id], onDelete: Cascade)
+  service         Service?            @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  product         Product?            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  clubBenefitUsages ClubBenefitUsage[]
+
+  @@index([clubPlanId])
+  @@index([serviceId])
+  @@index([productId])
+  @@map("club_plan_benefits")
+}
+
+model CustomerClubSubscription {
+  id                 String                 @id @default(uuid())
+  barbershopId       String                 @map("barbershop_id")
+  customerId         String                 @map("customer_id")
+  clubPlanId         String                 @map("club_plan_id")
+  status             ClubSubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime               @map("current_period_start")
+  currentPeriodEnd   DateTime               @map("current_period_end")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  barbershop         Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer           User                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  clubPlan           ClubPlan               @relation(fields: [clubPlanId], references: [id])
+  payments           ClubSubscriptionPayment[]
+  usages             ClubBenefitUsage[]
+  pointEntries       ClubPointEntry[]
+
+  @@index([barbershopId, customerId])
+  @@index([barbershopId, status])
+  @@map("customer_club_subscriptions")
+}
+
+model ClubSubscriptionPayment {
+  id                        String                    @id @default(uuid())
+  barbershopId              String                    @map("barbershop_id")
+  subscriptionId            String                    @map("subscription_id")
+  customerId                String                    @map("customer_id")
+  clubPlanId                String                    @map("club_plan_id")
+  amount                    Decimal                   @db.Decimal(10, 2)
+  paymentMethod             PaymentMethod             @map("payment_method")
+  status                    ClubPaymentStatus         @default(PAID)
+  competence                String
+  shopSharePercentSnapshot  Decimal                   @map("shop_share_percent_snapshot") @db.Decimal(5, 2)
+  barberPoolPercentSnapshot Decimal                   @map("barber_pool_percent_snapshot") @db.Decimal(5, 2)
+  paidAt                    DateTime                  @map("paid_at")
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+
+  barbershop                Barbershop                @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  subscription              CustomerClubSubscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  customer                  User                      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  clubPlan                  ClubPlan                  @relation(fields: [clubPlanId], references: [id])
+
+  @@index([barbershopId, subscriptionId])
+  @@index([customerId])
+  @@index([clubPlanId])
+  @@index([paidAt])
+  @@map("club_subscription_payments")
+}
+
+model ClubBenefitUsage {
+  id                 String                 @id @default(uuid())
+  barbershopId       String                 @map("barbershop_id")
+  subscriptionId     String                 @map("subscription_id")
+  clubPlanId         String                 @map("club_plan_id")
+  clubPlanBenefitId  String?                @map("club_plan_benefit_id")
+  comandaItemId      String                 @unique @map("comanda_item_id")
+  serviceId          String?                @map("service_id")
+  productId          String?                @map("product_id")
+  benefitType        ClubPlanBenefitType    @map("benefit_type")
+  originalAmount     Decimal?               @map("original_amount") @db.Decimal(10, 2)
+  coveredAmount      Decimal?               @map("covered_amount") @db.Decimal(10, 2)
+  discountAmount     Decimal?               @map("discount_amount") @db.Decimal(10, 2)
+  pointWeightApplied Decimal?               @map("point_weight_applied") @db.Decimal(10, 4)
+  status             ClubBenefitUsageStatus @default(APPLIED)
+  competence         String
+  usedAt             DateTime               @map("used_at")
+  reversedAt         DateTime?              @map("reversed_at")
+  reversalReason     String?                @map("reversal_reason")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  barbershop         Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  subscription       CustomerClubSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  clubPlan           ClubPlan               @relation(fields: [clubPlanId], references: [id])
+  clubPlanBenefit    ClubPlanBenefit?       @relation(fields: [clubPlanBenefitId], references: [id], onDelete: SetNull)
+  comandaItem        ComandaItem            @relation(fields: [comandaItemId], references: [id], onDelete: Cascade)
+  service            Service?               @relation(fields: [serviceId], references: [id])
+  product            Product?               @relation(fields: [productId], references: [id])
+
+  @@index([barbershopId, subscriptionId])
+  @@index([clubPlanId])
+  @@index([clubPlanBenefitId])
+  @@map("club_benefit_usages")
+}
+
+model ClubPointEntry {
+  id             String                    @id @default(uuid())
+  barbershopId   String                    @map("barbershop_id")
+  subscriptionId String?                   @map("subscription_id")
+  comandaItemId  String                    @unique @map("comanda_item_id")
+  memberId       String                    @map("member_id")
+  points         Decimal                   @db.Decimal(10, 4)
+  status         ClubPointStatus           @default(GENERATED)
+  competence     String
+  settlementId   String?                   @map("settlement_id")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+
+  barbershop     Barbershop                @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  subscription   CustomerClubSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  comandaItem    ComandaItem               @relation(fields: [comandaItemId], references: [id], onDelete: Cascade)
+  member         BarbershopMember          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  settlement     ClubSettlement?           @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, competence])
+  @@index([memberId, competence])
+  @@index([settlementId])
+  @@map("club_point_entries")
+}
+
+model ClubSettlement {
+  id               String                  @id @default(uuid())
+  barbershopId     String                  @map("barbershop_id")
+  competence       String
+  totalRevenue     Decimal                 @map("total_revenue") @db.Decimal(10, 2)
+  shopSharePercent Decimal?                @map("shop_share_percent") @db.Decimal(5, 2)
+  shopAmount       Decimal                 @map("shop_amount") @db.Decimal(10, 2)
+  
+  // barberPoolAmount representa o fundo total disponível no mês (soma do rateio do mês + carryInAmount)
+  barberPoolAmount Decimal                 @map("barber_pool_amount") @db.Decimal(10, 2)
+  
+  carryInAmount    Decimal                 @default(0) @map("carry_in_amount") @db.Decimal(10, 2)
+  carryOutAmount   Decimal                 @default(0) @map("carry_out_amount") @db.Decimal(10, 2)
+  
+  totalPoints      Decimal                 @map("total_points") @db.Decimal(10, 4)
+  status           ClubSettlementStatus    @default(CALCULATED)
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  barbershop       Barbershop              @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  members          ClubSettlementMember[]
+  pointEntries     ClubPointEntry[]
+
+  @@unique([barbershopId, competence])
+  @@map("club_settlements")
+}
+
+model ClubSettlementMember {
+  id           String                      @id @default(uuid())
+  settlementId String                      @map("settlement_id")
+  memberId     String                      @map("member_id")
+  points       Decimal                     @db.Decimal(10, 4)
+  amount       Decimal                     @db.Decimal(10, 2)
+  paidAt       DateTime?                   @map("paid_at")
+
+  settlement   ClubSettlement              @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  member       BarbershopMember            @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([settlementId, memberId])
+  @@map("club_settlement_members")
+}
+

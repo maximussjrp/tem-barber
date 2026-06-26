@@ -62,3 +62,28 @@ export async function getAdminSession() {
     },
   };
 }
+
+export async function requireOperationalSession() {
+  const { error, data } = await getAdminSession();
+  if (error) return { error, data: null };
+
+  if (!data || !data.barbershopId) {
+    return {
+      error: NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 }),
+      data: null,
+    };
+  }
+
+  // Apenas OWNER, MANAGER ou SUPER_ADMIN com tenant associado na sessão operacional
+  if (!["OWNER", "MANAGER", "SUPER_ADMIN"].includes(data.role)) {
+    return {
+      error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
+      data: null,
+    };
+  }
+
+  return {
+    error: null,
+    data: data as { userId: string; role: string; memberId: string; barbershopId: string },
+  };
+}

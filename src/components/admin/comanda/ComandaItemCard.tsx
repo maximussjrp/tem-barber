@@ -12,6 +12,14 @@ type Item = {
   unitPrice: string;
   total: string;
   executor?: { id: string; user: { name: string } } | null;
+  clubBenefitRequested?: boolean;
+  clubBenefitUsage?: {
+    id: string;
+    benefitType: string;
+    coveredAmount: string | null;
+    discountAmount: string | null;
+    status: string;
+  } | null;
 };
 
 interface Props {
@@ -41,11 +49,22 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
     onCancel(item.id);
   };
 
+  const isClubApplied = item.clubBenefitUsage && item.clubBenefitUsage.status === "APPLIED";
+  const clubCovered = isClubApplied && item.clubBenefitUsage?.benefitType === "INCLUDED_SERVICE";
+  const clubDiscount = isClubApplied && item.clubBenefitUsage?.benefitType !== "INCLUDED_SERVICE" ? Number(item.clubBenefitUsage?.discountAmount || 0) : 0;
+
   return (
     <>
       <div className={`p-4 border-b border-border-subtle flex flex-col md:flex-row md:items-center justify-between gap-4 ${isCancelled ? 'opacity-50' : ''}`}>
         <div className="flex-1">
-          <h3 className="font-semibold text-text-primary">{item.description}</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-text-primary">{item.description}</h3>
+            {item.clubBenefitRequested && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--brand-subtle)] text-[var(--gold)] font-bold border border-[var(--gold-border)]">
+                Plano Clube
+              </span>
+            )}
+          </div>
           <p className="text-xs text-text-muted mt-1">
             {item.type === "SERVICE" ? "Serviço" : item.type === "PRODUCT" ? "Produto" : item.type === "DISCOUNT" ? "Desconto" : "Acréscimo"} 
             {" • "}
@@ -57,11 +76,16 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
           {(item.type === "SERVICE" || item.type === "PRODUCT") && (
             <p className="text-xs text-text-secondary mt-1">
               {Number(item.quantity)}x {brl(item.unitPrice)}
+              {clubCovered && <span className="text-emerald-400 font-bold ml-1">(Coberto pelo Clube)</span>}
+              {clubDiscount > 0 && <span className="text-emerald-400 font-bold ml-1">(-{brl(clubDiscount)} Desconto Clube)</span>}
             </p>
           )}
         </div>
         <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto">
-          <span className="font-bold text-text-primary">{item.type === "DISCOUNT" ? "-" : ""}{brl(item.total)}</span>
+          <span className="font-bold text-text-primary">
+            {item.type === "DISCOUNT" ? "-" : ""}
+            {clubCovered ? brl(0) : brl(Number(item.total) - clubDiscount)}
+          </span>
           
           <div className="flex items-center gap-2">
             {!isDone && !isCancelled && !comandaClosed && item.type !== "DISCOUNT" && item.type !== "SURCHARGE" && (

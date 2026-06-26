@@ -13,7 +13,11 @@ export async function PATCH(
   if (error) return error;
   const { id, itemId } = await params;
 
-  let body: { status?: "PENDING" | "DONE" | "CANCELLED" };
+  let body: {
+    status?: "PENDING" | "DONE" | "CANCELLED";
+    clubBenefitRequested?: boolean;
+    requestedClubPlanBenefitId?: string | null;
+  };
   try {
     body = await request.json();
   } catch {
@@ -32,14 +36,26 @@ export async function PATCH(
       }
       if (data!.role === "BARBER" && item.executorId !== data!.memberId) return forbidden();
       if (data!.role === "BARBER" && body.status === "CANCELLED") return forbidden();
-      if (!canManageComandas(data!.role) && body.status !== "DONE") return forbidden();
+      if (!canManageComandas(data!.role) && body.status !== undefined && body.status !== "DONE") return forbidden();
+
+      if (body.status === "CANCELLED") {
+        const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
+        await reverseClubBenefitUsage({
+          barbershopId: data!.barbershopId,
+          comandaItemId: itemId,
+          reversalReason: "Status alterado para cancelado",
+          tx,
+        });
+      }
 
       await tx.comandaItem.update({
         where: { id: itemId },
         data: {
-          status: body.status,
+          ...(body.status !== undefined && { status: body.status }),
           ...(body.status === "DONE" && { completedAt: new Date() }),
           ...(body.status === "CANCELLED" && { cancelledAt: new Date() }),
+          ...(body.clubBenefitRequested !== undefined && { clubBenefitRequested: body.clubBenefitRequested }),
+          ...(body.requestedClubPlanBenefitId !== undefined && { requestedClubPlanBenefitId: body.requestedClubPlanBenefitId }),
         },
       });
       const updated = await recalculateComandaTotals(tx, id);
@@ -84,6 +100,15 @@ export async function DELETE(
       if (item.comanda.status === "CLOSED") {
         throw new OperationalError("COMANDA_CLOSED", "Comanda fechada nao pode ser editada.", 422);
       }
+
+      const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
+      await reverseClubBenefitUsage({
+        barbershopId: data!.barbershopId,
+        comandaItemId: itemId,
+        reversalReason: "Exclusão do item da comanda",
+        tx,
+      });
+
       await tx.comandaItem.update({
         where: { id: itemId },
         data: { status: "CANCELLED", cancelledAt: new Date() },
