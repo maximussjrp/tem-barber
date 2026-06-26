@@ -33,12 +33,12 @@ const createBenefitSchema = z.discriminatedUnion("benefitType", [
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ planId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
 
-  const { planId } = await params;
+  const { id: planId } = await params;
 
   try {
     const plan = await prisma.clubPlan.findFirst({

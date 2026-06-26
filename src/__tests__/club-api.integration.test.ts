@@ -198,8 +198,8 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
 
     plansRoute = await import("@/app/api/admin/clube/plans/route");
     planIdRoute = await import("@/app/api/admin/clube/plans/[id]/route");
-    benefitsRoute = await import("@/app/api/admin/clube/plans/[planId]/benefits/route");
-    benefitIdRoute = await import("@/app/api/admin/clube/plans/[planId]/benefits/[benefitId]/route");
+    benefitsRoute = await import("@/app/api/admin/clube/plans/[id]/benefits/route");
+    benefitIdRoute = await import("@/app/api/admin/clube/plans/[id]/benefits/[benefitId]/route");
     subscriptionsRoute = await import("@/app/api/admin/clube/subscriptions/route");
     subIdRoute = await import("@/app/api/admin/clube/subscriptions/[id]/route");
     paymentsRoute = await import("@/app/api/admin/clube/subscriptions/[id]/payments/route");

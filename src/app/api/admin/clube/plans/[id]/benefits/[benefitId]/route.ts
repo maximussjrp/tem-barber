@@ -12,12 +12,12 @@ const updateBenefitSchema = z.object({
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ planId: string; benefitId: string }> }
+  { params }: { params: Promise<{ id: string; benefitId: string }> }
 ) {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
 
-  const { planId, benefitId } = await params;
+  const { id: planId, benefitId } = await params;
 
   try {
     const plan = await prisma.clubPlan.findFirst({
@@ -65,12 +65,12 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ planId: string; benefitId: string }> }
+  { params }: { params: Promise<{ id: string; benefitId: string }> }
 ) {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
 
-  const { planId, benefitId } = await params;
+  const { id: planId, benefitId } = await params;
 
   try {
     const plan = await prisma.clubPlan.findFirst({
