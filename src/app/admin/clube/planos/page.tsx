@@ -5,6 +5,16 @@ import Link from "next/link";
 import { ClubModal } from "@/components/admin/clube/ClubModal";
 import { ClubConfirmDialog } from "@/components/admin/clube/ClubConfirmDialog";
 
+type Benefit = {
+  id: string;
+  benefitType: "INCLUDED_SERVICE" | "SERVICE_DISCOUNT" | "PRODUCT_DISCOUNT";
+  serviceId: string | null;
+  productId: string | null;
+  includedQty: number | null;
+  discountPercent: string | null;
+  pointWeight: string | null;
+};
+
 type Plan = {
   id: string;
   name: string;
@@ -13,7 +23,13 @@ type Plan = {
   shopSharePercent: string;
   barberPoolPercent: string;
   isActive: boolean;
-  benefits: { id: string }[];
+  benefits: Benefit[];
+};
+
+type ServiceItem = {
+  id: string;
+  name: string;
+  price: string;
 };
 
 function brl(v: string | number) {
@@ -22,12 +38,14 @@ function brl(v: string | number) {
 
 function PlanForm({
   initial,
+  services,
   onSubmit,
   onClose,
   loading,
   error,
 }: {
   initial?: Partial<Plan>;
+  services: ServiceItem[];
   onSubmit: (data: any) => void;
   onClose: () => void;
   loading: boolean;
@@ -39,6 +57,28 @@ function PlanForm({
   const [shopShare, setShopShare] = useState(initial?.shopSharePercent ?? "");
   const [barberPool, setBarberPool] = useState(initial?.barberPoolPercent ?? "");
 
+  const [selectedBenefits, setSelectedBenefits] = useState<Record<string, {
+    includedQty: number;
+    pointWeight: number;
+    selected: boolean;
+    benefitId?: string;
+  }>>(() => {
+    const initialMap: Record<string, any> = {};
+    if (initial?.benefits) {
+      initial.benefits.forEach((b: any) => {
+        if (b.benefitType === "INCLUDED_SERVICE" && b.serviceId) {
+          initialMap[b.serviceId] = {
+            includedQty: b.includedQty ?? 1,
+            pointWeight: b.pointWeight ? parseFloat(b.pointWeight) : 1.0,
+            selected: true,
+            benefitId: b.id,
+          };
+        }
+      });
+    }
+    return initialMap;
+  });
+
   const shopNum = parseFloat(shopShare) || 0;
   const barberNum = parseFloat(barberPool) || 0;
   const sumOk = Math.abs(shopNum + barberNum - 100) < 0.01;
@@ -46,12 +86,29 @@ function PlanForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!sumOk) return;
+
+    const selectedList = Object.entries(selectedBenefits)
+      .filter(([_, value]) => value.selected)
+      .map(([serviceId, value]) => ({
+        benefitId: value.benefitId || null,
+        serviceId,
+        includedQty: value.includedQty,
+        pointWeight: value.pointWeight,
+      }));
+
+    // Local validation
+    for (const b of selectedList) {
+      if (b.includedQty < 1) return;
+      if (b.pointWeight <= 0) return;
+    }
+
     onSubmit({
       name,
       description: description || null,
       monthlyPrice: parseFloat(monthlyPrice),
       shopSharePercent: shopNum,
       barberPoolPercent: barberNum,
+      benefits: selectedList,
     });
   }
 
@@ -138,12 +195,113 @@ function PlanForm({
             : `⚠ Soma deve ser 100%. Atual: ${shopNum + barberNum}%`}
         </p>
       )}
+
+      {/* Serviços Inclusos */}
+      <div className="space-y-2.5 pt-2">
+        <label className={labelCls}>Serviços inclusos no plano</label>
+
+        {services.length === 0 ? (
+          <p className="text-xs text-[var(--text-muted)]">Nenhum serviço cadastrado na barbearia.</p>
+        ) : (
+          <div className="border border-[var(--border-subtle)] rounded-xl divide-y divide-[var(--border-subtle)] max-h-60 overflow-y-auto bg-[var(--surface-1)]">
+            {services.map((svc) => {
+              const state = selectedBenefits[svc.id] || { selected: false, includedQty: 1, pointWeight: 1.0 };
+
+              return (
+                <div key={svc.id} className="p-3 space-y-2">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--gold)]"
+                      title={svc.name}
+                      checked={state.selected}
+                      onChange={(e) => {
+                        setSelectedBenefits({
+                          ...selectedBenefits,
+                          [svc.id]: {
+                            ...state,
+                            selected: e.target.checked
+                          }
+                        });
+                      }}
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-[var(--text-primary)]">{svc.name}</span>
+                      <span className="text-xs text-[var(--text-muted)] ml-2">({brl(svc.price)})</span>
+                    </div>
+                  </label>
+
+                  {state.selected && (
+                    <div className="grid grid-cols-2 gap-3 pl-7 pt-1">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
+                          Quantidade mensal
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          title="Quantidade mensal"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
+                          value={state.includedQty}
+                          onChange={(e) => {
+                            setSelectedBenefits({
+                              ...selectedBenefits,
+                              [svc.id]: {
+                                ...state,
+                                includedQty: parseInt(e.target.value) || 1
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
+                          Peso no rateio dos barbeiros
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          required
+                          title="Peso no rateio dos barbeiros"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
+                          value={state.pointWeight}
+                          onChange={(e) => {
+                            setSelectedBenefits({
+                              ...selectedBenefits,
+                              [svc.id]: {
+                                ...state,
+                                pointWeight: parseFloat(e.target.value) || 1.0
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+                      <p className="col-span-2 text-[10px] text-[var(--text-muted)] mt-0.5">
+                        Use 1.00 para um serviço normal. Serviços mais complexos podem ter peso maior, como 1.50 ou 2.00.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {Object.values(selectedBenefits).filter(b => b.selected).length === 0 && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            Este plano ainda não possui serviços inclusos. Clientes assinantes não terão serviços cobertos até adicionar benefícios.
+          </div>
+        )}
+      </div>
     </form>
   );
 }
 
 export default function PlanosPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -159,11 +317,16 @@ export default function PlanosPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/clube/plans");
-      const data = await res.json();
-      setPlans(Array.isArray(data) ? data : []);
+      const [plansRes, servicesRes] = await Promise.all([
+        fetch("/api/admin/clube/plans"),
+        fetch("/api/admin/services"),
+      ]);
+      const plansData = await plansRes.json();
+      const servicesData = await servicesRes.json();
+      setPlans(Array.isArray(plansData) ? plansData : []);
+      setServices(Array.isArray(servicesData) ? servicesData : []);
     } catch {
-      setError("Erro ao carregar planos.");
+      setError("Erro ao carregar planos e serviços.");
     } finally {
       setLoading(false);
     }
@@ -255,6 +418,7 @@ export default function PlanosPage() {
       >
         <PlanForm
           initial={formInitial}
+          services={services}
           onSubmit={handleSubmit}
           onClose={() => setFormOpen(false)}
           loading={formLoading}
