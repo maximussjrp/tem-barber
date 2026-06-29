@@ -20,6 +20,26 @@ export async function GET(
     });
 
     if (!activeSub) {
+      const inactiveSub = await prisma.customerClubSubscription.findFirst({
+        where: {
+          barbershopId: data.barbershopId,
+          customerId,
+        },
+        orderBy: { updatedAt: "desc" },
+        include: { clubPlan: true },
+      });
+
+      if (inactiveSub) {
+        return NextResponse.json({
+          status: inactiveSub.status,
+          clubPlan: {
+            id: inactiveSub.clubPlan.id,
+            name: inactiveSub.clubPlan.name,
+          },
+          benefits: [],
+        });
+      }
+
       return NextResponse.json({ benefits: [] });
     }
 

@@ -32,7 +32,7 @@ export async function GET(
     include: {
       customer: { select: { id: true, name: true, phone: true } },
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
-      services: { include: { service: { select: { name: true, durationMin: true } } } },
+      services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
       comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
     },
   });
@@ -243,7 +243,7 @@ export async function PATCH(
           include: {
             customer: { select: { id: true, name: true, phone: true } },
             barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
-            services: { include: { service: { select: { name: true, durationMin: true } } } },
+            services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
             comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
           },
         });
@@ -262,7 +262,7 @@ export async function PATCH(
     include: {
       customer: { select: { id: true, name: true, phone: true } },
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
-      services: { include: { service: { select: { name: true, durationMin: true } } } },
+      services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
       comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
     },
   });

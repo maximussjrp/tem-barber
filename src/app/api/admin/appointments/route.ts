@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
           include: { user: { select: { name: true, avatarUrl: true } } },
         },
         services: {
-          include: { service: { select: { name: true, durationMin: true } } },
+          include: { service: { select: { id: true, name: true, durationMin: true } } },
         },
         comandas: {
           select: { id: true, status: true, total: true, paidTotal: true },

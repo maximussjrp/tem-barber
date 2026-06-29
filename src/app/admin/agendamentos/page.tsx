@@ -10,7 +10,7 @@ import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } fr
 type AppStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 
 interface AppService {
-  service: { name: string; durationMin: number };
+  service: { id: string; name: string; durationMin: number };
   priceApplied: string;
 }
 
@@ -150,6 +150,27 @@ function minutesToLocalInput(dateStr: string, minutes: number) {
   return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+const clubBalanceCache: Record<string, any> = {};
+if (typeof window !== "undefined") {
+  (window as any).__clubBalanceCache = clubBalanceCache;
+}
+
+async function fetchClubBalance(customerId: string) {
+  if (!customerId) return null;
+  if (clubBalanceCache[customerId]) {
+    return clubBalanceCache[customerId];
+  }
+  try {
+    const res = await fetch(`/api/admin/clube/subscriptions/customer/${customerId}/balance`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    clubBalanceCache[customerId] = data;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Appointment Modal ────────────────────────────────────────────────────────
 
 export function AppointmentModal({
@@ -201,6 +222,26 @@ export function AppointmentModal({
   const [notes, setNotes] = useState(appointment?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [customerClubBalance, setCustomerClubBalance] = useState<any>(null);
+  const [loadingClub, setLoadingClub] = useState(false);
+
+  useEffect(() => {
+    if (!selectedCustomer?.id) {
+      setCustomerClubBalance(null);
+      return;
+    }
+    let active = true;
+    setLoadingClub(true);
+    fetchClubBalance(selectedCustomer.id).then((data) => {
+      if (active) {
+        setCustomerClubBalance(data);
+        setLoadingClub(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedCustomer?.id]);
 
   useEffect(() => {
     if (isEdit) return;
@@ -331,6 +372,70 @@ export function AppointmentModal({
     }
   };
 
+  const getSelectedServicesPreview = () => {
+    const selectedServices = selectedServiceIds
+      .map(id => barbershopServices.find(s => s.id === id))
+      .filter(Boolean) as Service[];
+
+    let totalOriginal = 0;
+    let totalToday = 0;
+
+    const benefits = customerClubBalance?.benefits ? customerClubBalance.benefits.map((b: any) => ({ ...b })) : [];
+    const isInactive = customerClubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(customerClubBalance.status);
+
+    const processed = selectedServices.map(s => {
+      const originalPrice = parseFloat(s.price);
+      totalOriginal += originalPrice;
+
+      let todayPrice = originalPrice;
+      let isCovered = false;
+      let isDiscounted = false;
+      let discountPercent = 0;
+      let limitExhausted = false;
+
+      if (customerClubBalance && !isInactive) {
+        const match = benefits.find((b: any) => b.serviceId === s.id);
+        if (match) {
+          if (match.benefitType === "INCLUDED_SERVICE") {
+            if (match.availableQty > 0) {
+              isCovered = true;
+              todayPrice = 0;
+              match.availableQty -= 1;
+            } else {
+              limitExhausted = true;
+            }
+          } else if (match.benefitType === "SERVICE_DISCOUNT") {
+            isDiscounted = true;
+            discountPercent = match.discountPercent ?? 0;
+            todayPrice = originalPrice * (1 - discountPercent / 100);
+          }
+        }
+      }
+
+      totalToday += todayPrice;
+
+      return {
+        id: s.id,
+        name: s.name,
+        originalPrice,
+        todayPrice,
+        isCovered,
+        isDiscounted,
+        discountPercent,
+        limitExhausted
+      };
+    });
+
+    return {
+      totalOriginal,
+      totalToday,
+      services: processed,
+      isInactive
+    };
+  };
+
+  const preview = getSelectedServicesPreview();
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
@@ -353,20 +458,90 @@ export function AppointmentModal({
           </div>
           <div className="space-y-1.5">
             <label className={LABEL_INPUT}>Serviços</label>
+            {loadingClub && (
+              <p className="text-xs text-stone-500 italic">Consultando benefícios do Clube...</p>
+            )}
+            {customerClubBalance && (
+              <div className="mb-2">
+                {customerClubBalance.status && !["ACTIVE", "GRACE_PERIOD"].includes(customerClubBalance.status) ? (
+                  <div className="px-3 py-2 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs font-bold flex items-center gap-2 max-w-fit">
+                    <span>⚠️ Cliente possui plano sem cobertura ativa ({customerClubBalance.status})</span>
+                  </div>
+                ) : (
+                  customerClubBalance.clubPlan && (
+                    <div className="px-3 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-emerald-400 text-xs font-bold flex items-center gap-2 max-w-fit">
+                      <span>👑 Cliente Clube: {customerClubBalance.clubPlan.name}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
             <div className="border border-stone-800 rounded-lg divide-y divide-stone-800 max-h-40 overflow-y-auto">
               {barbershopServices.length === 0 ? (
                 <p className="px-4 py-3 text-sm text-stone-500">Nenhum serviço cadastrado.</p>
               ) : (
                 barbershopServices.map((s) => {
                   const checked = selectedServiceIds.includes(s.id);
+                  const originalPrice = Number(s.price);
+
+                  // Match service to benefits
+                  const benefit = customerClubBalance?.benefits?.find((b: any) => b.serviceId === s.id);
+                  const isInactive = customerClubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(customerClubBalance.status);
+
+                  let priceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                  let strikethroughPriceText = "";
+                  let clubBadge = null;
+
+                  if (customerClubBalance && !isInactive && benefit) {
+                    if (benefit.benefitType === "INCLUDED_SERVICE") {
+                      if (benefit.availableQty > 0) {
+                        priceText = (0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                        strikethroughPriceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                        clubBadge = (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                            Coberto ({benefit.availableQty} disp.)
+                          </span>
+                        );
+                      } else {
+                        clubBadge = (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-stone-800 border border-stone-700 text-stone-400">
+                            Limite Esgotado
+                          </span>
+                        );
+                      }
+                    } else if (benefit.benefitType === "SERVICE_DISCOUNT") {
+                      const pct = benefit.discountPercent ?? 0;
+                      const discounted = originalPrice * (1 - pct / 100);
+                      priceText = discounted.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                      strikethroughPriceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                      clubBadge = (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 text-sky-400">
+                          -{pct}% Clube
+                        </span>
+                      );
+                    }
+                  }
+
                   return (
                     <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"}`}>
                       <input type="checkbox" checked={checked} onChange={() => toggleService(s.id)} title={s.name} className="accent-amber-500" />
-                      <span className="flex-1 text-sm text-stone-300">{s.name}</span>
-                      <span className="text-xs text-stone-500">{s.durationMin}min</span>
-                      <span className="text-xs text-amber-400 font-semibold">
-                        {Number(s.price).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-stone-300 truncate">{s.name}</span>
+                          {clubBadge}
+                        </div>
+                      </div>
+                      <span className="text-xs text-stone-500 shrink-0">{s.durationMin}min</span>
+                      <div className="text-right shrink-0">
+                        {strikethroughPriceText && (
+                          <span className="text-xs text-stone-500 line-through mr-1.5 tabular-nums">
+                            {strikethroughPriceText}
+                          </span>
+                        )}
+                        <span className="text-xs text-amber-400 font-semibold tabular-nums">
+                          {priceText}
+                        </span>
+                      </div>
                     </label>
                   );
                 })
@@ -467,6 +642,22 @@ export function AppointmentModal({
             <label className={LABEL_INPUT}>Observações</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Observações opcionais..." title="Observações" className={`${INPUT_CLASS} resize-none`} />
           </div>
+          {selectedServiceIds.length > 0 && (
+            <div className="p-3.5 rounded-xl bg-stone-900/60 border border-stone-800 text-sm flex flex-col gap-1">
+              <div className="flex justify-between items-center text-stone-400 text-xs">
+                <span>Valor original total:</span>
+                <span className="tabular-nums">
+                  {preview.totalOriginal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-stone-200 font-semibold">
+                <span>Valor previsto hoje:</span>
+                <span className="text-amber-400 font-bold tabular-nums">
+                  {preview.totalToday.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </span>
+              </div>
+            </div>
+          )}
           {error && <div className="bg-red-950/40 border border-red-800/50 rounded-lg px-4 py-3 text-sm text-red-400">{error}</div>}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl border border-[var(--border-medium)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors text-sm font-semibold">Cancelar</button>
@@ -559,6 +750,85 @@ function AppointmentBlock({
 }) {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const router = useRouter();
+  const [clubBalance, setClubBalance] = useState<any>(null);
+  const [loadingClub, setLoadingClub] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !appointment.customer.id) {
+      setClubBalance(null);
+      return;
+    }
+    let active = true;
+    setLoadingClub(true);
+    fetchClubBalance(appointment.customer.id).then((data) => {
+      if (active) {
+        setClubBalance(data);
+        setLoadingClub(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, appointment.customer.id]);
+
+  const getAppointmentPreview = () => {
+    let totalOriginal = 0;
+    let totalToday = 0;
+
+    const benefits = clubBalance?.benefits ? clubBalance.benefits.map((b: any) => ({ ...b })) : [];
+    const isInactive = clubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(clubBalance.status);
+
+    const processed = appointment.services.map(s => {
+      const originalPrice = parseFloat(s.priceApplied);
+      totalOriginal += originalPrice;
+
+      let todayPrice = originalPrice;
+      let isCovered = false;
+      let isDiscounted = false;
+      let discountPercent = 0;
+      let limitExhausted = false;
+
+      if (clubBalance && !isInactive) {
+        const match = benefits.find((b: any) => b.serviceId === s.service.id);
+        if (match) {
+          if (match.benefitType === "INCLUDED_SERVICE") {
+            if (match.availableQty > 0) {
+              isCovered = true;
+              todayPrice = 0;
+              match.availableQty -= 1;
+            } else {
+              limitExhausted = true;
+            }
+          } else if (match.benefitType === "SERVICE_DISCOUNT") {
+            isDiscounted = true;
+            discountPercent = match.discountPercent ?? 0;
+            todayPrice = originalPrice * (1 - discountPercent / 100);
+          }
+        }
+      }
+
+      totalToday += todayPrice;
+
+      return {
+        ...s,
+        originalPrice,
+        todayPrice,
+        isCovered,
+        isDiscounted,
+        discountPercent,
+        limitExhausted
+      };
+    });
+
+    return {
+      totalOriginal,
+      totalToday,
+      services: processed,
+      isInactive
+    };
+  };
+
+  const preview = getAppointmentPreview();
 
   const startMin = isoToMinutes(appointment.dateTime);
   const top = minutesToTop(startMin);
@@ -647,22 +917,99 @@ function AppointmentBlock({
               <div>
                 <p className="text-base font-bold text-[var(--text-primary)]">{appointment.customer.name}</p>
                 <p className="text-sm text-[var(--text-muted)]">{appointment.customer.phone}</p>
+                {loadingClub && (
+                  <p className="text-xs text-stone-500 italic mt-1">Consultando benefícios do Clube...</p>
+                )}
+                {clubBalance && (
+                  <div className="mt-1.5">
+                    {clubBalance.status && !["ACTIVE", "GRACE_PERIOD"].includes(clubBalance.status) ? (
+                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold border border-red-500/20 bg-red-500/5 text-red-400">
+                        ⚠️ Plano sem cobertura ativa ({clubBalance.status})
+                      </span>
+                    ) : (
+                      clubBalance.clubPlan && (
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/20 bg-emerald-500/5 text-emerald-400">
+                          👑 Assinante: {clubBalance.clubPlan.name}
+                        </span>
+                      )
+                    )}
+                  </div>
+                )}
               </div>
               <span className={`shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${UI_STATUS_BG[uiStatus]}`}>
                 {UI_STATUS_LABEL[uiStatus]}
               </span>
             </div>
             
-            <div className="text-sm text-[var(--text-secondary)] space-y-1.5">
-              <p className="flex items-center gap-2">
+            <div className="text-sm text-[var(--text-secondary)] space-y-3">
+              <p className="flex items-center gap-2 text-stone-300">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 {formatTime(appointment.dateTime)} · {appointment.durationMin}min
               </p>
-              <p className="flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                {serviceNames}
-              </p>
-              <p className="font-bold text-[var(--gold)]">{price}</p>
+
+              {/* Serviços e Valores */}
+              <div className="space-y-2 rounded-xl bg-stone-900/40 border border-stone-800/80 p-3">
+                <p className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1 flex items-center gap-1.5">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  Serviços
+                </p>
+                <div className="space-y-1.5 text-xs divide-y divide-stone-800/50">
+                  {preview.services.map((s, idx) => {
+                    let info = null;
+                    if (s.isCovered) {
+                      info = <span className="text-emerald-400 font-semibold">Coberto pelo Clube</span>;
+                    } else if (s.isDiscounted) {
+                      info = <span className="text-sky-400 font-semibold">Desconto Clube {s.discountPercent}%</span>;
+                    } else if (s.limitExhausted) {
+                      info = <span className="text-stone-500">Limite do Clube esgotado</span>;
+                    }
+                    return (
+                      <div key={idx} className="flex justify-between items-start pt-1.5 first:pt-0 text-stone-300">
+                        <div className="flex flex-col min-w-0 pr-2">
+                          <span className="truncate">{s.service.name}</span>
+                          {info && <span className="text-[10px] text-stone-400 mt-0.5">{info}</span>}
+                        </div>
+                        <div className="tabular-nums shrink-0">
+                          {s.isCovered || s.isDiscounted ? (
+                            <div className="flex flex-col items-end">
+                              <span className="line-through text-stone-500 text-[10px]">
+                                {s.originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                              <span className="font-semibold text-stone-200">
+                                {s.todayPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            </div>
+                          ) : (
+                            <span>
+                              {s.originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 mt-2 border-t border-stone-800 flex justify-between items-center text-xs">
+                  <span className="font-semibold text-stone-400">Total previsto hoje:</span>
+                  <div className="text-right">
+                    {preview.totalToday !== preview.totalOriginal ? (
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-stone-500 line-through tabular-nums">
+                          {preview.totalOriginal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                        <span className="font-bold text-[var(--gold)] text-sm tabular-nums">
+                          {preview.totalToday.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-bold text-[var(--gold)] text-sm tabular-nums">
+                        {preview.totalOriginal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {appointment.notes && (
