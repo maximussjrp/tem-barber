@@ -654,4 +654,74 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
     expect(await prisma.commissionEntry.count()).toBe(initialCommissionEntries);
     expect(await prisma.commissionPeriod.count()).toBe(initialCommissionPeriods);
   });
+
+  it("16. hotfix de crédito: validar suportes a PIX, CREDIT, DEBIT e rejeição a CREDIT_CARD", async () => {
+    const t = await seedTenant("A");
+    mockSession(t.ownerUser, t.owner);
+
+    const plan = await prisma.clubPlan.create({
+      data: {
+        barbershopId: t.shop.id,
+        name: "Plano Teste Métodos",
+        monthlyPrice: "100.00",
+        shopSharePercent: "70.00",
+        barberPoolPercent: "30.00",
+      },
+    });
+
+    const sub = await prisma.customerClubSubscription.create({
+      data: {
+        barbershopId: t.shop.id,
+        customerId: t.customerUser.id,
+        clubPlanId: plan.id,
+        status: "ACTIVE",
+        currentPeriodStart: new Date("2026-06-01"),
+        currentPeriodEnd: new Date("2026-07-01"),
+      },
+    });
+
+    // 1. CREDIT deve funcionar e registrar com CREDIT
+    const payloadCredit = {
+      amount: 100.00,
+      paymentMethod: "CREDIT",
+      competence: "2026-06",
+      paidAt: new Date().toISOString(),
+    };
+    const reqCredit = createReq(`http://localhost/api/admin/clube/subscriptions/${sub.id}/payments`, "POST", payloadCredit);
+    const resCredit = await paymentsRoute.POST(reqCredit, { params: Promise.resolve({ id: sub.id }) });
+    expect(resCredit.status).toBe(201);
+    const paymentCredit = await resCredit.json();
+    expect(paymentCredit.paymentMethod).toBe("CREDIT");
+    expect(Number(paymentCredit.shopSharePercentSnapshot)).toBe(70.00);
+
+    // 2. DEBIT deve funcionar e registrar com DEBIT
+    const payloadDebit = {
+      amount: 100.00,
+      paymentMethod: "DEBIT",
+      competence: "2026-06",
+      paidAt: new Date().toISOString(),
+    };
+    const reqDebit = createReq(`http://localhost/api/admin/clube/subscriptions/${sub.id}/payments`, "POST", payloadDebit);
+    const resDebit = await paymentsRoute.POST(reqDebit, { params: Promise.resolve({ id: sub.id }) });
+    expect(resDebit.status).toBe(201);
+    const paymentDebit = await resDebit.json();
+    expect(paymentDebit.paymentMethod).toBe("DEBIT");
+
+    // 3. CREDIT_CARD antigo deve ser rejeitado (400)
+    const payloadOldCredit = {
+      amount: 100.00,
+      paymentMethod: "CREDIT_CARD",
+      competence: "2026-06",
+      paidAt: new Date().toISOString(),
+    };
+    const reqOldCredit = createReq(`http://localhost/api/admin/clube/subscriptions/${sub.id}/payments`, "POST", payloadOldCredit);
+    const resOldCredit = await paymentsRoute.POST(reqOldCredit, { params: Promise.resolve({ id: sub.id }) });
+    expect(resOldCredit.status).toBe(400);
+
+    // 4. Garantir que não alterou comanda ou CommissionEntry
+    const initialComandas = await prisma.comanda.count();
+    const initialCommissionEntries = await prisma.commissionEntry.count();
+    expect(await prisma.comanda.count()).toBe(initialComandas);
+    expect(await prisma.commissionEntry.count()).toBe(initialCommissionEntries);
+  });
 });

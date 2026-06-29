@@ -40,12 +40,23 @@ const STATUS_OPTIONS = [
 ];
 
 const PAYMENT_METHODS = [
-  { value: "CREDIT_CARD", label: "Cartão de crédito" },
-  { value: "DEBIT_CARD",  label: "Cartão de débito" },
+  { value: "CREDIT", label: "Cartão de crédito" },
+  { value: "DEBIT",  label: "Cartão de débito" },
   { value: "PIX",         label: "Pix" },
   { value: "CASH",        label: "Dinheiro" },
-  { value: "BANK_TRANSFER", label: "Transferência" },
+  { value: "OTHER",       label: "Transferência / Outro" },
 ];
+
+function getPaymentMethodLabel(method: string) {
+  switch (method) {
+    case "CREDIT": return "Cartão de crédito";
+    case "DEBIT": return "Cartão de débito";
+    case "PIX": return "Pix";
+    case "CASH": return "Dinheiro";
+    case "OTHER": return "Transferência / Outro";
+    default: return method;
+  }
+}
 
 export default function AssinantesPage() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -384,7 +395,7 @@ export default function AssinantesPage() {
                           <div className="grid gap-1.5">
                             {payments.map((p) => (
                               <div key={p.id} className="flex justify-between text-xs rounded-lg bg-[var(--surface-raised)] px-3 py-2">
-                                <span className="text-[var(--text-muted)]">{p.competence} · {p.paymentMethod}</span>
+                                <span className="text-[var(--text-muted)]">{p.competence} · {getPaymentMethodLabel(p.paymentMethod)}</span>
                                 <span className="text-green-400 font-bold">{brl(p.amount)}</span>
                               </div>
                             ))}
