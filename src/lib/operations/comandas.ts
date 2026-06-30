@@ -71,6 +71,14 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
     tx.payment.findMany({ where: { comandaId, status: "CONFIRMED" } }),
   ]);
 
+  const comanda = tx.comanda.findUnique
+    ? await tx.comanda.findUnique({
+        where: { id: comandaId },
+        select: { customerId: true, barbershopId: true, createdAt: true },
+      })
+    : { customerId: null, barbershopId: "mock", createdAt: new Date() };
+  if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
+
   const regularItems = items.filter(
     (item) => item.type === "SERVICE" || item.type === "PRODUCT"
   );
@@ -80,16 +88,52 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   // Sum raw subtotal
   const rawSubtotal = regularItems.reduce((sum, item) => sum + toCents(item.total), 0);
 
-  // Sum active applied club benefit reductions
-  const clubReductions = regularItems.reduce((sum, item) => {
+  // Load active subscription and benefits balance for preview
+  const { getActiveCustomerClubSubscription, getClubBenefitsBalance } = await import("./club");
+  const activeSub = comanda.customerId ? await getActiveCustomerClubSubscription({
+    barbershopId: comanda.barbershopId,
+    customerId: comanda.customerId,
+    atDate: comanda.createdAt || new Date(),
+    tx,
+  }) : null;
+
+  const balance = activeSub ? await getClubBenefitsBalance({
+    barbershopId: comanda.barbershopId,
+    subscriptionId: activeSub.id,
+    atDate: comanda.createdAt || new Date(),
+    tx,
+  }) : null;
+
+  // Sum active applied club benefit reductions (real + simulated preview)
+  let clubReductions = 0;
+  for (const item of regularItems) {
     const usage = item.clubBenefitUsage;
     if (usage && usage.status === "APPLIED") {
       const covered = usage.coveredAmount ? toCents(usage.coveredAmount) : 0;
       const discount = usage.discountAmount ? toCents(usage.discountAmount) : 0;
-      return sum + covered + discount;
+      clubReductions += covered + discount;
+    } else if (item.clubBenefitRequested && item.requestedClubPlanBenefitId && balance) {
+      const benefit = balance.benefits.find(b => b.id === item.requestedClubPlanBenefitId);
+      if (benefit) {
+        const isServiceMatch = item.type === "SERVICE" && benefit.serviceId === item.serviceId;
+        const isProductMatch = item.type === "PRODUCT" && benefit.productId === item.productId;
+
+        if (isServiceMatch || isProductMatch) {
+          if (benefit.benefitType === "INCLUDED_SERVICE") {
+            if (benefit.availableQty && benefit.availableQty > 0) {
+              clubReductions += toCents(item.total);
+              benefit.availableQty--;
+            }
+          } else {
+            const pct = Number(benefit.discountPercent || 0);
+            const original = toCents(item.total);
+            const discount = Math.round((original * pct) / 100);
+            clubReductions += discount;
+          }
+        }
+      }
     }
-    return sum;
-  }, 0);
+  }
 
   const subtotal = Math.max(0, rawSubtotal - clubReductions);
   const discountTotal = discounts.reduce((sum, item) => sum + toCents(item.total), 0);

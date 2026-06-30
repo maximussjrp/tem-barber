@@ -30,9 +30,10 @@ export async function getActiveCustomerClubSubscription(params: {
   atDate: Date;
   tx?: Prisma.TransactionClient;
 }) {
+  if (!params.customerId) return null;
   const client = params.tx ?? prisma;
   
-  const subscription = await client.customerClubSubscription.findFirst({
+  const subscriptions = await client.customerClubSubscription.findMany({
     where: {
       barbershopId: params.barbershopId,
       customerId: params.customerId,
@@ -45,7 +46,35 @@ export async function getActiveCustomerClubSubscription(params: {
     },
   });
 
-  return subscription;
+  if (subscriptions.length === 0) return null;
+
+  // Sort deterministically in memory:
+  // 1. ACTIVE before GRACE_PERIOD
+  // 2. clubPlan.isActive desc
+  // 3. currentPeriodStart desc
+  // 4. createdAt desc
+  // 5. updatedAt desc
+  subscriptions.sort((a, b) => {
+    if (a.status === ClubSubscriptionStatus.ACTIVE && b.status === ClubSubscriptionStatus.GRACE_PERIOD) return -1;
+    if (a.status === ClubSubscriptionStatus.GRACE_PERIOD && b.status === ClubSubscriptionStatus.ACTIVE) return 1;
+
+    if (a.clubPlan.isActive && !b.clubPlan.isActive) return -1;
+    if (!a.clubPlan.isActive && b.clubPlan.isActive) return 1;
+
+    const aStart = a.currentPeriodStart.getTime();
+    const bStart = b.currentPeriodStart.getTime();
+    if (aStart !== bStart) return bStart - aStart;
+
+    const aCreated = a.createdAt.getTime();
+    const bCreated = b.createdAt.getTime();
+    if (aCreated !== bCreated) return bCreated - aCreated;
+
+    const aUpdated = a.updatedAt.getTime();
+    const bUpdated = b.updatedAt.getTime();
+    return bUpdated - aUpdated;
+  });
+
+  return subscriptions[0];
 }
 
 /**

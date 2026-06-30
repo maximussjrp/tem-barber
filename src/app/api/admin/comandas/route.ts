@@ -4,6 +4,7 @@ import { ComandaStatus, Prisma } from "@prisma/client";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
+import { resolveClubBenefitForComandaItem } from "@/lib/operations/club";
 import {
   findBarbershopCustomerById,
   normalizePhone,
@@ -91,6 +92,43 @@ export async function POST(request: NextRequest) {
           throw new OperationalError("APPOINTMENT_NOT_FOUND", "Agendamento nao encontrado.", 404);
         }
 
+        const itemsToCreate = [];
+        for (const item of appointment.services) {
+          let clubBenefitRequested = false;
+          let requestedClubPlanBenefitId = null;
+
+          try {
+            const resolved = await resolveClubBenefitForComandaItem({
+              barbershopId: data!.barbershopId,
+              customerId: appointment.customerId,
+              serviceId: item.serviceId,
+              itemType: "SERVICE",
+              atDate: new Date(),
+              tx,
+            });
+
+            if (resolved.isApplicable) {
+              clubBenefitRequested = true;
+              requestedClubPlanBenefitId = resolved.clubPlanBenefitId;
+            }
+          } catch (err) {
+            // ignore check errors to avoid breaking comanda creation
+          }
+
+          itemsToCreate.push({
+            barbershopId: data!.barbershopId,
+            type: "SERVICE" as const,
+            description: item.service.name,
+            quantity: 1,
+            unitPrice: item.priceApplied,
+            total: item.priceApplied,
+            serviceId: item.serviceId,
+            executorId: appointment.memberId,
+            clubBenefitRequested,
+            requestedClubPlanBenefitId,
+          });
+        }
+
         const comanda = await tx.comanda.create({
           data: {
             barbershopId: data!.barbershopId,
@@ -100,16 +138,7 @@ export async function POST(request: NextRequest) {
             customerPhone: appointment.customer.phone,
             status: "OPEN",
             items: {
-              create: appointment.services.map((item) => ({
-                barbershopId: data!.barbershopId,
-                type: "SERVICE",
-                description: item.service.name,
-                quantity: 1,
-                unitPrice: item.priceApplied,
-                total: item.priceApplied,
-                serviceId: item.serviceId,
-                executorId: appointment.memberId,
-              })),
+              create: itemsToCreate,
             },
           },
         });
@@ -155,4 +184,3 @@ export async function POST(request: NextRequest) {
     return operationErrorResponse(err);
   }
 }
-

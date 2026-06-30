@@ -196,15 +196,12 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
 
   // 2. Se houver cliente e assinatura e itens pedindo benefício do clube, processá-los
   if (comanda.customerId) {
-    const activeSub = await tx.customerClubSubscription.findFirst({
-      where: {
-        barbershopId,
-        customerId: comanda.customerId,
-        status: { in: ["ACTIVE", "GRACE_PERIOD"] },
-        currentPeriodStart: { lte: new Date() },
-        currentPeriodEnd: { gt: new Date() },
-      },
-      include: { clubPlan: true },
+    const { getActiveCustomerClubSubscription } = await import("./club");
+    const activeSub = await getActiveCustomerClubSubscription({
+      barbershopId,
+      customerId: comanda.customerId,
+      atDate: new Date(),
+      tx,
     });
 
     const itemsRequestingClub = comanda.items.filter(
@@ -269,7 +266,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
 
         await registerClubBenefitUsage({
           barbershopId,
-          subscriptionId: activeSub.id,
+          subscriptionId: (resolved as any).subscriptionId || activeSub.id,
           comandaItemId: item.id,
           serviceId: item.serviceId || undefined,
           productId: item.productId || undefined,

@@ -339,8 +339,10 @@ export default function ComandaDetailPage() {
                     item={item}
                     busy={busy}
                     comandaClosed={comandaClosed}
+                    clubBalance={clubBalance}
                     onConclude={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "DONE" }, "PATCH")}
                     onCancel={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "CANCELLED" }, "PATCH")}
+                    onUpdate={(itemId, body) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, body, "PATCH")}
                   />
                 ))}
               </div>

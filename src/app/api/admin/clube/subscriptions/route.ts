@@ -78,15 +78,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "CUSTOMER_NOT_FOUND", message: "Cliente não encontrado." }, { status: 400 });
     }
 
-    // 3. Criar assinatura com barbershopId do tenant operacional
+    // 3. Impedir criar nova assinatura ACTIVE/GRACE_PERIOD sobreposta para o mesmo customerId + barbershopId
+    const newStart = new Date(subData.currentPeriodStart);
+    const newEnd = new Date(subData.currentPeriodEnd);
+    const newStatus = subData.status ?? ClubSubscriptionStatus.ACTIVE;
+
+    if (newStatus === ClubSubscriptionStatus.ACTIVE || newStatus === ClubSubscriptionStatus.GRACE_PERIOD) {
+      const overlapping = await prisma.customerClubSubscription.findFirst({
+        where: {
+          barbershopId: data.barbershopId,
+          customerId: subData.customerId,
+          status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
+          currentPeriodStart: { lt: newEnd },
+          currentPeriodEnd: { gt: newStart },
+        },
+      });
+
+      if (overlapping) {
+        return NextResponse.json(
+          {
+            error: "OVERLAPPING_ACTIVE_SUBSCRIPTION",
+            message: "O cliente já possui uma assinatura ativa ou em período de graça para esta barbearia neste período.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 4. Criar assinatura com barbershopId do tenant operacional
     const subscription = await prisma.customerClubSubscription.create({
       data: {
         barbershopId: data.barbershopId,
         customerId: subData.customerId,
         clubPlanId: subData.clubPlanId,
-        status: subData.status ?? ClubSubscriptionStatus.ACTIVE,
-        currentPeriodStart: new Date(subData.currentPeriodStart),
-        currentPeriodEnd: new Date(subData.currentPeriodEnd),
+        status: newStatus,
+        currentPeriodStart: newStart,
+        currentPeriodEnd: newEnd,
       },
       include: {
         customer: { select: { id: true, name: true } },
