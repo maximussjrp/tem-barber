@@ -7,23 +7,50 @@ const BLOCKED_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = [
   "EXPIRED",
 ];
 
+const LISTABLE_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = ["TRIAL", "ACTIVE", "PAST_DUE"];
+
 export function sanitizeBarbershopSlug(slug: string | null | undefined) {
   const value = slug?.trim() ?? "";
   return /^[a-z0-9-]+$/.test(value) ? value : null;
 }
 
 export function publicBarbershopWhere(): Prisma.BarbershopWhereInput {
+  const now = new Date();
+
   return {
     active: true,
     slug: { not: "" },
     subscriptions: {
-      none: {
-        status: { in: BLOCKED_SUBSCRIPTION_STATUSES },
+      some: {
+        status: { in: LISTABLE_SUBSCRIPTION_STATUSES },
+        OR: [
+          {
+            status: "TRIAL",
+            OR: [{ trialEndsAt: null }, { trialEndsAt: { gte: now } }],
+          },
+          {
+            status: "ACTIVE",
+            currentPeriodEnd: { gte: now },
+          },
+          {
+            status: "PAST_DUE",
+            gracePeriodEndsAt: { gte: now },
+          },
+        ],
       },
     },
-    NOT: BLOCKED_PUBLIC_BARBERSHOP_TERMS.flatMap((term) => [
-      { name: { contains: term, mode: "insensitive" as const } },
-      { slug: { contains: term, mode: "insensitive" as const } },
-    ]),
+    NOT: [
+      {
+        subscriptions: {
+          some: {
+            status: { in: BLOCKED_SUBSCRIPTION_STATUSES },
+          },
+        },
+      },
+      ...BLOCKED_PUBLIC_BARBERSHOP_TERMS.flatMap((term) => [
+        { name: { contains: term, mode: "insensitive" as const } },
+        { slug: { contains: term, mode: "insensitive" as const } },
+      ]),
+    ],
   };
 }

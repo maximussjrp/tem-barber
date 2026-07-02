@@ -40,11 +40,30 @@ describe("barbearias publicas", () => {
           active: true,
           slug: { not: "" },
           subscriptions: expect.objectContaining({
-            none: expect.objectContaining({
-              status: { in: ["SUSPENDED", "CANCELED", "EXPIRED"] },
+            some: expect.objectContaining({
+              status: { in: ["TRIAL", "ACTIVE", "PAST_DUE"] },
+              OR: expect.arrayContaining([
+                expect.objectContaining({
+                  status: "TRIAL",
+                }),
+                expect.objectContaining({
+                  status: "ACTIVE",
+                }),
+                expect.objectContaining({
+                  status: "PAST_DUE",
+                  gracePeriodEndsAt: expect.objectContaining({ gte: expect.any(Date) }),
+                }),
+              ]),
             }),
           }),
           NOT: expect.arrayContaining([
+            expect.objectContaining({
+              subscriptions: expect.objectContaining({
+                some: expect.objectContaining({
+                  status: { in: ["SUSPENDED", "CANCELED", "EXPIRED"] },
+                }),
+              }),
+            }),
             { name: { contains: "Smoke", mode: "insensitive" } },
             { slug: { contains: "Smoke", mode: "insensitive" } },
             { name: { contains: "Test", mode: "insensitive" } },
@@ -52,6 +71,22 @@ describe("barbearias publicas", () => {
           ]),
         }),
       })
+    );
+  });
+
+  it("aplica regra temporal para PAST_DUE com grace period no filtro publico", async () => {
+    await listPublicBarbershops();
+
+    const where = prismaMock.barbershop.findMany.mock.calls[0][0].where;
+    const subscriptionBranches = where.subscriptions.some.OR;
+
+    expect(subscriptionBranches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "PAST_DUE",
+          gracePeriodEndsAt: expect.objectContaining({ gte: expect.any(Date) }),
+        }),
+      ])
     );
   });
 

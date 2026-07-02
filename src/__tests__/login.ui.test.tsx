@@ -142,7 +142,7 @@ describe("login", () => {
     });
   });
 
-  it.skip("lookup sem barbearias vinculadas nao realiza login e exibe mensagem segura", async () => {
+  it("lookup sem barbearias vinculadas nao realiza login e exibe mensagem segura", async () => {
     render(<LoginPage />);
 
     const nameInput = screen.getByPlaceholderText("Ex: João da Silva");
@@ -153,7 +153,6 @@ describe("login", () => {
     fireEvent.change(phoneInput, { target: { value: "(33) 93333-3333" } });
     fireEvent.click(submitBtn);
 
-    // Deve exibir a mensagem de "Não encontramos uma barbearia" e carregar a lista de barbearias
     expect(await screen.findByText("Não encontramos uma barbearia vinculada a este telefone.")).toBeInTheDocument();
     expect(screen.getByText("Por segurança, não exibimos uma lista pública de barbearias quando o telefone não tem vínculo.")).toBeInTheDocument();
 
@@ -161,13 +160,14 @@ describe("login", () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
-  it.skip("lookup sem vinculo mostra mensagem segura e oferece retorno ao slug salvo", async () => {
+  it("lookup sem vinculo mostra mensagem segura e oferece retorno ao slug salvo", async () => {
     localStorage.setItem("lastBarbershopSlug", "don-brio");
 
     render(<LoginPage />);
 
-    fireEvent.change(screen.getByPlaceholderText("Ex: JoÃ£o da Silva"), { target: { value: "Cliente Tres" } });
-    fireEvent.change(screen.getByPlaceholderText("Ex: (11) 99999-9999"), { target: { value: "(33) 93333-3333" } });
+    const inputs = screen.getAllByRole("textbox");
+    fireEvent.change(inputs[0], { target: { value: "Cliente Tres" } });
+    fireEvent.change(inputs[1], { target: { value: "(33) 93333-3333" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar para Agendar" }));
 
     expect(await screen.findByText("Não encontramos uma barbearia vinculada a este telefone.")).toBeInTheDocument();
@@ -175,6 +175,8 @@ describe("login", () => {
 
     const link = screen.getByRole("link", { name: "Agendar na minha barbearia" });
     expect(link).toHaveAttribute("href", "/don-brio/agendar");
+    expect(signIn).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/public/barbershops");
   });
 
   it("lookup sem vinculo oferece retorno ao slug salvo", async () => {
