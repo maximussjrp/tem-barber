@@ -31,7 +31,9 @@ beforeEach(() => {
     error: null,
     data: { userId: "admin-a", role: "OWNER", memberId: "owner-a", barbershopId: "shop-a" },
   });
-  getServerSessionMock.mockResolvedValue({ user: { id: "customer-a", role: "USER" } });
+  getServerSessionMock.mockResolvedValue({
+    user: { id: "customer-a", role: "USER", authLevel: "verified_link" },
+  });
   prismaMock.appointment.findFirst.mockResolvedValue({
     id: "appointment-a",
     customerId: "customer-a",
@@ -113,5 +115,19 @@ describe("cancelamento de agendamentos", () => {
       data: { status: "CANCELLED" },
     });
     expect((prismaMock.appointment as { delete?: unknown }).delete).toBeUndefined();
+  });
+
+  it("sessao phone_lookup nao cancela agendamento sensivel", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
+    });
+
+    const response = await clientPatch(
+      request("http://localhost/api/client/appointments", { id: "appointment-a" })
+    );
+
+    expect(response.status).toBe(403);
+    expect(prismaMock.appointment.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.appointment.update).not.toHaveBeenCalled();
   });
 });

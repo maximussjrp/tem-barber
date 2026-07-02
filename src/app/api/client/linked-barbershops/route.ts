@@ -5,13 +5,25 @@ import { authOptions } from "@/lib/auth";
 
 type SessionUserWithId = {
   id?: string;
+  authLevel?: string;
 };
+
+function hasStrongClientAccess(sessionUser: SessionUserWithId | undefined) {
+  return sessionUser?.authLevel === "verified_link" || sessionUser?.authLevel === "verified_otp";
+}
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+    }
+
+    if (!hasStrongClientAccess(session.user as SessionUserWithId)) {
+      return NextResponse.json(
+        { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
+        { status: 403 }
+      );
     }
 
     const userId = (session.user as SessionUserWithId).id;

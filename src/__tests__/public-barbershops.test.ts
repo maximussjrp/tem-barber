@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { resetRateLimitStore } from "@/lib/public-rate-limit";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -15,6 +16,10 @@ vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
 import { GET as listPublicBarbershops } from "@/app/api/public/barbershops/route";
 import { POST as clientLookup } from "@/app/api/public/client-lookup/route";
 
+function getListRequest() {
+  return new NextRequest("http://localhost/api/public/barbershops", { method: "GET" });
+}
+
 function postLookup(phone: string) {
   return new NextRequest("http://localhost/api/public/client-lookup", {
     method: "POST",
@@ -25,6 +30,7 @@ function postLookup(phone: string) {
 describe("barbearias publicas", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetRateLimitStore();
     prismaMock.barbershop.findMany.mockResolvedValue([]);
     prismaMock.user.findFirst.mockResolvedValue(null);
     prismaMock.appointment.findMany.mockResolvedValue([]);
@@ -32,7 +38,7 @@ describe("barbearias publicas", () => {
   });
 
   it("filtra barbearias inativas, temporarias e tenants suspensos na listagem publica", async () => {
-    await listPublicBarbershops();
+    await listPublicBarbershops(getListRequest());
 
     expect(prismaMock.barbershop.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -75,7 +81,7 @@ describe("barbearias publicas", () => {
   });
 
   it("aplica regra temporal para PAST_DUE com grace period no filtro publico", async () => {
-    await listPublicBarbershops();
+    await listPublicBarbershops(getListRequest());
 
     const where = prismaMock.barbershop.findMany.mock.calls[0][0].where;
     const subscriptionBranches = where.subscriptions.some.OR;
@@ -130,5 +136,15 @@ describe("barbearias publicas", () => {
 
     expect(data.linkedBarbershops).toEqual([]);
     expect(prismaMock.barbershop.findMany).not.toHaveBeenCalled();
+  });
+
+  it("aplica rate limit basico no client lookup", async () => {
+    let lastResponse = await clientLookup(postLookup("(11) 99999-9999"));
+
+    for (let i = 0; i < 20; i += 1) {
+      lastResponse = await clientLookup(postLookup("(11) 99999-9999"));
+    }
+
+    expect(lastResponse.status).toBe(429);
   });
 });

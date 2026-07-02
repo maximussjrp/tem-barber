@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { resetRateLimitStore } from "@/lib/public-rate-limit";
 
 const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
-  appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
+  appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
@@ -50,6 +51,7 @@ const services = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetRateLimitStore();
   getServerSessionMock.mockResolvedValue(null);
   prismaMock.barbershop.findUnique.mockResolvedValue({
     id: "shop-a",
@@ -74,6 +76,7 @@ beforeEach(() => {
     { customer: { id: "customer-existing", name: "Cliente A", phone: "11999999999" } },
   ]);
   txMock.appointment.findFirst.mockResolvedValue(null);
+  txMock.appointment.count.mockResolvedValue(0);
   txMock.$queryRaw.mockResolvedValueOnce([]).mockResolvedValue([]);
   txMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   txMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
@@ -242,5 +245,28 @@ describe("agendamento publico", () => {
     expect(txMock.barbershopMember.findFirst).toHaveBeenCalledWith({
       where: { id: "member-a", barbershopId: "shop-a", isActive: true },
     });
+  });
+
+  it("bloqueia terceiro agendamento futuro na mesma semana para a mesma barbearia", async () => {
+    txMock.appointment.count.mockResolvedValue(2);
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("WEEKLY_BOOKING_LIMIT_REACHED");
+    expect(data.message).toContain("limite de agendamentos futuros");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("bloqueia duplicidade de agendamento no mesmo horario para o mesmo cliente na mesma barbearia", async () => {
+    txMock.appointment.findFirst.mockResolvedValue({ id: "duplicate-a" });
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("DUPLICATE_APPOINTMENT");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
   });
 });

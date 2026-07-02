@@ -55,6 +55,7 @@ export default function MinhaContaPage() {
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [linkedBarbershops, setLinkedBarbershops] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [accessError, setAccessError] = useState("");
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState("");
 
@@ -67,11 +68,34 @@ export default function MinhaContaPage() {
   useEffect(() => {
     if (status === "authenticated") {
       Promise.all([
-        fetch("/api/client/appointments").then((r) => r.json()),
-        fetch("/api/client/linked-barbershops").then((r) => r.json())
+        fetch("/api/client/appointments"),
+        fetch("/api/client/linked-barbershops"),
       ])
-        .then(([appointmentsData, linkedData]) => {
-          setAppointments(appointmentsData);
+        .then(async ([appointmentsRes, linkedRes]) => {
+          if (!appointmentsRes.ok || !linkedRes.ok) {
+            const errorData = appointmentsRes.ok
+              ? await linkedRes.json().catch(() => ({}))
+              : await appointmentsRes.json().catch(() => ({}));
+
+            if (appointmentsRes.status === 401 || appointmentsRes.status === 403) {
+              setAccessError(
+                errorData.error ||
+                  "Por seguranca, acesse sua conta por um link seguro enviado pela barbearia."
+              );
+            }
+
+            setAppointments([]);
+            setLinkedBarbershops([]);
+            return;
+          }
+
+          const [appointmentsData, linkedData] = await Promise.all([
+            appointmentsRes.json(),
+            linkedRes.json(),
+          ]);
+
+          setAccessError("");
+          setAppointments(Array.isArray(appointmentsData) ? appointmentsData : []);
           setLinkedBarbershops(linkedData.linkedBarbershopIds || []);
         })
         .finally(() => setLoading(false));
@@ -237,6 +261,12 @@ export default function MinhaContaPage() {
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-6 space-y-8">
+        {accessError && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            {accessError}
+          </div>
+        )}
+
         {/* Empty States */}
         {!loading && upcoming.length === 0 && past.length === 0 && (
           <div className="text-center py-12 px-4 border border-[var(--border-subtle)] border-dashed rounded-2xl bg-[var(--surface-1)]">

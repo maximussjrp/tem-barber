@@ -22,6 +22,7 @@ import {
   getIdempotencyKeyFromRequest,
   hashPublicBookingPayload,
 } from "@/lib/appointments/idempotency";
+import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 
 interface SessionUser {
   id?: string;
@@ -35,6 +36,20 @@ interface PublicBookingBody {
   customerPhone?: string;
   notes?: string;
   idempotencyKey?: string;
+}
+
+function getUtcWeekRange(inputDate: Date) {
+  const date = new Date(inputDate);
+  const day = date.getUTCDay();
+  const daysFromMonday = (day + 6) % 7;
+
+  const weekStart = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - daysFromMonday)
+  );
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekStart.getUTCDate() + 7);
+
+  return { weekStart, weekEnd };
 }
 
 function jsonError(error: unknown) {
@@ -190,6 +205,25 @@ export async function POST(
 
   const { memberId, serviceIds, dateTime, customerName, customerPhone, notes } = body;
 
+  const ip = resolveClientIp(request);
+  const normalizedPhoneKey = normalizePhone(customerPhone);
+  const rateLimit = consumeRateLimit({
+    bucket: "public-booking",
+    key: `${slug}:${ip}:${normalizedPhoneKey || "no-phone"}`,
+    max: 12,
+    windowMs: 60_000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Muitas tentativas de agendamento. Tente novamente em instantes." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      }
+    );
+  }
+
   if (!memberId || !serviceIds?.length || !dateTime) {
     return NextResponse.json(
       { error: "memberId, serviceIds e dateTime sao obrigatorios." },
@@ -327,6 +361,54 @@ export async function POST(
       if (!customerId) {
         return {
           error: NextResponse.json({ error: "Sessao invalida." }, { status: 401 }),
+        };
+      }
+
+      const duplicateAtSameDateTime = await tx.appointment.findFirst({
+        where: {
+          barbershopId: barbershop.id,
+          customerId,
+          dateTime: requestedDateTime,
+          status: { in: ["PENDING", "CONFIRMED"] },
+        },
+        select: { id: true },
+      });
+
+      if (duplicateAtSameDateTime) {
+        return {
+          error: NextResponse.json(
+            {
+              error: "DUPLICATE_APPOINTMENT",
+              message: "Voce ja possui um agendamento neste mesmo horario para esta barbearia.",
+            },
+            { status: 422 }
+          ),
+        };
+      }
+
+      const { weekStart, weekEnd } = getUtcWeekRange(requestedDateTime);
+      const activeFutureBookingsInWeek = await tx.appointment.count({
+        where: {
+          barbershopId: barbershop.id,
+          customerId,
+          dateTime: {
+            gte: weekStart > new Date() ? weekStart : new Date(),
+            lt: weekEnd,
+          },
+          status: { in: ["PENDING", "CONFIRMED"] },
+        },
+      });
+
+      if (activeFutureBookingsInWeek >= 2) {
+        return {
+          error: NextResponse.json(
+            {
+              error: "WEEKLY_BOOKING_LIMIT_REACHED",
+              message:
+                "Você já possui o limite de agendamentos futuros nesta semana. Fale com a barbearia para ajustar.",
+            },
+            { status: 422 }
+          ),
         };
       }
 

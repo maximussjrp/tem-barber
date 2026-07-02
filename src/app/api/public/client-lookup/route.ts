@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { normalizePhone, phoneLookupVariants } from "@/lib/customers";
 import { publicBarbershopWhere } from "@/lib/public-barbershops";
+import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 
 export async function POST(request: Request) {
   try {
@@ -21,6 +22,24 @@ export async function POST(request: Request) {
     const cleanPhone = normalizePhone(phone);
     if (cleanPhone.length < 10) {
       return NextResponse.json({ error: "Digite o DDD e o numero completo." }, { status: 400 });
+    }
+
+    const ip = resolveClientIp(request);
+    const rateLimit = consumeRateLimit({
+      bucket: "public-client-lookup",
+      key: `${ip}:${cleanPhone}`,
+      max: 15,
+      windowMs: 60_000,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Muitas tentativas. Tente novamente em instantes." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        }
+      );
     }
 
     const user = await prisma.user.findFirst({

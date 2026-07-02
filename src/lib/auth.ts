@@ -7,6 +7,7 @@ interface CustomAuthUser {
   id: string;
   role?: string;
   phone?: string;
+  authLevel?: "phone_lookup" | "admin" | "verified_link" | "verified_otp";
 }
 
 export const authOptions: NextAuthOptions = {
@@ -68,6 +69,7 @@ export const authOptions: NextAuthOptions = {
             email: user.email,
             phone: user.phone,
             role: user.role,
+            authLevel: "phone_lookup",
           };
         }
 
@@ -124,6 +126,7 @@ export const authOptions: NextAuthOptions = {
             email: user.email,
             phone: user.phone,
             role: resolvedRole,
+            authLevel: "admin",
           };
         }
 
@@ -137,6 +140,7 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.role = (user as CustomAuthUser).role;
         token.phone = (user as CustomAuthUser).phone;
+        (token as any).authLevel = (user as CustomAuthUser).authLevel;
       }
       return token;
     },
@@ -145,6 +149,12 @@ export const authOptions: NextAuthOptions = {
         (session.user as CustomAuthUser).id = token.id as string;
         (session.user as CustomAuthUser).role = token.role as string;
         (session.user as CustomAuthUser).phone = token.phone as string;
+        (session.user as CustomAuthUser).authLevel = (token as any).authLevel as
+          | "phone_lookup"
+          | "admin"
+          | "verified_link"
+          | "verified_otp"
+          | undefined;
       }
       return session;
     },

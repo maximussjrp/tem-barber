@@ -3,6 +3,15 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
+type SessionUser = {
+  id?: string;
+  authLevel?: string;
+};
+
+function hasStrongClientAccess(sessionUser: SessionUser | undefined) {
+  return sessionUser?.authLevel === "verified_link" || sessionUser?.authLevel === "verified_otp";
+}
+
 // GET /api/client/appointments — list current user's appointments (all time)
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -10,7 +19,14 @@ export async function GET() {
     return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   }
 
-  const userId = (session.user as any).id as string;
+  if (!hasStrongClientAccess(session.user as SessionUser)) {
+    return NextResponse.json(
+      { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
+      { status: 403 }
+    );
+  }
+
+  const userId = (session.user as SessionUser).id as string;
 
   const appointments = await prisma.appointment.findMany({
     where: { customerId: userId },
@@ -37,7 +53,14 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   }
 
-  const userId = (session.user as any).id as string;
+  if (!hasStrongClientAccess(session.user as SessionUser)) {
+    return NextResponse.json(
+      { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
+      { status: 403 }
+    );
+  }
+
+  const userId = (session.user as SessionUser).id as string;
 
   let body: { id?: string };
   try {
