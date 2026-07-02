@@ -11,6 +11,8 @@ export async function GET(
   if (error) return error;
 
   const { customerId } = await params;
+  const dateParam = request.nextUrl.searchParams.get("date");
+  const atDate = dateParam ? new Date(dateParam) : new Date();
 
   try {
     const activeSubs = await prisma.customerClubSubscription.findMany({
@@ -18,8 +20,8 @@ export async function GET(
         barbershopId: data.barbershopId,
         customerId,
         status: { in: ["ACTIVE", "GRACE_PERIOD"] },
-        currentPeriodStart: { lte: new Date() },
-        currentPeriodEnd: { gt: new Date() },
+        currentPeriodStart: { lte: atDate },
+        currentPeriodEnd: { gt: atDate },
       },
       include: { clubPlan: true },
     });
@@ -74,7 +76,7 @@ export async function GET(
     const balance = await getClubBenefitsBalance({
       barbershopId: data.barbershopId,
       subscriptionId: activeSub.id,
-      atDate: new Date(),
+      atDate,
     });
 
     const responsePayload: any = {

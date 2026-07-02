@@ -126,28 +126,57 @@ export async function getClubBenefitsBalance(params: {
   });
 
   const benefitBalances = subscription.clubPlan.benefits.map((benefit) => {
-    if (benefit.benefitType === ClubPlanBenefitType.INCLUDED_SERVICE) {
-      const usedQty = usages.filter(
-        (u) => u.clubPlanBenefitId === benefit.id && u.benefitType === ClubPlanBenefitType.INCLUDED_SERVICE
-      ).length;
-      const allowedQty = benefit.includedQty ?? 0;
-      const availableQty = Math.max(0, allowedQty - usedQty);
+    const pointWeight = benefit.pointWeight ? Number(benefit.pointWeight) : 0;
+    const usedQty = usages.filter(
+      (u) => u.clubPlanBenefitId === benefit.id
+    ).length;
 
-      return {
-        id: benefit.id,
-        benefitType: benefit.benefitType,
-        serviceId: benefit.serviceId,
-        productId: benefit.productId,
-        service: benefit.service,
-        product: benefit.product,
-        includedQty: allowedQty,
-        usedQty,
-        availableQty,
-        discountPercent: null,
-        pointWeight: benefit.pointWeight ? Number(benefit.pointWeight) : 0,
-      };
+    if (benefit.benefitType === ClubPlanBenefitType.INCLUDED_SERVICE) {
+      const isUnlimited = benefit.benefitLimitMode === "UNLIMITED";
+      if (isUnlimited) {
+        return {
+          id: benefit.id,
+          benefitType: benefit.benefitType,
+          serviceId: benefit.serviceId,
+          productId: benefit.productId,
+          service: benefit.service,
+          product: benefit.product,
+          limitMode: "UNLIMITED" as const,
+          isUnlimited: true,
+          canUse: true,
+          label: "Uso ilimitado",
+          includedQty: null,
+          usedQty,
+          availableQty: null,
+          discountPercent: null,
+          pointWeight,
+        };
+      } else {
+        const allowedQty = benefit.includedQty ?? 0;
+        const availableQty = Math.max(0, allowedQty - usedQty);
+        return {
+          id: benefit.id,
+          benefitType: benefit.benefitType,
+          serviceId: benefit.serviceId,
+          productId: benefit.productId,
+          service: benefit.service,
+          product: benefit.product,
+          limitMode: "MONTHLY_LIMIT" as const,
+          isUnlimited: false,
+          canUse: availableQty > 0,
+          label: availableQty > 0
+            ? `${availableQty} de ${allowedQty} disponíveis`
+            : `Limite esgotado (${allowedQty}/${allowedQty})`,
+          includedQty: allowedQty,
+          usedQty,
+          availableQty,
+          discountPercent: null,
+          pointWeight,
+        };
+      }
     } else {
       // SERVICE_DISCOUNT or PRODUCT_DISCOUNT
+      const discountPercent = benefit.discountPercent ? Number(benefit.discountPercent) : 0;
       return {
         id: benefit.id,
         benefitType: benefit.benefitType,
@@ -155,11 +184,15 @@ export async function getClubBenefitsBalance(params: {
         productId: benefit.productId,
         service: benefit.service,
         product: benefit.product,
+        limitMode: null,
+        isUnlimited: true,
+        canUse: true,
+        label: `Desconto de ${discountPercent}%`,
         includedQty: null,
         usedQty: 0,
         availableQty: null,
-        discountPercent: benefit.discountPercent ? Number(benefit.discountPercent) : 0,
-        pointWeight: benefit.pointWeight ? Number(benefit.pointWeight) : 0,
+        discountPercent,
+        pointWeight,
       };
     }
   });
@@ -190,6 +223,7 @@ export async function resolveClubBenefitForComandaItem(params: {
   productId?: string;
   itemType: "SERVICE" | "PRODUCT";
   atDate: Date;
+  requestedClubPlanBenefitId?: string;
   tx?: Prisma.TransactionClient;
 }) {
   const client = params.tx ?? prisma;
@@ -243,6 +277,9 @@ export async function resolveClubBenefitForComandaItem(params: {
 
   // 3. Find matching benefit
   const matchingBenefit = balance.benefits.find((b) => {
+    if (params.requestedClubPlanBenefitId && b.id !== params.requestedClubPlanBenefitId) {
+      return false;
+    }
     if (params.itemType === "SERVICE" && b.serviceId === params.serviceId) {
       return true;
     }
@@ -262,7 +299,7 @@ export async function resolveClubBenefitForComandaItem(params: {
 
   // 4. Evaluate limits
   if (matchingBenefit.benefitType === ClubPlanBenefitType.INCLUDED_SERVICE) {
-    if (matchingBenefit.availableQty === 0) {
+    if (!matchingBenefit.isUnlimited && matchingBenefit.availableQty === 0) {
       return {
         hasActiveSubscription: true,
         isApplicable: false,
@@ -322,6 +359,7 @@ export async function registerClubBenefitUsage(params: {
   originalAmount?: number;
   coveredAmount?: number;
   discountAmount?: number;
+  atDate?: Date;
   tx?: Prisma.TransactionClient;
 }) {
   const runInTx = async (tx: Prisma.TransactionClient) => {
@@ -351,13 +389,14 @@ export async function registerClubBenefitUsage(params: {
 
     // Determine benefit type and matching benefitId
     const itemType = params.serviceId ? "SERVICE" : "PRODUCT";
+    const evaluationDate = params.atDate || subscription.currentPeriodStart;
     const resolved = await resolveClubBenefitForComandaItem({
       barbershopId: params.barbershopId,
       customerId: subscription.customerId,
       serviceId: params.serviceId,
       productId: params.productId,
       itemType,
-      atDate: new Date(),
+      atDate: evaluationDate,
       tx,
     });
 
@@ -386,7 +425,7 @@ export async function registerClubBenefitUsage(params: {
         pointWeightApplied: new Prisma.Decimal(params.pointWeight),
         status: ClubBenefitUsageStatus.APPLIED,
         competence: params.competence,
-        usedAt: new Date(),
+        usedAt: evaluationDate,
       },
     });
 

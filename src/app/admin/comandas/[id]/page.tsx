@@ -479,9 +479,10 @@ export default function ComandaDetailPage() {
                         {matchingBenefits.map((b: any) => {
                           const isIncluded = b.benefitType === "INCLUDED_SERVICE";
                           const label = isIncluded 
-                            ? `Serviço incluso (${b.availableQty} / ${b.includedQty} restantes)`
+                            ? (b.isUnlimited ? "Serviço incluso (Ilimitado)" : `Serviço incluso (${b.availableQty} / ${b.includedQty} restantes)`)
                             : `Desconto de ${b.discountPercent}% no serviço`;
-                          const isDisabled = isIncluded && b.availableQty <= 0;
+                          const canUse = b.canUse !== undefined ? b.canUse : (b.isUnlimited || (b.availableQty && b.availableQty > 0));
+                          const isDisabled = isIncluded && !canUse;
 
                           return (
                             <label key={b.id} className={`flex items-start gap-2 text-sm text-[var(--text-primary)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>

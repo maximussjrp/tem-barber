@@ -200,7 +200,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     const activeSub = await getActiveCustomerClubSubscription({
       barbershopId,
       customerId: comanda.customerId,
-      atDate: new Date(),
+      atDate: comanda.openedAt,
       tx,
     });
 
@@ -214,7 +214,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
       }
 
       // Resolve e registra cada um dos benefícios
-      const competence = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      const competence = `${comanda.openedAt.getFullYear()}-${String(comanda.openedAt.getMonth() + 1).padStart(2, "0")}`;
 
       const { getClubBenefitsBalance, resolveClubBenefitForComandaItem, registerClubBenefitUsage } = await import("./club");
 
@@ -226,7 +226,8 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
           serviceId: item.serviceId || undefined,
           productId: item.productId || undefined,
           itemType,
-          atDate: new Date(),
+          atDate: comanda.openedAt,
+          requestedClubPlanBenefitId: item.requestedClubPlanBenefitId || undefined,
           tx,
         });
 
@@ -276,6 +277,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
           originalAmount,
           coveredAmount,
           discountAmount,
+          atDate: comanda.openedAt,
           tx,
         });
       }

@@ -313,7 +313,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
       },
     });
 
-    const req = new NextRequest(`http://localhost/api/admin/clube/subscriptions/customer/${customer.id}/balance`);
+    const req = new NextRequest(`http://localhost/api/admin/clube/subscriptions/customer/${customer.id}/balance?date=2026-06-15`);
     const res = await balanceRoute.GET(req, { params: Promise.resolve({ customerId: customer.id }) });
     const json = await res.json();
 
@@ -430,6 +430,8 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         customerId: customer.id,
         customerName: customer.name,
         status: "OPEN",
+        openedAt: new Date("2026-06-15"),
+        createdAt: new Date("2026-06-15"),
         items: {
           create: {
             barbershopId: barbershop.id,

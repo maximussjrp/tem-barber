@@ -4,15 +4,26 @@ import { Prisma } from "@prisma/client";
 import { requireOperationalSession } from "@/lib/api-auth";
 import { z } from "zod";
 
+const includedServiceSchema = z.object({
+  benefitType: z.literal("INCLUDED_SERVICE"),
+  serviceId: z.string().min(1),
+  benefitLimitMode: z.enum(["UNLIMITED", "MONTHLY_LIMIT"]).default("MONTHLY_LIMIT"),
+  includedQty: z.number().int().min(1).optional().nullable(),
+  pointWeight: z.number().min(0),
+  productId: z.null().optional(),
+  discountPercent: z.null().optional(),
+}).refine((data) => {
+  if (data.benefitLimitMode === "UNLIMITED") {
+    return data.includedQty === null || data.includedQty === undefined;
+  }
+  return data.includedQty !== null && data.includedQty !== undefined && data.includedQty >= 1;
+}, {
+  message: "Para limite mensal, a quantidade é obrigatória e deve ser maior ou igual a 1. Para ilimitado, a quantidade deve ser nula.",
+  path: ["includedQty"]
+});
+
 const createBenefitSchema = z.discriminatedUnion("benefitType", [
-  z.object({
-    benefitType: z.literal("INCLUDED_SERVICE"),
-    serviceId: z.string().min(1),
-    includedQty: z.number().int().min(1),
-    pointWeight: z.number().min(0),
-    productId: z.null().optional(),
-    discountPercent: z.null().optional(),
-  }),
+  includedServiceSchema,
   z.object({
     benefitType: z.literal("SERVICE_DISCOUNT"),
     serviceId: z.string().min(1),
@@ -83,9 +94,10 @@ export async function POST(
       data: {
         clubPlanId: planId,
         benefitType: benefitData.benefitType,
+        benefitLimitMode: benefitData.benefitType === "INCLUDED_SERVICE" ? (benefitData.benefitLimitMode as any) : undefined,
         serviceId: benefitData.benefitType !== "PRODUCT_DISCOUNT" ? benefitData.serviceId : null,
         productId: benefitData.benefitType === "PRODUCT_DISCOUNT" ? benefitData.productId : null,
-        includedQty: benefitData.benefitType === "INCLUDED_SERVICE" ? benefitData.includedQty : null,
+        includedQty: benefitData.benefitType === "INCLUDED_SERVICE" && benefitData.benefitLimitMode !== "UNLIMITED" ? benefitData.includedQty : null,
         discountPercent: benefitData.benefitType !== "INCLUDED_SERVICE" && benefitData.discountPercent != null
           ? new Prisma.Decimal(benefitData.discountPercent)
           : null,

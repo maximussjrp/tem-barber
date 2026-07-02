@@ -817,6 +817,11 @@ enum ClubSettlementStatus {
   CANCELED
 }
 
+enum ClubBenefitLimitMode {
+  UNLIMITED
+  MONTHLY_LIMIT
+}
+
 enum ClubBenefitUsageStatus {
   APPLIED
   REVERSED
@@ -848,6 +853,7 @@ model ClubPlanBenefit {
   id              String              @id @default(uuid())
   clubPlanId      String              @map("club_plan_id")
   benefitType     ClubPlanBenefitType @map("benefit_type")
+  benefitLimitMode ClubBenefitLimitMode @default(MONTHLY_LIMIT) @map("benefit_limit_mode")
   serviceId       String?             @map("service_id")
   productId       String?             @map("product_id")
   includedQty     Int?                @map("included_qty")

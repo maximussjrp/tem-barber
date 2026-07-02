@@ -117,6 +117,7 @@ describe("UI de Cadastro/Edição Simplificada de Planos do Clube", () => {
       expect(submittedPayload.benefits[0]).toEqual({
         benefitId: null,
         serviceId: "svc-a",
+        benefitLimitMode: "MONTHLY_LIMIT",
         includedQty: 3,
         pointWeight: 1.25
       });

@@ -5,6 +5,7 @@ import { requireOperationalSession } from "@/lib/api-auth";
 import { z } from "zod";
 
 const updateBenefitSchema = z.object({
+  benefitLimitMode: z.enum(["UNLIMITED", "MONTHLY_LIMIT"]).optional(),
   includedQty: z.number().int().min(1).optional().nullable(),
   discountPercent: z.number().min(0).max(100).optional().nullable(),
   pointWeight: z.number().min(0).optional().nullable(),
@@ -44,10 +45,18 @@ export async function PATCH(
 
     const updates = result.data;
 
+    let finalLimitMode = updates.benefitLimitMode !== undefined ? updates.benefitLimitMode : benefit.benefitLimitMode;
+    let finalIncludedQty = updates.includedQty !== undefined ? updates.includedQty : benefit.includedQty;
+
+    if (finalLimitMode === "UNLIMITED") {
+      finalIncludedQty = null;
+    }
+
     const updatedBenefit = await prisma.clubPlanBenefit.update({
       where: { id: benefitId },
       data: {
-        ...(updates.includedQty !== undefined && { includedQty: updates.includedQty }),
+        ...(updates.benefitLimitMode !== undefined && { benefitLimitMode: updates.benefitLimitMode as any }),
+        includedQty: finalIncludedQty,
         ...(updates.discountPercent !== undefined && {
           discountPercent: updates.discountPercent != null ? new Prisma.Decimal(updates.discountPercent) : null
         }),

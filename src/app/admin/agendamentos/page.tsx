@@ -397,10 +397,12 @@ export function AppointmentModal({
         const match = benefits.find((b: any) => b.serviceId === s.id);
         if (match) {
           if (match.benefitType === "INCLUDED_SERVICE") {
-            if (match.availableQty > 0) {
+            if (match.isUnlimited || (match.availableQty && match.availableQty > 0)) {
               isCovered = true;
               todayPrice = 0;
-              match.availableQty -= 1;
+              if (!match.isUnlimited && match.availableQty) {
+                match.availableQty -= 1;
+              }
             } else {
               limitExhausted = true;
             }
@@ -494,12 +496,13 @@ export function AppointmentModal({
 
                   if (customerClubBalance && !isInactive && benefit) {
                     if (benefit.benefitType === "INCLUDED_SERVICE") {
-                      if (benefit.availableQty > 0) {
+                      const canUse = benefit.canUse !== undefined ? benefit.canUse : (benefit.isUnlimited || (benefit.availableQty && benefit.availableQty > 0));
+                      if (canUse) {
                         priceText = (0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
                         strikethroughPriceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
                         clubBadge = (
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                            Coberto ({benefit.availableQty} disp.)
+                            Coberto ({benefit.isUnlimited ? "Uso ilimitado" : `${benefit.availableQty} disp.`})
                           </span>
                         );
                       } else {
@@ -792,10 +795,12 @@ function AppointmentBlock({
         const match = benefits.find((b: any) => b.serviceId === s.service.id);
         if (match) {
           if (match.benefitType === "INCLUDED_SERVICE") {
-            if (match.availableQty > 0) {
+            if (match.isUnlimited || (match.availableQty && match.availableQty > 0)) {
               isCovered = true;
               todayPrice = 0;
-              match.availableQty -= 1;
+              if (!match.isUnlimited && match.availableQty) {
+                match.availableQty -= 1;
+              }
             } else {
               limitExhausted = true;
             }

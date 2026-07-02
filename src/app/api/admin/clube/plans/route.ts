@@ -14,8 +14,17 @@ const createPlanSchema = z.object({
   benefits: z.array(
     z.object({
       serviceId: z.string().min(1),
-      includedQty: z.number().int().min(1),
+      benefitLimitMode: z.enum(["UNLIMITED", "MONTHLY_LIMIT"]).default("MONTHLY_LIMIT"),
+      includedQty: z.number().int().min(1).optional().nullable(),
       pointWeight: z.number().min(0.01),
+    }).refine((data) => {
+      if (data.benefitLimitMode === "UNLIMITED") {
+        return data.includedQty === null || data.includedQty === undefined;
+      }
+      return data.includedQty !== null && data.includedQty !== undefined && data.includedQty >= 1;
+    }, {
+      message: "Para limite mensal, a quantidade é obrigatória e deve ser maior ou igual a 1. Para ilimitado, a quantidade deve ser nula.",
+      path: ["includedQty"]
     })
   ).optional(),
 }).refine((data) => {
@@ -94,8 +103,9 @@ export async function POST(request: NextRequest) {
           data: benefits.map((b) => ({
             clubPlanId: newPlan.id,
             benefitType: "INCLUDED_SERVICE",
+            benefitLimitMode: b.benefitLimitMode as any,
             serviceId: b.serviceId,
-            includedQty: b.includedQty,
+            includedQty: b.benefitLimitMode === "UNLIMITED" ? null : b.includedQty,
             pointWeight: new Prisma.Decimal(b.pointWeight),
           })),
         });

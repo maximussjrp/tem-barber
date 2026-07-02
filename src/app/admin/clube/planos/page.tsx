@@ -58,6 +58,7 @@ function PlanForm({
   const [barberPool, setBarberPool] = useState(initial?.barberPoolPercent ?? "");
 
   const [selectedBenefits, setSelectedBenefits] = useState<Record<string, {
+    benefitLimitMode: "UNLIMITED" | "MONTHLY_LIMIT";
     includedQty: number;
     pointWeight: number;
     selected: boolean;
@@ -68,6 +69,7 @@ function PlanForm({
       initial.benefits.forEach((b: any) => {
         if (b.benefitType === "INCLUDED_SERVICE" && b.serviceId) {
           initialMap[b.serviceId] = {
+            benefitLimitMode: b.benefitLimitMode ?? (b.includedQty === null ? "UNLIMITED" : "MONTHLY_LIMIT"),
             includedQty: b.includedQty ?? 1,
             pointWeight: b.pointWeight ? parseFloat(b.pointWeight) : 1.0,
             selected: true,
@@ -92,13 +94,14 @@ function PlanForm({
       .map(([serviceId, value]) => ({
         benefitId: value.benefitId || null,
         serviceId,
-        includedQty: value.includedQty,
+        benefitLimitMode: value.benefitLimitMode || "MONTHLY_LIMIT",
+        includedQty: value.benefitLimitMode === "UNLIMITED" ? null : value.includedQty,
         pointWeight: value.pointWeight,
       }));
 
     // Local validation
     for (const b of selectedList) {
-      if (b.includedQty < 1) return;
+      if (b.benefitLimitMode === "MONTHLY_LIMIT" && (!b.includedQty || b.includedQty < 1)) return;
       if (b.pointWeight <= 0) return;
     }
 
@@ -205,7 +208,7 @@ function PlanForm({
         ) : (
           <div className="border border-[var(--border-subtle)] rounded-xl divide-y divide-[var(--border-subtle)] max-h-60 overflow-y-auto bg-[var(--surface-1)]">
             {services.map((svc) => {
-              const state = selectedBenefits[svc.id] || { selected: false, includedQty: 1, pointWeight: 1.0 };
+              const state = selectedBenefits[svc.id] || { selected: false, benefitLimitMode: "MONTHLY_LIMIT" as const, includedQty: 1, pointWeight: 1.0 };
 
               return (
                 <div key={svc.id} className="p-3 space-y-2">
@@ -220,6 +223,7 @@ function PlanForm({
                           ...selectedBenefits,
                           [svc.id]: {
                             ...state,
+                            benefitLimitMode: state.benefitLimitMode || "MONTHLY_LIMIT",
                             selected: e.target.checked
                           }
                         });
@@ -232,55 +236,112 @@ function PlanForm({
                   </label>
 
                   {state.selected && (
-                    <div className="grid grid-cols-2 gap-3 pl-7 pt-1">
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
-                          Quantidade mensal
+                    <div className="space-y-2 pl-7 pt-1">
+                      {/* Modo do limite */}
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-1.5 text-xs text-[var(--text-primary)] cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`limitMode-${svc.id}`}
+                            value="MONTHLY_LIMIT"
+                            checked={state.benefitLimitMode !== "UNLIMITED"}
+                            onChange={() => {
+                              setSelectedBenefits({
+                                ...selectedBenefits,
+                                [svc.id]: {
+                                  ...state,
+                                  benefitLimitMode: "MONTHLY_LIMIT"
+                                }
+                              });
+                            }}
+                          />
+                          Limitado por mês
                         </label>
-                        <input
-                          type="number"
-                          min="1"
-                          required
-                          title="Quantidade mensal"
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
-                          value={state.includedQty}
-                          onChange={(e) => {
-                            setSelectedBenefits({
-                              ...selectedBenefits,
-                              [svc.id]: {
-                                ...state,
-                                includedQty: parseInt(e.target.value) || 1
-                              }
-                            });
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
-                          Peso no rateio dos barbeiros
+                        <label className="flex items-center gap-1.5 text-xs text-[var(--text-primary)] cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`limitMode-${svc.id}`}
+                            value="UNLIMITED"
+                            checked={state.benefitLimitMode === "UNLIMITED"}
+                            onChange={() => {
+                              setSelectedBenefits({
+                                ...selectedBenefits,
+                                [svc.id]: {
+                                  ...state,
+                                  benefitLimitMode: "UNLIMITED"
+                                }
+                              });
+                            }}
+                          />
+                          Ilimitado
                         </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          required
-                          title="Peso no rateio dos barbeiros"
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
-                          value={state.pointWeight}
-                          onChange={(e) => {
-                            setSelectedBenefits({
-                              ...selectedBenefits,
-                              [svc.id]: {
-                                ...state,
-                                pointWeight: parseFloat(e.target.value) || 1.0
-                              }
-                            });
-                          }}
-                        />
                       </div>
-                      <p className="col-span-2 text-[10px] text-[var(--text-muted)] mt-0.5">
-                        Use 1.00 para um serviço normal. Serviços mais complexos podem ter peso maior, como 1.50 ou 2.00.
-                      </p>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        {state.benefitLimitMode !== "UNLIMITED" ? (
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
+                              Quantidade mensal
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              required
+                              title="Quantidade mensal"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
+                              value={state.includedQty}
+                              onChange={(e) => {
+                                setSelectedBenefits({
+                                  ...selectedBenefits,
+                                  [svc.id]: {
+                                    ...state,
+                                    includedQty: parseInt(e.target.value) || 1
+                                  }
+                                });
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center">
+                            <p className="text-[11px] text-amber-400 font-medium">
+                              ✓ Uso ilimitado ativo
+                            </p>
+                          </div>
+                        )}
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1">
+                            Peso no rateio dos barbeiros
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            required
+                            title="Peso no rateio dos barbeiros"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs focus:outline-none focus:border-[var(--brand)]"
+                            value={state.pointWeight}
+                            onChange={(e) => {
+                              setSelectedBenefits({
+                                ...selectedBenefits,
+                                [svc.id]: {
+                                  ...state,
+                                  pointWeight: parseFloat(e.target.value) || 1.0
+                                }
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {state.benefitLimitMode === "UNLIMITED" ? (
+                        <p className="text-[10px] text-[var(--text-muted)] mt-1">
+                          ℹ️ Cliente pode usar enquanto a assinatura estiver ativa. Cada uso gera pontos para o rateio dos barbeiros.
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-[var(--text-muted)] mt-1">
+                          ℹ️ Quantidade disponível dentro do ciclo mensal.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

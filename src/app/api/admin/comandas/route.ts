@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
               customerId: appointment.customerId,
               serviceId: item.serviceId,
               itemType: "SERVICE",
-              atDate: new Date(),
+              atDate: appointment.dateTime,
               tx,
             });
 
@@ -137,6 +137,8 @@ export async function POST(request: NextRequest) {
             customerName: appointment.customer.name,
             customerPhone: appointment.customer.phone,
             status: "OPEN",
+            openedAt: appointment.dateTime,
+            createdAt: appointment.dateTime,
             items: {
               create: itemsToCreate,
             },

@@ -59,6 +59,7 @@ function BenefitForm({
   );
   const [serviceId, setServiceId] = useState("");
   const [productId, setProductId] = useState("");
+  const [benefitLimitMode, setBenefitLimitMode] = useState<"UNLIMITED" | "MONTHLY_LIMIT">("MONTHLY_LIMIT");
   const [includedQty, setIncludedQty] = useState("1");
   const [discountPercent, setDiscountPercent] = useState("");
   const [pointWeight, setPointWeight] = useState("");
@@ -71,7 +72,12 @@ function BenefitForm({
     e.preventDefault();
     const base = { benefitType: type, pointWeight: pointWeight ? parseFloat(pointWeight) : undefined };
     if (type === "INCLUDED_SERVICE") {
-      onSubmit({ ...base, serviceId, includedQty: parseInt(includedQty) });
+      onSubmit({
+        ...base,
+        serviceId,
+        benefitLimitMode,
+        includedQty: benefitLimitMode === "UNLIMITED" ? null : parseInt(includedQty)
+      });
     } else if (type === "SERVICE_DISCOUNT") {
       onSubmit({ ...base, serviceId, discountPercent: parseFloat(discountPercent) });
     } else {
@@ -123,16 +129,53 @@ function BenefitForm({
       )}
 
       {type === "INCLUDED_SERVICE" && (
-        <div>
-          <label className={labelCls}>Quantidade incluída por ciclo *</label>
-          <input
-            className={inputCls}
-            type="number"
-            min="1"
-            value={includedQty}
-            onChange={(e) => setIncludedQty(e.target.value)}
-            required
-          />
+        <div className="space-y-4">
+          <div>
+            <label className={labelCls}>Modo do limite *</label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1.5 text-sm text-[var(--text-primary)] cursor-pointer">
+                <input
+                  type="radio"
+                  name="benefitLimitMode"
+                  value="MONTHLY_LIMIT"
+                  checked={benefitLimitMode !== "UNLIMITED"}
+                  onChange={() => setBenefitLimitMode("MONTHLY_LIMIT")}
+                />
+                Limitado por mês
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-[var(--text-primary)] cursor-pointer">
+                <input
+                  type="radio"
+                  name="benefitLimitMode"
+                  value="UNLIMITED"
+                  checked={benefitLimitMode === "UNLIMITED"}
+                  onChange={() => setBenefitLimitMode("UNLIMITED")}
+                />
+                Ilimitado
+              </label>
+            </div>
+          </div>
+
+          {benefitLimitMode !== "UNLIMITED" ? (
+            <div>
+              <label className={labelCls}>Quantidade incluída por ciclo *</label>
+              <input
+                className={inputCls}
+                type="number"
+                min="1"
+                value={includedQty}
+                onChange={(e) => setIncludedQty(e.target.value)}
+                required
+              />
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                ℹ️ Quantidade disponível dentro do ciclo mensal.
+              </p>
+            </div>
+          ) : (
+            <p className="text-[11px] text-[var(--text-muted)] mt-1 bg-[var(--surface-1)] p-2.5 rounded-lg border border-[var(--border-subtle)]">
+              ℹ️ Cliente pode usar enquanto a assinatura estiver ativa. Cada uso gera pontos para o rateio dos barbeiros.
+            </p>
+          )}
         </div>
       )}
 
@@ -374,7 +417,9 @@ export default function PlanDetailPage() {
                     </p>
                   </div>
                   <div className="flex gap-4 mt-1 text-xs text-[var(--text-muted)]">
-                    {b.includedQty && <span>{b.includedQty}x por ciclo</span>}
+                    {b.benefitType === "INCLUDED_SERVICE" ? (
+                      b.includedQty !== null ? <span>{b.includedQty}x por ciclo</span> : <span>Ilimitado</span>
+                    ) : null}
                     {b.discountPercent && <span>{b.discountPercent}% de desconto</span>}
                     {b.pointWeight && <span>Peso: {b.pointWeight}</span>}
                   </div>

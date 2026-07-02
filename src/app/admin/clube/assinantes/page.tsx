@@ -13,7 +13,15 @@ type Subscription = {
   clubPlan: { id: string; name: string; monthlyPrice: string; shopSharePercent: string; barberPoolPercent: string };
 };
 type Plan = { id: string; name: string };
-type BalanceEntry = { serviceId?: string; productId?: string; benefitType: string; used: number; included: number; remaining: number };
+type BalanceEntry = {
+  serviceId?: string;
+  productId?: string;
+  benefitType: string;
+  isUnlimited: boolean;
+  label: string;
+  service?: { name: string } | null;
+  product?: { name: string } | null;
+};
 type Payment = { id: string; amount: string; competence: string; paidAt: string; paymentMethod: string };
 
 function brl(v: string | number) {
@@ -373,8 +381,8 @@ export default function AssinantesPage() {
                           <div className="grid gap-2">
                             {balance.map((b, i) => (
                               <div key={i} className="flex items-center justify-between text-sm rounded-lg bg-[var(--surface-raised)] px-3 py-2">
-                                <span className="text-[var(--text-secondary)]">{b.benefitType}</span>
-                                <span className="text-[var(--text-primary)] font-semibold">{b.remaining} / {b.included} restantes</span>
+                                <span className="text-[var(--text-secondary)] font-medium">{b.service?.name ?? b.product?.name ?? b.benefitType}</span>
+                                <span className="text-[var(--text-primary)] font-semibold">{b.label}</span>
                               </div>
                             ))}
                           </div>

@@ -1225,6 +1225,14 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         unitPrice: 60.00,
       });
 
+      await prisma.comanda.update({
+        where: { id: comanda.id },
+        data: {
+          openedAt: new Date("2026-06-15"),
+          createdAt: new Date("2026-06-15"),
+        },
+      });
+
       // Solicita o benefício (marca intenção)
       await prisma.comandaItem.update({
         where: { id: item.id },
@@ -1311,6 +1319,14 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         unitPrice: 50.00,
       });
 
+      await prisma.comanda.update({
+        where: { id: comanda.id },
+        data: {
+          openedAt: new Date("2026-06-15"),
+          createdAt: new Date("2026-06-15"),
+        },
+      });
+
       // Solicita desconto
       await prisma.comandaItem.update({
         where: { id: item.id },
@@ -1361,6 +1377,14 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         executorId: t.barber.id,
         serviceId: t.service.id,
         unitPrice: 60.00,
+      });
+
+      await prisma.comanda.update({
+        where: { id: comanda.id },
+        data: {
+          openedAt: new Date("2026-06-15"),
+          createdAt: new Date("2026-06-15"),
+        },
       });
 
       await prisma.comandaItem.update({
@@ -1419,6 +1443,129 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
 
       const pt = await prisma.clubPointEntry.findUnique({ where: { comandaItemId: item.id } });
       expect(pt!.status).toBe("REVERSED");
+    });
+  });
+
+  describe("Clube Real - Benefícios Ilimitados (UNLIMITED)", () => {
+    it("fluxo de benefício ilimitado (UNLIMITED) de ponta a ponta", async () => {
+      const t = await seedTenantWithClub("ClubUnlimitedCom");
+
+      // 1. Criar benefício do tipo UNLIMITED
+      const unlimitedBenefit = await prisma.clubPlanBenefit.create({
+        data: {
+          clubPlanId: t.clubPlan.id,
+          benefitType: "INCLUDED_SERVICE",
+          benefitLimitMode: "UNLIMITED",
+          serviceId: t.service.id,
+          includedQty: null,
+          pointWeight: 2.0,
+        },
+      });
+
+      const sub = await prisma.customerClubSubscription.create({
+        data: {
+          barbershopId: t.shop.id,
+          customerId: t.customerUser.id,
+          clubPlanId: t.clubPlan.id,
+          status: "ACTIVE",
+          currentPeriodStart: new Date("2026-06-01"),
+          currentPeriodEnd: new Date("2026-07-01"),
+        },
+      });
+
+      // 2. Consultar saldo (Balance API) e verificar campos
+      const balance = await clubOps.getClubBenefitsBalance({
+        barbershopId: t.shop.id,
+        subscriptionId: sub.id,
+        atDate: new Date("2026-06-15"),
+      });
+
+      const unlimitedMatch = balance.benefits.find(b => b.id === unlimitedBenefit.id);
+      expect(unlimitedMatch).toBeDefined();
+      expect(unlimitedMatch!.limitMode).toBe("UNLIMITED");
+      expect(unlimitedMatch!.isUnlimited).toBe(true);
+      expect(unlimitedMatch!.canUse).toBe(true);
+      expect(unlimitedMatch!.includedQty).toBeNull();
+      expect(unlimitedMatch!.availableQty).toBeNull();
+      expect(unlimitedMatch!.label).toBe("Uso ilimitado");
+
+      // 3. Criar comanda com múltiplos itens para o mesmo serviço ilimitado
+      const { comanda, item: item1 } = await seedComandaItem({
+        barbershopId: t.shop.id,
+        customerId: t.customerUser.id,
+        executorId: t.barber.id,
+        serviceId: t.service.id,
+        unitPrice: 60.00,
+      });
+
+      // Mudar a data da comanda para dentro da vigência do plano
+      await prisma.comanda.update({
+        where: { id: comanda.id },
+        data: {
+          openedAt: new Date("2026-06-15"),
+          createdAt: new Date("2026-06-15"),
+        },
+      });
+
+      const item2 = await prisma.comandaItem.create({
+        data: {
+          comandaId: comanda.id,
+          barbershopId: t.shop.id,
+          type: "SERVICE",
+          serviceId: t.service.id,
+          executorId: t.barber.id,
+          quantity: 1,
+          unitPrice: 60.00,
+          total: 60.00,
+          status: "DONE",
+          description: t.service.name,
+        },
+      });
+
+      // Solicitar benefício nos dois itens
+      await prisma.comandaItem.updateMany({
+        where: { id: { in: [item1.id, item2.id] } },
+        data: {
+          clubBenefitRequested: true,
+          requestedClubPlanBenefitId: unlimitedBenefit.id,
+        },
+      });
+
+      const { recalculateComandaTotals } = await import("@/lib/operations/comandas");
+      const { closeComanda } = await import("@/lib/operations/payments");
+
+      // Recalcular comanda -> Ambos os itens devem ser cobertos (R$ 0,00) pois é ilimitado!
+      await recalculateComandaTotals(prisma, comanda.id);
+
+      const updatedComanda = await prisma.comanda.findUnique({
+        where: { id: comanda.id },
+        include: { items: true },
+      });
+      expect(Number(updatedComanda!.total)).toBe(0.00);
+
+      // Finalizar a comanda
+      const closed = await closeComanda(prisma, t.shop.id, comanda.id);
+      expect(closed.status).toBe("CLOSED");
+
+      // Verificar que foram criados 2 registros de uso e de pontos com peso 2.0
+      const usages = await prisma.clubBenefitUsage.findMany({
+        where: { comandaItemId: { in: [item1.id, item2.id] } },
+      });
+      expect(usages.length).toBe(2);
+      expect(usages.every(u => u.status === "APPLIED")).toBe(true);
+
+      const pts = await prisma.clubPointEntry.findMany({
+        where: { comandaItemId: { in: [item1.id, item2.id] } },
+      });
+      expect(pts.length).toBe(2);
+      expect(Number(pts[0].points)).toBe(2.0000);
+      expect(Number(pts[1].points)).toBe(2.0000);
+
+      // Nenhuma comissão tradicional deve ter sido gerada
+      const comEntries = await prisma.commissionEntry.findMany({
+        where: { comandaItemId: { in: [item1.id, item2.id] } },
+      });
+      expect(comEntries.length).toBe(0);
     });
   });
 });

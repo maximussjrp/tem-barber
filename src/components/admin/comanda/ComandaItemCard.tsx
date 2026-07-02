@@ -115,9 +115,10 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
           {!comandaClosed && !isCancelled && (item.type === "SERVICE" || item.type === "PRODUCT") && matchingBenefits.map((b: any) => {
             const isIncluded = b.benefitType === "INCLUDED_SERVICE";
             const label = isIncluded 
-              ? `Usar pelo Clube (${b.availableQty} / ${b.includedQty} restantes)`
+              ? (b.isUnlimited ? "Usar pelo Clube (Ilimitado)" : `Usar pelo Clube (${b.availableQty} / ${b.includedQty} restantes)`)
               : `Aplicar Desconto Clube (${b.discountPercent}%)`;
-            const isDisabled = isIncluded && b.availableQty <= 0 && !item.clubBenefitRequested;
+            const canUse = b.canUse !== undefined ? b.canUse : (b.isUnlimited || (b.availableQty && b.availableQty > 0));
+            const isDisabled = isIncluded && !canUse && !item.clubBenefitRequested;
 
             return (
               <label key={b.id} className={`flex items-center gap-2 mt-2 text-xs font-semibold text-[var(--gold)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>

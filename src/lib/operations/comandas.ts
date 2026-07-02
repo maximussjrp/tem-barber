@@ -120,9 +120,12 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
 
         if (isServiceMatch || isProductMatch) {
           if (benefit.benefitType === "INCLUDED_SERVICE") {
-            if (benefit.availableQty && benefit.availableQty > 0) {
+            const canUseBenefit = benefit.isUnlimited || (benefit.availableQty && benefit.availableQty > 0);
+            if (canUseBenefit) {
               clubReductions += toCents(item.total);
-              benefit.availableQty--;
+              if (!benefit.isUnlimited && benefit.availableQty) {
+                benefit.availableQty--;
+              }
             }
           } else {
             const pct = Number(benefit.discountPercent || 0);
