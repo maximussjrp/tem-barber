@@ -1,6 +1,35 @@
+"use client";
+
+import { useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 
 export default function HomePage() {
+  const router = useRouter();
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string } | undefined)?.role;
+
+  useEffect(() => {
+    if (role === "SUPER_ADMIN" || role === "OWNER" || role === "MANAGER" || role === "BARBER") {
+      return;
+    }
+
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (!isStandalone) return;
+
+    const storedSlug = sanitizeBarbershopSlug(localStorage.getItem("lastBarbershopSlug"));
+    if (!storedSlug) {
+      localStorage.removeItem("lastBarbershopSlug");
+      return;
+    }
+
+    router.replace(`/${storedSlug}/agendar`);
+  }, [role, router]);
+
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-stone-900 via-neutral-950 to-black px-4 overflow-hidden">
       {/* Elementos decorativos */}

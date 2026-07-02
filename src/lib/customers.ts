@@ -16,6 +16,31 @@ export function normalizePhone(phone: string | null | undefined) {
   return digits;
 }
 
+export function phoneLookupVariants(phone: string | null | undefined) {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const localPhone = normalizePhone(digits);
+  const variants = new Set<string>();
+
+  if (localPhone) {
+    variants.add(localPhone);
+    variants.add(`55${localPhone}`);
+  }
+
+  if (localPhone.length === 10) {
+    const withNinthDigit = `${localPhone.slice(0, 2)}9${localPhone.slice(2)}`;
+    variants.add(withNinthDigit);
+    variants.add(`55${withNinthDigit}`);
+  }
+
+  if (localPhone.length === 11 && localPhone[2] === "9") {
+    const withoutNinthDigit = `${localPhone.slice(0, 2)}${localPhone.slice(3)}`;
+    variants.add(withoutNinthDigit);
+    variants.add(`55${withoutNinthDigit}`);
+  }
+
+  return [...variants].filter(Boolean);
+}
+
 export function phonesMatch(left: string | null | undefined, right: string | null | undefined) {
   const normalizedLeft = normalizePhone(left);
   const normalizedRight = normalizePhone(right);

@@ -5,6 +5,7 @@ import { signIn, getSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
+import { sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,7 @@ function LoginContent() {
   const [locationPermitted, setLocationPermitted] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
   const [showDiscovery, setShowDiscovery] = useState(false);
+  const [savedBarbershopSlug, setSavedBarbershopSlug] = useState<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -88,18 +90,27 @@ function LoginContent() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (!showDiscovery) {
+    if (activeTab !== "client" || searchParams.get("callbackUrl")) {
       return;
     }
-    setPartnersLoading(true);
-    fetch("/api/public/barbershops")
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data)) setPartners(data);
-      })
-      .catch(() => setPartners([]))
-      .finally(() => setPartnersLoading(false));
-  }, [showDiscovery]);
+
+    const storedSlug = sanitizeBarbershopSlug(localStorage.getItem("lastBarbershopSlug"));
+    if (!storedSlug) {
+      localStorage.removeItem("lastBarbershopSlug");
+      setSavedBarbershopSlug(null);
+      return;
+    }
+
+    setSavedBarbershopSlug(storedSlug);
+
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+    if (isStandalone) {
+      router.replace(`/${storedSlug}/agendar`);
+    }
+  }, [activeTab, router, searchParams]);
 
   const selectTab = (tab: "client" | "admin") => {
     setErrorMsg(null);
@@ -142,6 +153,9 @@ function LoginContent() {
     try {
       const cleanPhone = clientPhone.replace(/\D/g, "");
       if (cleanPhone.length < 10) {
+        setErrorMsg("Digite o DDD e o número completo.");
+        setLoading(false);
+        return;
         setErrorMsg("Telefone inválido. Informe o DDD + Número.");
         setLoading(false);
         return;
@@ -187,6 +201,9 @@ function LoginContent() {
           router.refresh();
         }
       } else {
+        if (lookupData.phoneHint) {
+          setErrorMsg(lookupData.phoneHint);
+        }
         // Não possui barbearias vinculadas: exibe o buscador de barbearias
         setShowDiscovery(true);
       }
@@ -423,7 +440,7 @@ function LoginContent() {
         </div>
 
         {/* Descoberta de barbearias para clientes */}
-        {activeTab === "client" && showDiscovery && (
+        {activeTab === "client" && showDiscovery && false && (
         <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -504,6 +521,26 @@ function LoginContent() {
             </div>
           )}
         </div>
+        )}
+
+        {activeTab === "client" && showDiscovery && (
+          <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
+            <div className="mb-6">
+              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Não encontramos uma barbearia vinculada a este telefone.</h2>
+              <p className="text-sm text-[var(--text-muted)] mt-1">Acesse pelo link enviado pela sua barbearia ou confira se o número está correto.</p>
+            </div>
+
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-5">
+              <p className="text-sm text-[var(--text-muted)]">
+                Por segurança, não exibimos uma lista pública de barbearias quando o telefone não tem vínculo.
+              </p>
+              {savedBarbershopSlug && (
+                <Link href={`/${savedBarbershopSlug}/agendar`} className="btn-gold mt-4 inline-flex w-full justify-center">
+                  Agendar na minha barbearia
+                </Link>
+              )}
+            </div>
+          </div>
         )}
 
       </div>

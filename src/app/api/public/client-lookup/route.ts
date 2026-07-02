@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { normalizePhone, phoneLookupVariants } from "@/lib/customers";
+import { publicBarbershopWhere } from "@/lib/public-barbershops";
 
 export async function POST(request: Request) {
   try {
@@ -7,33 +9,42 @@ export async function POST(request: Request) {
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json({ error: "Corpo da requisição inválido." }, { status: 400 });
+      return NextResponse.json({ error: "Corpo da requisicao invalido." }, { status: 400 });
     }
 
     const { phone } = body || {};
 
     if (!phone) {
-      return NextResponse.json({ error: "Telefone é obrigatório." }, { status: 400 });
+      return NextResponse.json({ error: "Telefone e obrigatorio." }, { status: 400 });
     }
 
-    const cleanPhone = phone.replace(/\D/g, "");
+    const cleanPhone = normalizePhone(phone);
     if (cleanPhone.length < 10) {
-      return NextResponse.json({ error: "Telefone inválido. Informe o DDD + Número." }, { status: 400 });
+      return NextResponse.json({ error: "Digite o DDD e o numero completo." }, { status: 400 });
     }
 
-    // Buscar usuário pelo telefone limpo
     const user = await prisma.user.findFirst({
-      where: { phone: cleanPhone },
+      where: { phone: { in: phoneLookupVariants(phone) } },
     });
 
     if (!user) {
-      return NextResponse.json({ linkedBarbershops: [] });
+      return NextResponse.json({
+        linkedBarbershops: [],
+        phoneHint:
+          cleanPhone.length === 10
+            ? "Nao encontramos este telefone. Confira se o numero esta completo, incluindo o 9o digito quando for celular."
+            : undefined,
+      });
     }
 
-    // Buscar barbearias vinculadas por agendamentos e comandas
+    const publicWhere = publicBarbershopWhere();
+
     const [appointments, comandas] = await Promise.all([
       prisma.appointment.findMany({
-        where: { customerId: user.id },
+        where: {
+          customerId: user.id,
+          barbershop: publicWhere,
+        },
         select: {
           barbershop: {
             select: {
@@ -45,7 +56,10 @@ export async function POST(request: Request) {
         },
       }),
       prisma.comanda.findMany({
-        where: { customerId: user.id },
+        where: {
+          customerId: user.id,
+          barbershop: publicWhere,
+        },
         select: {
           barbershop: {
             select: {
@@ -82,9 +96,15 @@ export async function POST(request: Request) {
 
     const linkedBarbershops = Array.from(barbershopMap.values());
 
-    return NextResponse.json({ linkedBarbershops });
+    return NextResponse.json({
+      linkedBarbershops,
+      phoneHint:
+        linkedBarbershops.length === 0 && cleanPhone.length === 10
+          ? "Nao encontramos este telefone. Confira se o numero esta completo, incluindo o 9o digito quando for celular."
+          : undefined,
+    });
   } catch (error) {
-    console.error("Erro ao buscar vínculos do cliente:", error);
+    console.error("Erro ao buscar vinculos do cliente:", error);
     return NextResponse.json({ error: "Erro interno do servidor." }, { status: 500 });
   }
 }

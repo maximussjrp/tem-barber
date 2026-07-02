@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { formatHeaderDate } from "@/lib/time-utils";
 import { Avatar } from "@/components/ui/Avatar";
+import { sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,6 +122,14 @@ function BookingWizard() {
   } | null>(null);
 
   const [subscriptionSuspended, setSubscriptionSuspended] = useState(false);
+
+  useEffect(() => {
+    const safeSlug = sanitizeBarbershopSlug(slug);
+    if (!safeSlug) return;
+
+    localStorage.setItem("lastBarbershopSlug", safeSlug);
+    document.cookie = `lastBarbershopSlug=${safeSlug}; Path=/; Max-Age=2592000; SameSite=Lax`;
+  }, [slug]);
 
   // ─── Load profile ────────────────────────────────────────────────────────
 

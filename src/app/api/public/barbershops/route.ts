@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { publicBarbershopWhere } from "@/lib/public-barbershops";
 
 export async function GET() {
   try {
     const barbershops = await prisma.barbershop.findMany({
-      where: {
-        active: true,
-      },
+      where: publicBarbershopWhere(),
       select: {
         slug: true,
         name: true,

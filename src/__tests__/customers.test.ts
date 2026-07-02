@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { normalizePhone, phoneSearchFragments, phonesMatch } from "@/lib/customers";
+import { normalizePhone, phoneLookupVariants, phoneSearchFragments, phonesMatch } from "@/lib/customers";
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -29,6 +29,12 @@ describe("normalizacao de telefone", () => {
   it("gera fragmentos para buscar telefone com ou sem mascara", () => {
     expect(phoneSearchFragments("+55 17 99999-9999")).toEqual(
       expect.arrayContaining(["17999999999", "99999999", "99999"])
+    );
+  });
+
+  it("gera variantes com DDI e nono digito", () => {
+    expect(phoneLookupVariants("+55 (79) 88240-050")).toEqual(
+      expect.arrayContaining(["7988240050", "557988240050", "79988240050", "5579988240050"])
     );
   });
 });
