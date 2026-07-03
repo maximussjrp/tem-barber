@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { publicBarbershopWhere } from "@/lib/public-barbershops";
 
 // GET /api/public/barbershop/[slug]
 // Returns full public profile: barbershop info, services, members, reviews
@@ -10,8 +11,8 @@ export async function GET(
 ) {
   const { slug } = await params;
 
-  const barbershop = await prisma.barbershop.findUnique({
-    where: { slug, active: true },
+  const barbershop = await prisma.barbershop.findFirst({
+    where: { ...publicBarbershopWhere(), slug },
     include: {
       categories: {
         include: {

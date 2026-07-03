@@ -1,6 +1,15 @@
 import type { Prisma, SubscriptionStatus } from "@prisma/client";
 
-const BLOCKED_PUBLIC_BARBERSHOP_TERMS = ["Smoke", "Test", "Temp", "Tempor"];
+const BLOCKED_PUBLIC_BARBERSHOP_TERMS = [
+  "Smoke",
+  "Test",
+  "Temp",
+  "Tempor",
+  "Exemplo",
+  "Temporário",
+  "Temporária",
+  "Placeholder",
+];
 const BLOCKED_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = [
   "SUSPENDED",
   "CANCELED",
@@ -20,6 +29,11 @@ export function publicBarbershopWhere(): Prisma.BarbershopWhereInput {
   return {
     active: true,
     slug: { not: "" },
+    // Excluir defaults/placeholders que indicam cadastro de onboarding incompleto
+    zipCode: { not: "00000000" },
+    street: { not: "Rua Não Cadastrada" },
+    city: { not: "Cidade Exemplo" },
+    state: { not: "UF" },
     subscriptions: {
       some: {
         status: { in: LISTABLE_SUBSCRIPTION_STATUSES },
@@ -50,6 +64,7 @@ export function publicBarbershopWhere(): Prisma.BarbershopWhereInput {
       ...BLOCKED_PUBLIC_BARBERSHOP_TERMS.flatMap((term) => [
         { name: { contains: term, mode: "insensitive" as const } },
         { slug: { contains: term, mode: "insensitive" as const } },
+        { city: { contains: term, mode: "insensitive" as const } },
       ]),
     ],
   };

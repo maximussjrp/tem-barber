@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
-    barbershop: { findUnique: vi.fn() },
+    barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
     service: { findMany: vi.fn() },
     barbershopMember: { findMany: vi.fn(), findFirst: vi.fn() },
     appointment: { findMany: vi.fn() },
@@ -42,6 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
   prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a", slug: "barbearia-a" });
+  prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.service.findMany.mockResolvedValue([{ id: "svc-a", durationMin: 60, price: "50.00" }]);
   prismaMock.barbershopMember.findFirst.mockResolvedValue(member());
   prismaMock.barbershopMember.findMany.mockResolvedValue([{ id: "member-a" }]);

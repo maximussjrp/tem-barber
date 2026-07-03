@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { publicBarbershopWhere } from "@/lib/public-barbershops";
 import {
   AppointmentConflictError,
   IdempotencyKeyInvalidError,
@@ -236,8 +237,8 @@ export async function POST(
     return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
   }
 
-  const barbershop = await prisma.barbershop.findUnique({
-    where: { slug, active: true },
+  const barbershop = await prisma.barbershop.findFirst({
+    where: { ...publicBarbershopWhere(), slug },
   });
   if (!barbershop) {
     return NextResponse.json({ error: "Barbearia nao encontrada." }, { status: 404 });

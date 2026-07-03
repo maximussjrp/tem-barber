@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAvailableSlots } from "@/lib/appointments/availability";
 import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { publicBarbershopWhere } from "@/lib/public-barbershops";
 
 // GET /api/public/barbershop/[slug]/availability
 // Query params: memberId, serviceIds (comma-separated), date (YYYY-MM-DD)
@@ -27,8 +28,8 @@ export async function GET(
   const serviceIds = serviceIdsParam.split(",").filter(Boolean);
 
   // Resolve barbershop
-  const barbershop = await prisma.barbershop.findUnique({
-    where: { slug, active: true },
+  const barbershop = await prisma.barbershop.findFirst({
+    where: { ...publicBarbershopWhere(), slug },
   });
   if (!barbershop) {
     return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 404 });

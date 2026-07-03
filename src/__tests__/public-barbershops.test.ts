@@ -45,6 +45,10 @@ describe("barbearias publicas", () => {
         where: expect.objectContaining({
           active: true,
           slug: { not: "" },
+          zipCode: { not: "00000000" },
+          street: { not: "Rua Não Cadastrada" },
+          city: { not: "Cidade Exemplo" },
+          state: { not: "UF" },
           subscriptions: expect.objectContaining({
             some: expect.objectContaining({
               status: { in: ["TRIAL", "ACTIVE", "PAST_DUE"] },
@@ -72,6 +76,7 @@ describe("barbearias publicas", () => {
             }),
             { name: { contains: "Smoke", mode: "insensitive" } },
             { slug: { contains: "Smoke", mode: "insensitive" } },
+            { city: { contains: "Smoke", mode: "insensitive" } },
             { name: { contains: "Test", mode: "insensitive" } },
             { slug: { contains: "Temp", mode: "insensitive" } },
           ]),
