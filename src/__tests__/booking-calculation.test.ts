@@ -5,7 +5,7 @@ const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
-  appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
+  appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
@@ -58,6 +58,7 @@ beforeEach(() => {
     { customer: { id: "customer-a", name: "Cliente A", phone: "11999999999" } },
   ]);
   txMock.appointment.findFirst.mockResolvedValue(null);
+  txMock.appointment.count.mockResolvedValue(0);
   txMock.appointment.create.mockImplementation(async ({ data }) => ({
     id: "appointment-a",
     ...data,
