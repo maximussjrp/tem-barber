@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { normalizePhone, phoneLookupVariants } from "@/lib/customers";
-import { publicBarbershopWhere } from "@/lib/public-barbershops";
+import { publicBarbershopWhere, isPublicBarbershop } from "@/lib/public-barbershops";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
+
 
 export async function POST(request: Request) {
   try {
@@ -113,7 +114,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const linkedBarbershops = Array.from(barbershopMap.values());
+    const linkedBarbershops = Array.from(barbershopMap.values()).filter(isPublicBarbershop);
 
     return NextResponse.json({
       linkedBarbershops,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { publicBarbershopWhere } from "@/lib/public-barbershops";
+import { publicBarbershopWhere, isPublicBarbershop } from "@/lib/public-barbershops";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 
 export async function GET(request: Request) {
@@ -40,8 +40,8 @@ export async function GET(request: Request) {
       },
     });
 
-    // Filtramos apenas as propriedades públicas de fato (DTO pattern simulado no select)
-    return NextResponse.json(barbershops);
+    const filtered = barbershops.filter(isPublicBarbershop);
+    return NextResponse.json(filtered);
   } catch (error) {
     console.error("Erro ao buscar barbearias parceiras:", error);
     return NextResponse.json(

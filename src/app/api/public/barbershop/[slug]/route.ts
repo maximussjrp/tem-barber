@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
-import { publicBarbershopWhere } from "@/lib/public-barbershops";
+import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
 
 // GET /api/public/barbershop/[slug]
 // Returns full public profile: barbershop info, services, members, reviews
@@ -11,8 +11,13 @@ export async function GET(
 ) {
   const { slug } = await params;
 
+  const safeSlug = sanitizeBarbershopSlug(slug);
+  if (!safeSlug) {
+    return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 404 });
+  }
+
   const barbershop = await prisma.barbershop.findFirst({
-    where: { ...publicBarbershopWhere(), slug },
+    where: { ...publicBarbershopWhere(), slug: safeSlug },
     include: {
       categories: {
         include: {
@@ -35,7 +40,7 @@ export async function GET(
     },
   });
 
-  if (!barbershop) {
+  if (!barbershop || !isPublicBarbershop(barbershop)) {
     return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 404 });
   }
 

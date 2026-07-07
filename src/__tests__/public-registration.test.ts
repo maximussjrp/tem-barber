@@ -83,5 +83,7 @@ describe("cadastro publico de barbearia", () => {
 
     const response = await registerBarbershop(createRequest(validBody));
     expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBeDefined();
+    expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
   });
 });
