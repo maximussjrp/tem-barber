@@ -69,7 +69,8 @@ export async function PATCH(
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const { runSerializableTransaction } = await import("@/lib/operations/stock");
+    const result = await runSerializableTransaction(async (tx) => {
       const comanda = await tx.comanda.findFirst({
         where: { id, barbershopId: data!.barbershopId },
       });
@@ -95,6 +96,9 @@ export async function PATCH(
         return closeComanda(tx, data!.barbershopId, id);
       }
       if (body.status === "CANCELLED") {
+        const { syncStockForComanda } = await import("@/lib/operations/stock");
+        await syncStockForComanda(tx, data!.barbershopId, id, "Cancelamento da comanda inteira", true);
+
         const items = await tx.comandaItem.findMany({
           where: { comandaId: id, status: { not: "CANCELLED" } }
         });

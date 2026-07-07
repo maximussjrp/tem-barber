@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { recalculateComandaTotals, OperationalError } from "@/lib/operations/comandas";
 import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
@@ -17,6 +18,7 @@ export async function PATCH(
     status?: "PENDING" | "DONE" | "CANCELLED";
     clubBenefitRequested?: boolean;
     requestedClubPlanBenefitId?: string | null;
+    quantity?: number;
   };
   try {
     body = await request.json();
@@ -25,7 +27,8 @@ export async function PATCH(
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const { runSerializableTransaction } = await import("@/lib/operations/stock");
+    const result = await runSerializableTransaction(async (tx) => {
       const item = await tx.comandaItem.findFirst({
         where: { id: itemId, comandaId: id, barbershopId: data!.barbershopId },
         include: { comanda: true },
@@ -38,6 +41,26 @@ export async function PATCH(
       if (data!.role === "BARBER" && body.status === "CANCELLED") return forbidden();
       if (!canManageComandas(data!.role) && body.status !== undefined && body.status !== "DONE") return forbidden();
 
+      let desiredQuantity = Number(item.quantity);
+      if (body.status === "CANCELLED") {
+        desiredQuantity = 0;
+      } else if (body.quantity !== undefined) {
+        desiredQuantity = body.quantity;
+      }
+
+      if (body.status !== undefined || body.quantity !== undefined) {
+        const { syncStockForComandaItem } = await import("@/lib/operations/stock");
+        await syncStockForComandaItem(
+          tx,
+          data!.barbershopId,
+          itemId,
+          desiredQuantity,
+          body.status === "CANCELLED"
+            ? "Status alterado para cancelado"
+            : `Sincronização de estoque por alteração no item`
+        );
+      }
+
       if (body.status === "CANCELLED") {
         const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
         await reverseClubBenefitUsage({
@@ -45,6 +68,17 @@ export async function PATCH(
           comandaItemId: itemId,
           reversalReason: "Status alterado para cancelado",
           tx,
+        });
+      }
+
+      let newTotal = item.total;
+      if (body.quantity !== undefined) {
+        const { calculateItemTotal } = await import("@/lib/operations/comandas");
+        newTotal = calculateItemTotal({
+          quantity: body.quantity,
+          unitPrice: item.unitPrice,
+          discountAmount: item.discountAmount,
+          surchargeAmount: item.surchargeAmount,
         });
       }
 
@@ -56,6 +90,7 @@ export async function PATCH(
           ...(body.status === "CANCELLED" && { cancelledAt: new Date() }),
           ...(body.clubBenefitRequested !== undefined && { clubBenefitRequested: body.clubBenefitRequested }),
           ...(body.requestedClubPlanBenefitId !== undefined && { requestedClubPlanBenefitId: body.requestedClubPlanBenefitId }),
+          ...(body.quantity !== undefined && { quantity: new Prisma.Decimal(body.quantity.toFixed(3)), total: newTotal }),
         },
       });
       const updated = await recalculateComandaTotals(tx, id);
@@ -91,7 +126,8 @@ export async function DELETE(
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const { runSerializableTransaction } = await import("@/lib/operations/stock");
+    const result = await runSerializableTransaction(async (tx) => {
       const item = await tx.comandaItem.findFirst({
         where: { id: itemId, comandaId: id, barbershopId: data!.barbershopId },
         include: { comanda: true },
@@ -100,6 +136,15 @@ export async function DELETE(
       if (item.comanda.status === "CLOSED") {
         throw new OperationalError("COMANDA_CLOSED", "Comanda fechada nao pode ser editada.", 422);
       }
+
+      const { syncStockForComandaItem } = await import("@/lib/operations/stock");
+      await syncStockForComandaItem(
+        tx,
+        data!.barbershopId,
+        itemId,
+        0,
+        "Exclusão do item da comanda"
+      );
 
       const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
       await reverseClubBenefitUsage({

@@ -290,41 +290,8 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     throw new OperationalError("COMANDA_NOT_PAID", "Comanda ainda possui valor em aberto.", 422);
   }
 
-  const productItems = comanda.items.filter(
-    (item) => item.type === "PRODUCT" && item.status !== "CANCELLED" && item.productId
-  );
-
-  for (const item of productItems) {
-    const product = await tx.product.findFirst({
-      where: { id: item.productId!, barbershopId },
-    });
-    if (!product?.trackStock) continue;
-
-    const existingMovement = await tx.stockMovement.findFirst({
-      where: { comandaItemId: item.id, type: StockMovementType.SALE },
-    });
-    if (existingMovement) continue;
-
-    const nextStock = Number(product.currentStock) - Number(item.quantity);
-    if (nextStock < 0) {
-      throw new OperationalError("INSUFFICIENT_STOCK", `Estoque insuficiente para ${product.name}.`, 422);
-    }
-
-    await tx.product.update({
-      where: { id: product.id },
-      data: { currentStock: new Prisma.Decimal(nextStock.toFixed(3)) },
-    });
-    await tx.stockMovement.create({
-      data: {
-        barbershopId,
-        productId: product.id,
-        comandaItemId: item.id,
-        type: "SALE",
-        quantity: item.quantity,
-        description: `Baixa da comanda ${comandaId}`,
-      },
-    });
-  }
+  const { syncStockForComanda } = await import("./stock");
+  await syncStockForComanda(tx, barbershopId, comandaId, `Baixa da comanda ${comandaId}`);
 
   const closed = await tx.comanda.update({
     where: { id: comandaId },
