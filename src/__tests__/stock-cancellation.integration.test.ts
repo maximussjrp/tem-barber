@@ -612,4 +612,236 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     expect(Number((await prisma.product.findUnique({ where: { id: prod.id } }))?.currentStock)).toBe(1);
     expect(await prisma.stockMovement.count({ where: { productId: prod.id } })).toBe(0);
   });
+
+  it("23. concorrência real: dois cancelamentos simultâneos", async () => {
+    const t = await seedTenant("conc-cancel");
+    getServerSessionMock.mockResolvedValue({ user: { id: t.ownerUser.id, role: "OWNER" } });
+
+    const prod = await prisma.product.create({
+      data: { barbershopId: t.shop.id, name: "Produto Concorrente", salePrice: "50.00", currentStock: "10.000", trackStock: true },
+    });
+
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Concorrente", customerPhone: "11999999999" }));
+    const comanda = await resComanda.json();
+
+    await itemsRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
+        type: "PRODUCT",
+        productId: prod.id,
+        quantity: 2
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
+        payments: [{ method: "PIX", amount: 100.00 }]
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 100.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
+    );
+
+    const p1 = comandaDetailRoute.PATCH(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    const p2 = comandaDetailRoute.PATCH(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    const results = await Promise.allSettled([p1, p2]);
+
+    const updatedProd = await prisma.product.findUnique({ where: { id: prod.id } });
+    expect(Number(updatedProd?.currentStock)).toBe(10);
+
+    const movements = await prisma.stockMovement.findMany({ where: { productId: prod.id } });
+    const applied = movements.reduce((sum, m) => {
+      const qty = Number(m.quantity);
+      if (m.type === "SALE") return sum + qty;
+      if (m.type === "REFUND") return sum - qty;
+      return sum;
+    }, 0);
+    expect(applied).toBe(0);
+
+    const sales = movements.filter(m => m.type === "SALE").length;
+    const refunds = movements.filter(m => m.type === "REFUND").length;
+    expect(sales).toBe(1);
+    expect(refunds).toBe(1);
+  });
+
+  it("24. concorrência real: DELETE item + cancelar comanda simultâneos", async () => {
+    const t = await seedTenant("conc-mixed");
+    getServerSessionMock.mockResolvedValue({ user: { id: t.ownerUser.id, role: "OWNER" } });
+
+    const prod = await prisma.product.create({
+      data: { barbershopId: t.shop.id, name: "Produto Misto", salePrice: "20.00", currentStock: "5.000", trackStock: true },
+    });
+
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Misto", customerPhone: "11999999999" }));
+    const comanda = await resComanda.json();
+
+    const resItem = await itemsRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
+        type: "PRODUCT",
+        productId: prod.id,
+        quantity: 1
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    const item = await resItem.json();
+    const itemId = item.items[0].id;
+
+    await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
+        payments: [{ method: "PIX", amount: 20.00 }]
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 20.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
+    );
+
+    const p1 = itemDetailRoute.DELETE(
+      new NextRequest(`http://localhost/api/admin/comandas/${comanda.id}/items/${itemId}`, { method: "DELETE" }),
+      { params: Promise.resolve({ id: comanda.id, itemId }) }
+    );
+    const p2 = comandaDetailRoute.PATCH(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    await Promise.allSettled([p1, p2]);
+
+    const updatedProd = await prisma.product.findUnique({ where: { id: prod.id } });
+    expect(Number(updatedProd?.currentStock)).toBe(5);
+
+    const movements = await prisma.stockMovement.findMany({ where: { productId: prod.id } });
+    const refunds = movements.filter(m => m.type === "REFUND").length;
+    expect(refunds).toBeLessThanOrEqual(1);
+  });
+
+  it("25. cancelamento com CommissionEntry e ClubBenefitUsage e assert explícito", async () => {
+    const t = await seedTenant("comm-club");
+    getServerSessionMock.mockResolvedValue({ user: { id: t.ownerUser.id, role: "OWNER" } });
+
+    const plan = await prisma.clubPlan.create({
+      data: {
+        barbershopId: t.shop.id,
+        name: "Plano Club",
+        monthlyPrice: "80.00",
+        shopSharePercent: "50.00",
+        barberPoolPercent: "50.00",
+        isActive: true,
+      },
+    });
+
+    await prisma.clubPlanBenefit.create({
+      data: {
+        clubPlanId: plan.id,
+        benefitType: "INCLUDED_SERVICE",
+        serviceId: t.cut.id,
+        includedQty: 2,
+      },
+    });
+
+    await prisma.customerClubSubscription.create({
+      data: {
+        barbershopId: t.shop.id,
+        customerId: t.customer.id,
+        clubPlanId: plan.id,
+        status: "ACTIVE",
+        currentPeriodStart: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+        currentPeriodEnd: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    const cut2 = await prisma.service.create({
+      data: { barbershopId: t.shop.id, name: "Corte Pago", price: "30.00", durationMin: 30, categoryId: t.cut.categoryId },
+    });
+
+    await prisma.barberService.create({
+      data: { barberId: t.barber.id, serviceId: cut2.id },
+    });
+
+    const resComanda = await comandasRoute.POST(
+      jsonRequest("http://localhost/api/admin/comandas", { customerName: t.customer.name, customerPhone: t.customer.phone })
+    );
+    expect(resComanda.status).toBe(201);
+    const comanda = await resComanda.json();
+
+    const benefit = await prisma.clubPlanBenefit.findFirst({ where: { clubPlanId: plan.id } });
+
+    // Serviço coberto pelo clube
+    await itemsRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
+        type: "SERVICE",
+        serviceId: t.cut.id,
+        executorId: t.barber.id,
+        quantity: 1,
+        clubBenefitRequested: true,
+        requestedClubPlanBenefitId: benefit!.id,
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    // Serviço pago
+    const cut2Res = await itemsRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
+        type: "SERVICE",
+        serviceId: cut2.id,
+        executorId: t.barber.id,
+        quantity: 1,
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    // Finalizar comanda pagando R$ 30
+    const finalizeRes = await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
+        payments: [{ method: "PIX", amount: 30.00 }]
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    expect(finalizeRes.status).toBe(200);
+
+    const commEntry = await prisma.commissionEntry.findFirst({ where: { comandaItem: { comandaId: comanda.id } } });
+    expect(commEntry).not.toBeNull();
+    expect(commEntry?.status).toBe("RELEASED");
+
+    const clubUsageReal = await prisma.clubBenefitUsage.findFirst({
+      where: { comandaItem: { comandaId: comanda.id } }
+    });
+    expect(clubUsageReal).not.toBeNull();
+    expect(clubUsageReal?.status).toBe("APPLIED");
+
+    // Reabrir via refund
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 30.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
+    );
+
+    // Cancelar comanda
+    const cancelRes = await comandaDetailRoute.PATCH(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    expect(cancelRes.status).toBe(200);
+
+    const commEntryAfter = await prisma.commissionEntry.findFirst({ where: { comandaItem: { comandaId: comanda.id } } });
+    expect(commEntryAfter?.status).not.toBe("RELEASED");
+
+    const clubUsageAfter = await prisma.clubBenefitUsage.findFirst({
+      where: { comandaItem: { comandaId: comanda.id } }
+    });
+    expect(clubUsageAfter?.status).toBe("REVERSED");
+  });
 });

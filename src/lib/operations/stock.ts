@@ -55,25 +55,25 @@ export async function runSerializableTransaction<T>(
 export async function getAppliedStockQuantityForComandaItem(
   tx: Prisma.TransactionClient,
   itemId: string
-): Promise<number> {
+): Promise<Prisma.Decimal> {
   const movements = await tx.stockMovement.findMany({
     where: { comandaItemId: itemId },
     select: { type: true, quantity: true },
   });
 
   return movements.reduce((sum, m) => {
-    const qty = Number(m.quantity);
-    if (m.type === StockMovementType.SALE) return sum + qty;
-    if (m.type === StockMovementType.REFUND) return sum - qty;
+    const qty = new Prisma.Decimal(m.quantity);
+    if (m.type === StockMovementType.SALE) return sum.plus(qty);
+    if (m.type === StockMovementType.REFUND) return sum.minus(qty);
     return sum;
-  }, 0);
+  }, new Prisma.Decimal(0));
 }
 
 export async function syncStockForComandaItem(
   tx: Prisma.TransactionClient,
   barbershopId: string,
   itemId: string,
-  desiredQuantity: number,
+  desiredQuantity: Prisma.Decimal | number,
   reason: string
 ) {
   const item = await tx.comandaItem.findUnique({
@@ -82,24 +82,23 @@ export async function syncStockForComandaItem(
   });
 
   if (!item || item.type !== "PRODUCT") return;
-
   if (!item.productId || !item.product || !item.product.trackStock) return;
 
   const product = item.product;
-
   const appliedQuantity = await getAppliedStockQuantityForComandaItem(tx, itemId);
+  const desired = new Prisma.Decimal(desiredQuantity);
+  const delta = desired.minus(appliedQuantity);
 
-  const delta = desiredQuantity - appliedQuantity;
+  if (delta.isZero()) return;
 
-  if (delta === 0) return;
-
-  if (delta > 0) {
+  if (delta.greaterThan(0)) {
     const currentProduct = await tx.product.findUniqueOrThrow({
       where: { id: product.id },
     });
 
-    const nextStock = Number(currentProduct.currentStock) - delta;
-    if (nextStock < 0) {
+    const currentStock = new Prisma.Decimal(currentProduct.currentStock);
+    const nextStock = currentStock.minus(delta);
+    if (nextStock.lessThan(0)) {
       throw new OperationalError(
         "INSUFFICIENT_STOCK",
         `Estoque insuficiente para ${product.name}.`,
@@ -109,7 +108,7 @@ export async function syncStockForComandaItem(
 
     await tx.product.update({
       where: { id: product.id },
-      data: { currentStock: new Prisma.Decimal(nextStock.toFixed(3)) },
+      data: { currentStock: nextStock },
     });
 
     await tx.stockMovement.create({
@@ -118,22 +117,22 @@ export async function syncStockForComandaItem(
         productId: product.id,
         comandaItemId: itemId,
         type: StockMovementType.SALE,
-        quantity: new Prisma.Decimal(delta.toFixed(3)),
+        quantity: delta,
         description: reason,
       },
     });
   } else {
-    const absDelta = Math.abs(delta);
-
+    const absDelta = delta.abs();
     const currentProduct = await tx.product.findUniqueOrThrow({
       where: { id: product.id },
     });
 
-    const nextStock = Number(currentProduct.currentStock) + absDelta;
+    const currentStock = new Prisma.Decimal(currentProduct.currentStock);
+    const nextStock = currentStock.plus(absDelta);
 
     await tx.product.update({
       where: { id: product.id },
-      data: { currentStock: new Prisma.Decimal(nextStock.toFixed(3)) },
+      data: { currentStock: nextStock },
     });
 
     await tx.stockMovement.create({
@@ -142,7 +141,7 @@ export async function syncStockForComandaItem(
         productId: product.id,
         comandaItemId: itemId,
         type: StockMovementType.REFUND,
-        quantity: new Prisma.Decimal(absDelta.toFixed(3)),
+        quantity: absDelta,
         description: reason,
       },
     });
@@ -163,7 +162,7 @@ export async function syncStockForComanda(
   for (const item of items) {
     if (item.type !== "PRODUCT") continue;
     const isCancelled = item.status === "CANCELLED" || cancelAll;
-    const desiredQuantity = isCancelled ? 0 : Number(item.quantity);
+    const desiredQuantity = isCancelled ? new Prisma.Decimal(0) : new Prisma.Decimal(item.quantity);
     await syncStockForComandaItem(tx, barbershopId, item.id, desiredQuantity, reason);
   }
 }

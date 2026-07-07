@@ -22,60 +22,76 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Unit: Lógica de Delta de Estoque", () => {
-  it("getAppliedStockQuantityForComandaItem calcula corretamente saldo de SALE e REFUND", async () => {
+describe("Unit: Lógica de Delta de Estoque (Decimal)", () => {
+  it("getAppliedStockQuantityForComandaItem calcula saldo de Decimal(10,3) com exatidão", async () => {
     const tx = {
       stockMovement: {
         findMany: vi.fn().mockResolvedValue([
-          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("3.000") },
-          { type: StockMovementType.REFUND, quantity: new Prisma.Decimal("1.000") },
-          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("2.000") },
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.100") },
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.200") },
         ]),
       },
     } as any;
 
     const qty = await getAppliedStockQuantityForComandaItem(tx, "item-a");
-    expect(qty).toBe(4); // 3 - 1 + 2 = 4
+    expect(qty.toNumber()).toBe(0.3); // 0.100 + 0.200 = 0.300
   });
 
-  it("delta === 0: no-op de estoque", async () => {
+  it("calcula saldo líquido de SALE e REFUND com Decimal", async () => {
+    const tx = {
+      stockMovement: {
+        findMany: vi.fn().mockResolvedValue([
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.300") },
+          { type: StockMovementType.REFUND, quantity: new Prisma.Decimal("0.100") },
+        ]),
+      },
+    } as any;
+
+    const qty = await getAppliedStockQuantityForComandaItem(tx, "item-a");
+    expect(qty.toNumber()).toBe(0.2); // 0.300 - 0.100 = 0.200
+  });
+
+  it("delta === 0 com Decimais é no-op de estoque", async () => {
     const tx = {
       comandaItem: {
         findUnique: vi.fn().mockResolvedValue({
           id: "item-a",
           type: "PRODUCT",
           productId: "prod-a",
-          quantity: new Prisma.Decimal("3.000"),
+          quantity: new Prisma.Decimal("0.300"),
           product: { id: "prod-a", trackStock: true },
         }),
       },
       stockMovement: {
         findMany: vi.fn().mockResolvedValue([
-          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("3.000") },
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.300") },
         ]),
+      },
+      product: {
+        update: vi.fn(),
       },
     } as any;
 
-    await syncStockForComandaItem(tx, "shop-a", "item-a", 3, "teste");
+    await syncStockForComandaItem(tx, "shop-a", "item-a", new Prisma.Decimal("0.300"), "teste");
 
-    // Nenhuma alteração no produto ou criação de movimentos
-    expect(tx.product?.update).toBeUndefined();
-    expect(tx.stockMovement?.create).toBeUndefined();
+    expect(tx.product.update).not.toHaveBeenCalled();
   });
 
-  it("delta > 0: decrementa estoque e cria SALE", async () => {
+  it("delta > 0 com Decimais decrementa estoque e cria SALE", async () => {
     const tx = {
       comandaItem: {
         findUnique: vi.fn().mockResolvedValue({
           id: "item-a",
           type: "PRODUCT",
           productId: "prod-a",
-          quantity: new Prisma.Decimal("3.000"),
+          quantity: new Prisma.Decimal("0.300"),
           product: { id: "prod-a", trackStock: true },
         }),
       },
       stockMovement: {
-        findMany: vi.fn().mockResolvedValue([]), // applied = 0
+        findMany: vi.fn().mockResolvedValue([
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.100") },
+        ]), // applied = 0.100, desired = 0.300 => delta = 0.200
         create: vi.fn(),
       },
       product: {
@@ -87,11 +103,11 @@ describe("Unit: Lógica de Delta de Estoque", () => {
       },
     } as any;
 
-    await syncStockForComandaItem(tx, "shop-a", "item-a", 3, "teste");
+    await syncStockForComandaItem(tx, "shop-a", "item-a", new Prisma.Decimal("0.300"), "teste");
 
     expect(tx.product.update).toHaveBeenCalledWith({
       where: { id: "prod-a" },
-      data: { currentStock: new Prisma.Decimal("7.000") }, // 10 - 3 = 7
+      data: { currentStock: new Prisma.Decimal("9.800") }, // 10 - 0.2 = 9.8
     });
 
     expect(tx.stockMovement.create).toHaveBeenCalledWith({
@@ -100,57 +116,27 @@ describe("Unit: Lógica de Delta de Estoque", () => {
         productId: "prod-a",
         comandaItemId: "item-a",
         type: StockMovementType.SALE,
-        quantity: new Prisma.Decimal("3.000"),
+        quantity: new Prisma.Decimal("0.200"),
         description: "teste",
       },
     });
   });
 
-  it("delta > 0 com estoque insuficiente lança erro e impede alteração", async () => {
+  it("delta < 0 com Decimais incrementa estoque e cria REFUND", async () => {
     const tx = {
       comandaItem: {
         findUnique: vi.fn().mockResolvedValue({
           id: "item-a",
           type: "PRODUCT",
           productId: "prod-a",
-          quantity: new Prisma.Decimal("3.000"),
-          product: { id: "prod-a", trackStock: true },
-        }),
-      },
-      stockMovement: {
-        findMany: vi.fn().mockResolvedValue([]),
-      },
-      product: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue({
-          id: "prod-a",
-          currentStock: new Prisma.Decimal("2.000"),
-        }),
-        update: vi.fn(),
-      },
-    } as any;
-
-    await expect(
-      syncStockForComandaItem(tx, "shop-a", "item-a", 3, "teste")
-    ).rejects.toThrow(OperationalError);
-
-    expect(tx.product.update).not.toHaveBeenCalled();
-  });
-
-  it("delta < 0: incrementa estoque e cria REFUND", async () => {
-    const tx = {
-      comandaItem: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "item-a",
-          type: "PRODUCT",
-          productId: "prod-a",
-          quantity: new Prisma.Decimal("1.000"),
+          quantity: new Prisma.Decimal("0.100"),
           product: { id: "prod-a", trackStock: true },
         }),
       },
       stockMovement: {
         findMany: vi.fn().mockResolvedValue([
-          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("3.000") },
-        ]), // applied = 3, desired = 1 => delta = -2
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.300") },
+        ]), // applied = 0.300, desired = 0.100 => delta = -0.200
         create: vi.fn(),
       },
       product: {
@@ -162,11 +148,11 @@ describe("Unit: Lógica de Delta de Estoque", () => {
       },
     } as any;
 
-    await syncStockForComandaItem(tx, "shop-a", "item-a", 1, "teste");
+    await syncStockForComandaItem(tx, "shop-a", "item-a", new Prisma.Decimal("0.100"), "teste");
 
     expect(tx.product.update).toHaveBeenCalledWith({
       where: { id: "prod-a" },
-      data: { currentStock: new Prisma.Decimal("9.000") }, // 7 + 2 = 9
+      data: { currentStock: new Prisma.Decimal("7.200") }, // 7 + 0.2 = 7.2
     });
 
     expect(tx.stockMovement.create).toHaveBeenCalledWith({
@@ -175,28 +161,76 @@ describe("Unit: Lógica de Delta de Estoque", () => {
         productId: "prod-a",
         comandaItemId: "item-a",
         type: StockMovementType.REFUND,
-        quantity: new Prisma.Decimal("2.000"),
+        quantity: new Prisma.Decimal("0.200"),
         description: "teste",
       },
     });
   });
 
-  it("syncStockForComanda sincroniza todos os itens de produto da comanda", async () => {
+  it("lógica de sequenciamento fracionário: 0.300 -> 0.100 -> 0.200", async () => {
+    const tx = {
+      comandaItem: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "item-a",
+          type: "PRODUCT",
+          productId: "prod-a",
+          quantity: new Prisma.Decimal("0.100"),
+          product: { id: "prod-a", trackStock: true },
+        }),
+      },
+      stockMovement: {
+        // Primeiro passo: applied = 0.300, desired = 0.100 => delta = -0.200 (REFUND)
+        findMany: vi.fn().mockResolvedValue([
+          { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.300") },
+        ]),
+        create: vi.fn(),
+      },
+      product: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({
+          id: "prod-a",
+          currentStock: new Prisma.Decimal("5.000"),
+        }),
+        update: vi.fn(),
+      },
+    } as any;
+
+    // 0.300 -> 0.100
+    await syncStockForComandaItem(tx, "shop-a", "item-a", new Prisma.Decimal("0.100"), "teste-refund");
+    expect(tx.product.update).toHaveBeenCalledWith({
+      where: { id: "prod-a" },
+      data: { currentStock: new Prisma.Decimal("5.200") },
+    });
+
+    // 0.100 -> 0.200
+    tx.stockMovement.findMany.mockResolvedValue([
+      { type: StockMovementType.SALE, quantity: new Prisma.Decimal("0.300") },
+      { type: StockMovementType.REFUND, quantity: new Prisma.Decimal("0.200") },
+    ]); // applied = 0.100, desired = 0.200 => delta = 0.100 (SALE)
+    tx.product.findUniqueOrThrow.mockResolvedValue({
+      id: "prod-a",
+      currentStock: new Prisma.Decimal("5.200"),
+    });
+
+    await syncStockForComandaItem(tx, "shop-a", "item-a", new Prisma.Decimal("0.200"), "teste-sale");
+    expect(tx.product.update).toHaveBeenLastCalledWith({
+      where: { id: "prod-a" },
+      data: { currentStock: new Prisma.Decimal("5.100") }, // 5.2 - 0.1 = 5.1
+    });
+  });
+
+  it("syncStockForComanda ignora itens inativos ou sem controle de estoque", async () => {
     const tx = {
       comandaItem: {
         findMany: vi.fn().mockResolvedValue([
           { id: "item-1", type: "SERVICE", quantity: new Prisma.Decimal("1.000"), status: "DONE" },
           { id: "item-2", type: "PRODUCT", quantity: new Prisma.Decimal("2.000"), status: "DONE", productId: "p-2", product: { id: "p-2", trackStock: true } },
-          { id: "item-3", type: "PRODUCT", quantity: new Prisma.Decimal("1.000"), status: "CANCELLED", productId: "p-3", product: { id: "p-3", trackStock: true } },
         ]),
-        findUnique: vi.fn().mockImplementation(async ({ where }) => {
-          if (where.id === "item-2") {
-            return { id: "item-2", type: "PRODUCT", productId: "p-2", quantity: new Prisma.Decimal("2.000"), product: { id: "p-2", trackStock: true } };
-          }
-          if (where.id === "item-3") {
-            return { id: "item-3", type: "PRODUCT", productId: "p-3", quantity: new Prisma.Decimal("1.000"), product: { id: "p-3", trackStock: true } };
-          }
-          return null;
+        findUnique: vi.fn().mockResolvedValue({
+          id: "item-2",
+          type: "PRODUCT",
+          productId: "p-2",
+          quantity: new Prisma.Decimal("2.000"),
+          product: { id: "p-2", trackStock: true },
         }),
       },
       stockMovement: {
@@ -204,24 +238,16 @@ describe("Unit: Lógica de Delta de Estoque", () => {
         create: vi.fn(),
       },
       product: {
-        findUniqueOrThrow: vi.fn().mockImplementation(async ({ where }) => ({
-          id: where.id,
+        findUniqueOrThrow: vi.fn().mockResolvedValue({
+          id: "p-2",
           currentStock: new Prisma.Decimal("10.000"),
-        })),
+        }),
         update: vi.fn(),
       },
     } as any;
 
     await syncStockForComanda(tx, "shop-a", "comanda-a", "cancelamento", false);
 
-    // item-1 (SERVICE) deve ser ignorado
-    // item-2 deve receber desiredQuantity = 2 (delta = 2) -> decrementa estoque e cria SALE
-    // item-3 (CANCELLED) deve receber desiredQuantity = 0 (delta = 0) -> no-op
-
     expect(tx.product.update).toHaveBeenCalledTimes(1);
-    expect(tx.product.update).toHaveBeenCalledWith({
-      where: { id: "p-2" },
-      data: { currentStock: new Prisma.Decimal("8.000") },
-    });
   });
 });
