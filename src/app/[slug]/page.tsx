@@ -3,6 +3,7 @@ import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { Avatar } from "@/components/ui/Avatar";
 import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
 const DAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 interface WorkingHour {
@@ -18,8 +19,13 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const barbershop = await prisma.barbershop.findUnique({ where: { slug } });
-  if (!barbershop) return { title: "Barbearia não encontrada" };
+  const safeSlug = sanitizeBarbershopSlug(slug);
+  if (!safeSlug) return { title: "Barbearia não encontrada" };
+
+  const barbershop = await prisma.barbershop.findFirst({
+    where: { ...publicBarbershopWhere(), slug: safeSlug },
+  });
+  if (!barbershop || !isPublicBarbershop(barbershop)) return { title: "Barbearia não encontrada" };
   return {
     title: `${barbershop.name} | Tem Barber`,
     description: barbershop.description ?? `Agende agora na ${barbershop.name}`,
@@ -32,10 +38,12 @@ export default async function BarbershopPublicPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const safeSlug = sanitizeBarbershopSlug(slug);
+  if (!safeSlug) notFound();
 
   // Fetch full profile via direct Prisma (SSR — no auth needed)
-  const barbershop = await prisma.barbershop.findUnique({
-    where: { slug, active: true },
+  const barbershop = await prisma.barbershop.findFirst({
+    where: { ...publicBarbershopWhere(), slug: safeSlug },
     include: {
       categories: {
         include: {
@@ -54,7 +62,7 @@ export default async function BarbershopPublicPage({
     },
   });
 
-  if (!barbershop) notFound();
+  if (!barbershop || !isPublicBarbershop(barbershop)) notFound();
 
   // Verificar status de assinatura do tenant
   const subscription = await getOrCreateSubscription(barbershop.id);

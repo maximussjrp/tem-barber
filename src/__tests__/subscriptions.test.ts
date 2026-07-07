@@ -6,7 +6,7 @@ const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
     plan: { findFirst: vi.fn(), create: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
-    barbershop: { findUnique: vi.fn() },
+    barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
   getServerSessionMock: vi.fn(),
   redirectMock: vi.fn(),
@@ -28,6 +28,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.PLATFORM_ADMIN_EMAILS = "max.guarinieri@gmail.com";
+    prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   });
 
   // 1 & 2. isPlatformAdmin tests
@@ -233,7 +234,8 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     getServerSessionMock.mockResolvedValue({
       user: { id: "admin-id", email: "max.guarinieri@gmail.com", role: "SUPER_ADMIN" }
     });
-    prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-id" });
+    prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a" });
+    prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
     prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-id" });
     prismaMock.tenantSubscription.update.mockResolvedValue({
       id: "sub-id",

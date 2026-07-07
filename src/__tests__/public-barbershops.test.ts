@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { resetRateLimitStore } from "@/lib/public-rate-limit";
+import { isPublicBarbershop } from "@/lib/public-barbershops";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -45,6 +46,10 @@ describe("barbearias publicas", () => {
         where: expect.objectContaining({
           active: true,
           slug: { not: "" },
+          zipCode: { not: "00000000" },
+          street: { not: "Rua Não Cadastrada" },
+          city: { not: "Cidade Exemplo" },
+          state: { not: "UF" },
           subscriptions: expect.objectContaining({
             some: expect.objectContaining({
               status: { in: ["TRIAL", "ACTIVE", "PAST_DUE"] },
@@ -72,8 +77,10 @@ describe("barbearias publicas", () => {
             }),
             { name: { contains: "Smoke", mode: "insensitive" } },
             { slug: { contains: "Smoke", mode: "insensitive" } },
-            { name: { contains: "Test", mode: "insensitive" } },
-            { slug: { contains: "Temp", mode: "insensitive" } },
+            { city: { contains: "Smoke", mode: "insensitive" } },
+            { name: { contains: "Placeholder", mode: "insensitive" } },
+            { slug: { contains: "Placeholder", mode: "insensitive" } },
+            { city: { contains: "Placeholder", mode: "insensitive" } },
           ]),
         }),
       })
@@ -146,5 +153,169 @@ describe("barbearias publicas", () => {
     }
 
     expect(lastResponse.status).toBe(429);
+  });
+});
+
+describe("helper isPublicBarbershop", () => {
+  const validBarbershop = {
+    active: true,
+    name: "Don Brio",
+    slug: "don-brio",
+    city: "São Paulo",
+    zipCode: "12345-678",
+    street: "Av Paulista",
+    state: "SP",
+    phone: "11999999999",
+    subscriptions: [
+      {
+        status: "ACTIVE",
+        currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60), // futuro
+      }
+    ]
+  };
+
+  it("permite barbearia totalmente valida", () => {
+    expect(isPublicBarbershop(validBarbershop)).toBe(true);
+  });
+
+  it("permite barbearia com TRIAL ativo", () => {
+    const trialShop = {
+      ...validBarbershop,
+      subscriptions: [
+        {
+          status: "TRIAL",
+          trialEndsAt: new Date(Date.now() + 1000 * 60 * 60),
+        }
+      ]
+    };
+    expect(isPublicBarbershop(trialShop)).toBe(true);
+  });
+
+  it("bloqueia barbearias inativas", () => {
+    const inactiveShop = { ...validBarbershop, active: false };
+    expect(isPublicBarbershop(inactiveShop)).toBe(false);
+  });
+
+  it("bloqueia barbearias com termos proibidos em tokens inteiros", () => {
+    const testShop = { ...validBarbershop, name: "Barbearia de Teste" };
+    expect(isPublicBarbershop(testShop)).toBe(false);
+  });
+
+  it("nao bloqueia barbearias por substrings que nao sao tokens inteiros (evitar falsos positivos)", () => {
+    const contestShop = { ...validBarbershop, name: "Contest Barber" };
+    const tempestadeShop = { ...validBarbershop, name: "Tempestade Barber" };
+    const trialtoShop = { ...validBarbershop, name: "Trialto Coiffure" };
+
+    expect(isPublicBarbershop(contestShop)).toBe(true);
+    expect(isPublicBarbershop(tempestadeShop)).toBe(true);
+    expect(isPublicBarbershop(trialtoShop)).toBe(true);
+  });
+
+  it("bloqueia barbearias com Cidade Exemplo ou outros placeholders", () => {
+    const placeholderCity = { ...validBarbershop, city: "Cidade Exemplo" };
+    const placeholderZip = { ...validBarbershop, zipCode: "00000000" };
+    const placeholderStreet = { ...validBarbershop, street: "Rua Não Cadastrada" };
+    const placeholderState = { ...validBarbershop, state: "UF" };
+    const placeholderPhone = { ...validBarbershop, phone: "00000000000" };
+
+    expect(isPublicBarbershop(placeholderCity)).toBe(false);
+    expect(isPublicBarbershop(placeholderZip)).toBe(false);
+    expect(isPublicBarbershop(placeholderStreet)).toBe(false);
+    expect(isPublicBarbershop(placeholderState)).toBe(false);
+    expect(isPublicBarbershop(placeholderPhone)).toBe(false);
+  });
+
+  it("permite barbearias com campos opcionais vazios se dados essenciais estiverem preenchidos", () => {
+    const optionalEmptyShop = {
+      ...validBarbershop,
+      coverUrl: null,
+      logoUrl: null,
+      description: null,
+    };
+    expect(isPublicBarbershop(optionalEmptyShop)).toBe(true);
+  });
+
+  it("bloqueia barbearias com assinatura ACTIVE expirada", () => {
+    const expiredActiveShop = {
+      ...validBarbershop,
+      subscriptions: [
+        {
+          status: "ACTIVE",
+          currentPeriodEnd: new Date(Date.now() - 1000 * 60), // passado
+        }
+      ]
+    };
+    expect(isPublicBarbershop(expiredActiveShop)).toBe(false);
+  });
+
+  it("bloqueia barbearias com assinatura TRIAL expirada", () => {
+    const expiredTrialShop = {
+      ...validBarbershop,
+      subscriptions: [
+        {
+          status: "TRIAL",
+          trialEndsAt: new Date(Date.now() - 1000 * 60), // passado
+        }
+      ]
+    };
+    expect(isPublicBarbershop(expiredTrialShop)).toBe(false);
+  });
+
+  it("bloqueia barbearias com assinatura PAST_DUE fora do periodo de graca", () => {
+    const expiredPastDueShop = {
+      ...validBarbershop,
+      subscriptions: [
+        {
+          status: "PAST_DUE",
+          gracePeriodEndsAt: new Date(Date.now() - 1000 * 60), // passado
+        }
+      ]
+    };
+    expect(isPublicBarbershop(expiredPastDueShop)).toBe(false);
+  });
+
+  it("bloqueia barbearias com assinatura em status proibido (SUSPENDED)", () => {
+    const suspendedShop = {
+      ...validBarbershop,
+      subscriptions: [
+        {
+          status: "SUSPENDED",
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60),
+        }
+      ]
+    };
+    expect(isPublicBarbershop(suspendedShop)).toBe(false);
+  });
+
+  it("permite zovisk-cortes se regularizada (sem blacklist estatica de slug)", () => {
+    const zoviskRegularized = {
+      ...validBarbershop,
+      slug: "zovisk-cortes",
+      name: "Zovisk Cortes",
+      city: "São José do Rio Preto",
+      subscriptions: [
+        {
+          status: "ACTIVE",
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60),
+        }
+      ]
+    };
+    expect(isPublicBarbershop(zoviskRegularized)).toBe(true);
+  });
+
+  it("bloqueia zovisk-cortes se estiver com dados incompletos ou placeholders", () => {
+    const zoviskIncomplete = {
+      ...validBarbershop,
+      slug: "zovisk-cortes",
+      name: "Zovisk Cortes",
+      city: "Cidade Exemplo",
+      subscriptions: [
+        {
+          status: "ACTIVE",
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60),
+        }
+      ]
+    };
+    expect(isPublicBarbershop(zoviskIncomplete)).toBe(false);
   });
 });

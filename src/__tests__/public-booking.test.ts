@@ -14,7 +14,7 @@ const txMock = {
 
 const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
-    barbershop: { findUnique: vi.fn() },
+    barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
     idempotencyKey: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -58,6 +58,7 @@ beforeEach(() => {
     name: "Barbearia A",
     slug: "barbearia-a",
   });
+  prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.idempotencyKey.findUnique.mockResolvedValue(null);
   prismaMock.$transaction.mockImplementation((callback: (tx: typeof txMock) => unknown) =>
     callback(txMock)
@@ -109,9 +110,11 @@ describe("agendamento publico", () => {
     const response = await POST(request(validBody), params);
 
     expect(response.status).toBe(201);
-    expect(prismaMock.barbershop.findUnique).toHaveBeenCalledWith({
-      where: { slug: "barbearia-a", active: true },
-    });
+    expect(prismaMock.barbershop.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ slug: "barbearia-a" }),
+      })
+    );
     expect(txMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ barbershopId: "shop-a" }),

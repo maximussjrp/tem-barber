@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 
 // Helper para gerar o slug do estabelecimento
 function slugify(text: string) {
@@ -46,13 +47,53 @@ function isValidCpf(cpf: string) {
 
 export async function POST(request: Request) {
   try {
+    const ip = resolveClientIp(request);
+    const rateLimit = consumeRateLimit({
+      bucket: "public-barbershop-register",
+      key: ip,
+      max: 5,
+      windowMs: 15 * 60 * 1000,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Muitas tentativas de cadastro. Tente novamente em alguns minutos." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        }
+      );
+    }
+
     const body = await request.json();
     const { name, email, phone, cpf, password, barbershopName } = body;
 
     // 1. Validações de campos obrigatórios
-    if (!name || !email || !phone || !cpf || !password || !barbershopName) {
+    if (
+      !name?.trim() ||
+      !email?.trim() ||
+      !phone?.trim() ||
+      !cpf?.trim() ||
+      !password ||
+      !barbershopName?.trim()
+    ) {
       return NextResponse.json(
         { error: "Todos os campos são obrigatórios para o cadastro da barbearia." },
+        { status: 400 }
+      );
+    }
+
+    if (password.length < 6) {
+      return NextResponse.json(
+        { error: "A senha deve ter no mínimo 6 caracteres." },
+        { status: 400 }
+      );
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return NextResponse.json(
+        { error: "E-mail em formato inválido." },
         { status: 400 }
       );
     }
