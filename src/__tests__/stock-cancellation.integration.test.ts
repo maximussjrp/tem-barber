@@ -837,7 +837,7 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     expect(cancelRes.status).toBe(200);
 
     const commEntryAfter = await prisma.commissionEntry.findFirst({ where: { comandaItem: { comandaId: comanda.id } } });
-    expect(commEntryAfter?.status).not.toBe("RELEASED");
+    expect(commEntryAfter?.status).toBe("REVERSED");
 
     const clubUsageAfter = await prisma.clubBenefitUsage.findFirst({
       where: { comandaItem: { comandaId: comanda.id } }

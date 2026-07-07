@@ -63,6 +63,28 @@ async function seedTenant(label: string) {
       state: "SP",
     },
   });
+  let plan = await prisma.plan.findFirst();
+  if (!plan) {
+    plan = await prisma.plan.create({
+      data: {
+        name: "Plano Bronze",
+        price: 49.90,
+        maxMembers: 3,
+        isActive: true,
+      },
+    });
+  }
+
+  await prisma.tenantSubscription.create({
+    data: {
+      barbershopId: shop.id,
+      planId: plan.id,
+      status: "ACTIVE",
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
+
   const admin = await prisma.user.create({
     data: { name: `Admin ${label}`, phone: `119900000${label.charCodeAt(0)}` },
   });
@@ -110,7 +132,9 @@ async function truncateDatabase() {
       "categories",
       "barbershop_members",
       "barbershops",
-      "users"
+      "users",
+      "tenant_subscriptions",
+      "plans"
     CASCADE
   `);
 }
@@ -165,18 +189,27 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
 
   it("duas chaves diferentes para o mesmo intervalo geram uma reserva e um 409", async () => {
     const tenant = await seedTenant("a");
-    const body = {
+    const customer2 = await prisma.user.create({
+      data: { name: "Cliente B", phone: "11992200099" },
+    });
+    const body1 = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
       dateTime: "2026-07-20T14:00:00.000Z",
       customerPhone: tenant.customer.phone,
     };
+    const body2 = {
+      memberId: tenant.member.id,
+      serviceIds: [tenant.service.id],
+      dateTime: "2026-07-20T14:00:00.000Z",
+      customerPhone: customer2.phone,
+    };
 
     const responses = await Promise.all([
-      publicBook(publicRequest(body, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), {
+      publicBook(publicRequest(body1, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), {
         params: Promise.resolve({ slug: tenant.shop.slug }),
       }),
-      publicBook(publicRequest(body, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"), {
+      publicBook(publicRequest(body2, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"), {
         params: Promise.resolve({ slug: tenant.shop.slug }),
       }),
     ]);
@@ -197,12 +230,19 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const secondMember = await prisma.barbershopMember.create({
       data: { barbershopId: tenantA.shop.id, userId: secondBarberUser.id, role: "BARBER" },
     });
+    await prisma.barberService.create({
+      data: { barberId: secondMember.id, serviceId: tenantA.service.id },
+    });
 
-    const base = { serviceIds: [tenantA.service.id], customerPhone: tenantA.customer.phone };
+    const cust1 = await prisma.user.create({ data: { name: "Cust 1", phone: "11992200001" } });
+    const cust2 = await prisma.user.create({ data: { name: "Cust 2", phone: "11992200002" } });
+    const cust3 = await prisma.user.create({ data: { name: "Cust 3", phone: "11992200003" } });
+    const cust4 = await prisma.user.create({ data: { name: "Cust 4", phone: "11992200004" } });
+
     const responses = await Promise.all([
       publicBook(
         publicRequest(
-          { ...base, memberId: tenantA.member.id, dateTime: "2026-07-20T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust1.phone, memberId: tenantA.member.id, dateTime: "2026-07-20T15:00:00.000Z" },
           "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
           tenantA.shop.slug
         ),
@@ -210,7 +250,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { ...base, memberId: tenantA.member.id, dateTime: "2026-07-20T15:30:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust2.phone, memberId: tenantA.member.id, dateTime: "2026-07-20T15:30:00.000Z" },
           "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
           tenantA.shop.slug
         ),
@@ -218,7 +258,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { ...base, memberId: secondMember.id, dateTime: "2026-07-20T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust3.phone, memberId: secondMember.id, dateTime: "2026-07-20T15:00:00.000Z" },
           "ffffffff-ffff-4fff-8fff-ffffffffffff",
           tenantA.shop.slug
         ),
@@ -230,7 +270,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
             memberId: tenantB.member.id,
             serviceIds: [tenantB.service.id],
             dateTime: "2026-07-20T15:00:00.000Z",
-            customerPhone: tenantB.customer.phone,
+            customerPhone: cust4.phone,
           },
           "99999999-9999-4999-8999-999999999999",
           tenantB.shop.slug
