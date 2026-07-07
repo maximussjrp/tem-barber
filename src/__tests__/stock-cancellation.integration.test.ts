@@ -11,7 +11,7 @@ vi.mock("next-auth", () => ({ getServerSession: getServerSessionMock }));
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const canRunIntegration =
   testDatabaseUrl &&
-  /match_barber_test|localhost|127\.0\.0\.1|55439/.test(testDatabaseUrl) &&
+  /match_barber_test|localhost|127\.0\.0\.1|55439|5434/.test(testDatabaseUrl) &&
   !/prod|production/i.test(testDatabaseUrl);
 const describeIf = canRunIntegration ? describe : describe.skip;
 
@@ -150,11 +150,13 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     });
 
     // Abrir comanda
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Maria" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Maria", customerPhone: "11999999999" }));
+    console.log("CREATE COMANDA STATUS:", resComanda.status);
     const comanda = await resComanda.json();
+    console.log("CREATE COMANDA BODY:", JSON.stringify(comanda));
 
     // Adicionar prod1 (qty 1)
-    await itemsRoute.POST(
+    const resItem1 = await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
         productId: prod1.id,
@@ -162,9 +164,11 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    console.log("ADD ITEM 1 STATUS:", resItem1.status);
+    console.log("ADD ITEM 1 BODY:", JSON.stringify(await resItem1.json()));
 
     // Adicionar prod2 (qty 3)
-    await itemsRoute.POST(
+    const resItem2 = await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
         productId: prod2.id,
@@ -172,30 +176,47 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    console.log("ADD ITEM 2 STATUS:", resItem2.status);
+    console.log("ADD ITEM 2 BODY:", JSON.stringify(await resItem2.json()));
 
     // Finalizar comanda
-    await finalizeRoute.POST(
+    const finalizeRes = await finalizeRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
         payments: [{ method: "PIX", amount: 150.00 }]
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    console.log("FINALIZE STATUS:", finalizeRes.status);
+    console.log("FINALIZE BODY:", JSON.stringify(await finalizeRes.json()));
 
     // Verificar baixas
     const p1AfterClose = await prisma.product.findUnique({ where: { id: prod1.id } });
     const p2AfterClose = await prisma.product.findUnique({ where: { id: prod2.id } });
+    console.log("STOCK AFTER CLOSE:", Number(p1AfterClose?.currentStock), Number(p2AfterClose?.currentStock));
     expect(Number(p1AfterClose?.currentStock)).toBe(9);
     expect(Number(p2AfterClose?.currentStock)).toBe(7);
 
+    // Reabrir via estorno do pagamento (CLOSED -> PENDING_PAYMENT)
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    const resRefund = await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 150.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
+    );
+    console.log("REFUND STATUS:", resRefund.status);
+    console.log("REFUND BODY:", JSON.stringify(await resRefund.json()));
+
     // Cancelar comanda
-    await comandaDetailRoute.PATCH(
+    const resCancel = await comandaDetailRoute.PATCH(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    console.log("CANCEL STATUS:", resCancel.status);
+    console.log("CANCEL BODY:", JSON.stringify(await resCancel.json()));
 
     // Verificar retorno
     const p1AfterCancel = await prisma.product.findUnique({ where: { id: prod1.id } });
     const p2AfterCancel = await prisma.product.findUnique({ where: { id: prod2.id } });
+    console.log("STOCK AFTER CANCEL:", Number(p1AfterCancel?.currentStock), Number(p2AfterCancel?.currentStock));
     expect(Number(p1AfterCancel?.currentStock)).toBe(10);
     expect(Number(p2AfterCancel?.currentStock)).toBe(10);
 
@@ -220,7 +241,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       data: { barbershopId: t.shop.id, name: "Pente", salePrice: "10.00", currentStock: "5.000", trackStock: false },
     });
 
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Jose" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Jose", customerPhone: "11999999999" }));
+    expect(resComanda.status).toBe(201);
     const comanda = await resComanda.json();
 
     // Serviço (Sem estoque)
@@ -255,16 +277,24 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     );
 
     // Fechar
-    await finalizeRoute.POST(
+    const finalizeRes = await finalizeRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
         payments: [{ method: "PIX", amount: 110.00 }]
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    expect(finalizeRes.status).toBe(200);
 
     // Verificar
     expect(Number((await prisma.product.findUnique({ where: { id: prodTracked.id } }))?.currentStock)).toBe(3);
     expect(Number((await prisma.product.findUnique({ where: { id: prodUntracked.id } }))?.currentStock)).toBe(5); // Inalterado
+
+    // Reabrir
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 110.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
+    );
 
     // Cancelar comanda
     await comandaDetailRoute.PATCH(
@@ -284,7 +314,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       data: { barbershopId: t.shop.id, name: "Pomada", salePrice: "50.00", currentStock: "5.000", trackStock: true },
     });
 
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Ana" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Ana", customerPhone: "11999999999" }));
+    expect(resComanda.status).toBe(201);
     const comanda = await resComanda.json();
 
     await itemsRoute.POST(
@@ -301,6 +332,13 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
         payments: [{ method: "PIX", amount: 100.00 }]
       }),
       { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    // Reabrir
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id } });
+    await refundRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 100.00, reason: "Estorno" }),
+      { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
     );
 
     // Primeiro cancelamento
@@ -334,7 +372,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     });
 
     // Caso A: Removido antes do fechamento
-    const resC1 = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Paula" }));
+    const resC1 = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Paula", customerPhone: "11999999999" }));
+    expect(resC1.status).toBe(201);
     const c1 = await resC1.json();
 
     const resItem = await itemsRoute.POST(
@@ -358,7 +397,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     expect(await prisma.stockMovement.count({ where: { productId: prod.id } })).toBe(0);
 
     // Caso B: Removido depois do fechamento e reabertura
-    const resC2 = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Carlos" }));
+    const resC2 = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Carlos", customerPhone: "11999999999" }));
+    expect(resC2.status).toBe(201);
     const c2 = await resC2.json();
 
     const resItem2 = await itemsRoute.POST(
@@ -408,7 +448,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       data: { barbershopId: t.shop.id, name: "Oleo", salePrice: "25.00", currentStock: "5.000", trackStock: true },
     });
 
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "David" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "David", customerPhone: "11999999999" }));
+    expect(resComanda.status).toBe(201);
     const comanda = await resComanda.json();
 
     await itemsRoute.POST(
@@ -459,7 +500,8 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       data: { barbershopId: t.shop.id, name: "Gillette", salePrice: "10.00", currentStock: "10.000", trackStock: true },
     });
 
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Eduardo" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Eduardo", customerPhone: "11999999999" }));
+    expect(resComanda.status).toBe(201);
     const comanda = await resComanda.json();
 
     const resItem = await itemsRoute.POST(
@@ -530,14 +572,16 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     const t = await seedTenant("insufficient");
     getServerSessionMock.mockResolvedValue({ user: { id: t.ownerUser.id, role: "OWNER" } });
 
+    // Iniciar produto com estoque 5
     const prod = await prisma.product.create({
-      data: { barbershopId: t.shop.id, name: "Tesoura", salePrice: "50.00", currentStock: "2.000", trackStock: true },
+      data: { barbershopId: t.shop.id, name: "Tesoura", salePrice: "50.00", currentStock: "5.000", trackStock: true },
     });
 
-    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Vitor" }));
+    const resComanda = await comandasRoute.POST(jsonRequest("http://localhost/api/admin/comandas", { customerName: "Vitor", customerPhone: "11999999999" }));
+    expect(resComanda.status).toBe(201);
     const comanda = await resComanda.json();
 
-    // Adiciona 3 itens (estoque é 2)
+    // Adiciona 3 itens (permitido, pois 3 <= 5)
     await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
@@ -547,7 +591,13 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       { params: Promise.resolve({ id: comanda.id }) }
     );
 
-    // Fechar comanda deve retornar INSUFFICIENT_STOCK
+    // Simula colisão concorrente/venda que reduziu o estoque físico para 1 antes de finalizarmos
+    await prisma.product.update({
+      where: { id: prod.id },
+      data: { currentStock: "1.000" }
+    });
+
+    // Fechar comanda deve retornar erro 422 de estoque insuficiente
     const finalizeRes = await finalizeRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
         payments: [{ method: "PIX", amount: 150.00 }]
@@ -556,10 +606,10 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     );
     expect(finalizeRes.status).toBe(422);
     const err = await finalizeRes.json();
-    expect(err.error).toContain("Estoque insuficiente");
+    expect(err.error).toBe("INSUFFICIENT_STOCK");
 
-    // Verificar que estoque permaneceu 2 e nenhum movimento de estoque SALE foi gravado (rollback completo)
-    expect(Number((await prisma.product.findUnique({ where: { id: prod.id } }))?.currentStock)).toBe(2);
+    // Verificar que estoque permaneceu 1 e nenhum movimento de estoque SALE foi gravado (rollback completo)
+    expect(Number((await prisma.product.findUnique({ where: { id: prod.id } }))?.currentStock)).toBe(1);
     expect(await prisma.stockMovement.count({ where: { productId: prod.id } })).toBe(0);
   });
 });
