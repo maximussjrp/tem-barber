@@ -142,7 +142,7 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   const discountTotal = discounts.reduce((sum, item) => sum + toCents(item.total), 0);
   const surchargeTotal = surcharges.reduce((sum, item) => sum + toCents(item.total), 0);
   const total = Math.max(0, subtotal - discountTotal + surchargeTotal);
-  const paidTotal = payments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+  const paidTotal = payments.reduce((sum, payment) => sum + (toCents(payment.amount) - toCents(payment.refundedAmount || 0)), 0);
   
   if (total < paidTotal) {
     throw new OperationalError(
