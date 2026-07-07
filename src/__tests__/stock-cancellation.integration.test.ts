@@ -100,7 +100,7 @@ async function seedTenant(label: string) {
     data: { barbershopId: shop.id, categoryId: category.id, name: "Corte", price: "50.00", durationMin: 30 },
   });
   await prisma.barberService.create({ data: { barberId: barber.id, serviceId: cut.id } });
-  
+
   await prisma.commissionConfig.create({
     data: {
       barbershopId: shop.id,
