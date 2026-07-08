@@ -2,9 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
-import { AppointmentConflictError } from "@/lib/appointments/errors";
+import {
+  AppointmentConflictError,
+  InvalidServiceSelectionError,
+  ProfessionalNotAvailableError,
+  ProfessionalServiceMismatchError,
+} from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
+import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
+import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-transaction-error";
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
 import { todayIsoBR, nowBR } from "@/lib/time-utils";
 
@@ -25,31 +32,12 @@ function conflictResponse(error: AppointmentConflictError) {
   );
 }
 
-function isRetryableTransactionError(error: unknown) {
-  const errStr = String(error);
-  if (errStr.includes("TransactionWriteConflict") || errStr.includes("WriteConflict")) {
-    return true;
-  }
-
-  if (error && typeof error === "object" && "message" in error) {
-    const msg = String((error as any).message);
-    if (
-      msg.includes("TransactionWriteConflict") ||
-      msg.includes("could not serialize access") ||
-      msg.includes("write conflict") ||
-      msg.includes("deadlock")
-    ) {
-      return true;
-    }
-  }
-
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-
-  return (
-    error.code === "P2034" ||
-    error.message.includes("could not serialize access") ||
-    error.message.includes("write conflict") ||
-    error.message.includes("deadlock")
+function appointmentValidationResponse(
+  error: InvalidServiceSelectionError | ProfessionalNotAvailableError | ProfessionalServiceMismatchError
+) {
+  return NextResponse.json(
+    { error: error.code, message: error.message },
+    { status: error.status }
   );
 }
 
@@ -158,7 +146,7 @@ export async function GET(request: NextRequest) {
       isActive: true,
       services: { some: {} },
     },
-    include: { 
+    include: {
       user: { select: { name: true } },
       workingHours: {
         where: { dayOfWeek, isActive: true },
@@ -297,62 +285,37 @@ export async function POST(request: NextRequest) {
   try {
     const result = await runSerializableTransaction(
       async (tx) => {
-        const member = await tx.barbershopMember.findFirst({
-          where: {
-            id: memberId,
+        const { services } = await validateProfessionalServiceCapability(tx, {
+          barbershopId,
+          memberId,
+          serviceIds,
+        });
+
+        let resolvedCustomerId: string;
+        try {
+          const customer = await resolveBarbershopCustomerForBooking(tx, {
             barbershopId,
-            isActive: true,
-            services: { some: {} },
-          },
-        });
-      if (!member) {
-        return {
-          error: NextResponse.json({ error: "Barbeiro nao encontrado." }, { status: 404 }),
-        };
-      }
-
-      let resolvedCustomerId: string;
-      try {
-        const customer = await resolveBarbershopCustomerForBooking(tx, {
-          barbershopId,
-          customerId,
-          customerName,
-          customerPhone: normalizePhone(customerPhone),
-        });
-        resolvedCustomerId = customer.id;
-      } catch (resolveError) {
-        if (resolveError instanceof Error && resolveError.message === "CUSTOMER_NOT_FOUND_IN_BARBERSHOP") {
-          return {
-            error: NextResponse.json({ error: "Cliente nao encontrado nesta barbearia." }, { status: 404 }),
-          };
+            customerId,
+            customerName,
+            customerPhone: normalizePhone(customerPhone),
+          });
+          resolvedCustomerId = customer.id;
+        } catch (resolveError) {
+          if (resolveError instanceof Error && resolveError.message === "CUSTOMER_NOT_FOUND_IN_BARBERSHOP") {
+            return {
+              error: NextResponse.json({ error: "Cliente nao encontrado nesta barbearia." }, { status: 404 }),
+            };
+          }
+          if (resolveError instanceof Error && resolveError.message === "CUSTOMER_PHONE_REQUIRED") {
+            return {
+              error: NextResponse.json(
+                { error: "Informe customerId ou customerPhone." },
+                { status: 400 }
+              ),
+            };
+          }
+          throw resolveError;
         }
-        if (resolveError instanceof Error && resolveError.message === "CUSTOMER_PHONE_REQUIRED") {
-          return {
-            error: NextResponse.json(
-              { error: "Informe customerId ou customerPhone." },
-              { status: 400 }
-            ),
-          };
-        }
-        throw resolveError;
-      }
-
-      const services = await tx.service.findMany({
-        where: {
-          id: { in: serviceIds },
-          barbershopId,
-          isActive: true,
-        },
-      });
-
-      if (services.length !== serviceIds.length) {
-        return {
-          error: NextResponse.json(
-            { error: "Um ou mais servicos nao foram encontrados ou estao inativos." },
-            { status: 400 }
-          ),
-        };
-      }
 
       const { totalPrice, durationMin } = calculateAppointmentTotals(services);
       const appointment = await createAppointmentWithScheduleLock(tx, {
@@ -375,6 +338,13 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return conflictResponse(error);
+    }
+    if (
+      error instanceof InvalidServiceSelectionError ||
+      error instanceof ProfessionalNotAvailableError ||
+      error instanceof ProfessionalServiceMismatchError
+    ) {
+      return appointmentValidationResponse(error);
     }
     if (isUserPhoneUniqueConstraint(error)) {
       return NextResponse.json(

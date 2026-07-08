@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { startOfDayUTC, endOfDayUTC, nowBR, todayIsoBR } from "@/lib/time-utils";
+import { findEligibleMembersForServices } from "./professional-service-capability";
 
 export interface GetAvailabilityParams {
   barbershopId: string;
@@ -20,19 +21,15 @@ export async function getAvailableSlots({
   serviceIds,
   memberId,
 }: GetAvailabilityParams): Promise<{ results: AvailabilityResult[]; totalDuration: number }> {
-  // Validate basic parameters
-  if (!serviceIds.length) {
-    return { results: [], totalDuration: 0 };
-  }
-
-  // 1. Compute total duration from selected services
-  const services = await prisma.service.findMany({
-    where: { id: { in: serviceIds }, barbershopId, isActive: true },
+  const capability = await findEligibleMembersForServices(prisma, {
+    barbershopId,
+    serviceIds,
+    memberId,
   });
-  if (services.length === 0) {
+  const totalDuration = capability.services.reduce((s, svc) => s + svc.durationMin, 0);
+  if (!capability.services.length) {
     return { results: [], totalDuration: 0 };
   }
-  const totalDuration = services.reduce((s, svc) => s + svc.durationMin, 0);
 
   // 2. Parse target date to UTC edges (so it matches DB exactly for that date)
   const [year, month, day] = dateStr.split("-").map(Number);
@@ -41,22 +38,7 @@ export async function getAvailableSlots({
   const startOfDay = startOfDayUTC(year, month, day);
   const endOfDay = endOfDayUTC(year, month, day);
 
-  // 3. Determine which members to check
-  let memberIds: string[];
-  if (memberId) {
-    memberIds = [memberId];
-  } else {
-    // Any available barber who performs all selected services
-    const capable = await prisma.barbershopMember.findMany({
-      where: {
-        barbershopId,
-        isActive: true,
-        services: { some: { serviceId: { in: serviceIds } } },
-      },
-      select: { id: true },
-    });
-    memberIds = capable.map((m) => m.id);
-  }
+  const memberIds = capability.memberIds;
 
   if (memberIds.length === 0) {
     return { results: [], totalDuration };

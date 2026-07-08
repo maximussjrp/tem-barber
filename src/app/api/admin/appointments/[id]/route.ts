@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
-import { AppointmentConflictError } from "@/lib/appointments/errors";
+import {
+  AppointmentConflictError,
+  InvalidServiceSelectionError,
+  ProfessionalNotAvailableError,
+  ProfessionalServiceMismatchError,
+} from "@/lib/appointments/errors";
 import {
   calculateAppointmentTotals,
   mapAppointmentServiceSnapshots,
 } from "@/lib/appointments/calculate-appointment";
 import { rescheduleAppointmentWithScheduleLock } from "@/lib/appointments/reschedule-appointment";
+import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
 
 const VALID_STATUSES = ["PENDING", "CONFIRMED", "COMPLETED", "NO_SHOW", "CANCELLED"] as const;
 type ValidStatus = (typeof VALID_STATUSES)[number];
@@ -76,6 +82,7 @@ export async function PUT(
 
   const existing = await prisma.appointment.findFirst({
     where: { id, barbershopId },
+    include: { services: { select: { serviceId: true } } },
   });
 
   if (!existing) {
@@ -89,37 +96,14 @@ export async function PUT(
     );
   }
 
-  // Validate new member if provided
-  if (memberId) {
-    const member = await prisma.barbershopMember.findFirst({
-      where: { id: memberId, barbershopId, isActive: true },
-    });
-    if (!member) {
-      return NextResponse.json({ error: "Barbeiro não encontrado." }, { status: 404 });
-    }
-  }
-
   let totalPrice = Number(existing.totalPrice);
   let durationMin = existing.durationMin;
-  let serviceCreateData: { serviceId: string; priceApplied: string | number }[] | undefined;
-
-  if (serviceIds && serviceIds.length > 0) {
-    const services = await prisma.service.findMany({
-      where: { id: { in: serviceIds }, barbershopId, isActive: true },
-    });
-    if (services.length !== serviceIds.length) {
-      return NextResponse.json(
-        { error: "Um ou mais serviços inválidos." },
-        { status: 400 }
-      );
-    }
-    const totals = calculateAppointmentTotals(services);
-    totalPrice = totals.totalPrice;
-    durationMin = totals.durationMin;
-    serviceCreateData = mapAppointmentServiceSnapshots(services);
-  }
 
   const targetMemberId = memberId ?? existing.memberId;
+  const targetServiceIds =
+    serviceIds && serviceIds.length > 0
+      ? serviceIds
+      : existing.services.map((service) => service.serviceId);
   const targetDateTime = dateTime
     ? new Date(dateTime.endsWith("Z") ? dateTime : dateTime + "Z")
     : existing.dateTime;
@@ -131,8 +115,25 @@ export async function PUT(
   let updated;
   try {
     updated = await prisma.$transaction(
-      (tx) =>
-        rescheduleAppointmentWithScheduleLock(tx, {
+      async (tx) => {
+        let serviceCreateData: { serviceId: string; priceApplied: string | number }[] | undefined;
+
+        if (memberId || (serviceIds && serviceIds.length > 0)) {
+          const { services } = await validateProfessionalServiceCapability(tx, {
+            barbershopId,
+            memberId: targetMemberId,
+            serviceIds: targetServiceIds,
+          });
+
+          if (serviceIds && serviceIds.length > 0) {
+            const totals = calculateAppointmentTotals(services);
+            totalPrice = totals.totalPrice;
+            durationMin = totals.durationMin;
+            serviceCreateData = mapAppointmentServiceSnapshots(services);
+          }
+        }
+
+        return rescheduleAppointmentWithScheduleLock(tx, {
           id,
           barbershopId,
           memberId: targetMemberId,
@@ -141,11 +142,22 @@ export async function PUT(
           totalPrice,
           durationMin,
           serviceCreateData,
-        }),
+        });
+      },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message },
+        { status: error.status }
+      );
+    }
+    if (
+      error instanceof InvalidServiceSelectionError ||
+      error instanceof ProfessionalNotAvailableError ||
+      error instanceof ProfessionalServiceMismatchError
+    ) {
       return NextResponse.json(
         { error: error.code, message: error.message },
         { status: error.status }

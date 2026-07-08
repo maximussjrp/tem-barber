@@ -7,6 +7,7 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findFirst: vi.fn(), create: vi.fn() },
     service: { findMany: vi.fn() },
+    barberService: { findMany: vi.fn() },
     appointment: { findMany: vi.fn(), count: vi.fn(), create: vi.fn(), findFirst: vi.fn() },
     $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
@@ -40,6 +41,11 @@ const services = [
   { id: "svc-b", price: "35.50", durationMin: 45 },
 ];
 
+interface AppointmentMemberSlot {
+  id: string;
+  freeSlots: number[];
+}
+
 function adminSession(role = "OWNER", barbershopId = "shop-a") {
   return { error: null, data: { userId: "admin-a", role, memberId: "member-admin", barbershopId } };
 }
@@ -53,6 +59,9 @@ beforeEach(() => {
   prismaMock.$executeRaw.mockResolvedValue(0);
   prismaMock.$queryRaw.mockResolvedValue([]);
   prismaMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
+  prismaMock.barberService.findMany.mockImplementation(async ({ where }) =>
+    (where.serviceId.in as string[]).map((serviceId) => ({ serviceId }))
+  );
   prismaMock.appointment.findFirst.mockResolvedValue({
     customer: { id: "customer-a", name: "Cliente A", phone: "11999999999" },
   });
@@ -156,11 +165,12 @@ describe("agendamento administrativo", () => {
         id: "member-a",
         barbershopId: "shop-a",
         isActive: true,
-        services: { some: {} },
       },
+      select: { id: true, barbershopId: true, isActive: true },
     });
     expect(prismaMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-a", "svc-b"] }, barbershopId: "shop-a", isActive: true },
+      select: { id: true, price: true, durationMin: true },
     });
     expect(prismaMock.appointment.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -244,9 +254,20 @@ describe("agendamento administrativo", () => {
         id: "member-a",
         barbershopId: "shop-a",
         isActive: true,
-        services: { some: {} },
       },
+      select: { id: true, barbershopId: true, isActive: true },
     });
+  });
+
+  it("rejeita criacao administrativa com profissional incompatível com servico", async () => {
+    prismaMock.barberService.findMany.mockResolvedValue([{ serviceId: "svc-a" }]);
+
+    const response = await POST(jsonRequest(body));
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("PROFESSIONAL_SERVICE_MISMATCH");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
   });
 
   it("rejeita criacao administrativa com sobreposicao de agenda", async () => {
@@ -335,14 +356,14 @@ describe("agendamento administrativo", () => {
 
     const response = await GET(new NextRequest("http://localhost/api/admin/appointments?date=2026-07-20"));
     expect(response.status).toBe(200);
-    
+
     const data = await response.json();
     expect(data.barbershopName).toBe("Don Brio");
     expect(data.barbershopSlug).toBe("don-brio");
-    
-    const maxMember = data.members.find((m: any) => m.id === "member-max");
+
+    const maxMember = (data.members as AppointmentMemberSlot[]).find((m) => m.id === "member-max");
     expect(maxMember).toBeDefined();
-    expect(maxMember.freeSlots).toEqual([540, 570, 630]);
+    expect(maxMember?.freeSlots).toEqual([540, 570, 630]);
   });
 
   it("GET /api/admin/appointments nao inclui freeSlots para profissional sem agenda ativa", async () => {
@@ -365,15 +386,17 @@ describe("agendamento administrativo", () => {
 
     const response = await GET(new NextRequest("http://localhost/api/admin/appointments?date=2026-07-20"));
     const data = await response.json();
-    
-    const inactiveMember = data.members.find((m: any) => m.id === "member-inactive");
+
+    const inactiveMember = (data.members as AppointmentMemberSlot[]).find(
+      (m) => m.id === "member-inactive"
+    );
     expect(inactiveMember).toBeDefined();
-    expect(inactiveMember.freeSlots).toEqual([]);
+    expect(inactiveMember?.freeSlots).toEqual([]);
   });
 
   it("agendamento criado para 10:00 e formatado em UTC nao sofre deslocamento por timezone", () => {
     const dbDateTime = "2026-06-23T10:00:00.000Z";
-    
+
     // Simulate /minha-conta/page.tsx formatting
     const dtMinhaConta = new Date(dbDateTime);
     const timeMinhaConta = dtMinhaConta.toLocaleTimeString("pt-BR", {

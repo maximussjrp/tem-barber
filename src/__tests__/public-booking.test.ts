@@ -6,6 +6,7 @@ const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
+  barberService: { findMany: vi.fn() },
   appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
@@ -73,6 +74,10 @@ beforeEach(() => {
     isActive: true,
   });
   txMock.service.findMany.mockResolvedValue(services);
+  txMock.barberService.findMany.mockResolvedValue([
+    { serviceId: "svc-a" },
+    { serviceId: "svc-b" },
+  ]);
   txMock.appointment.findMany.mockResolvedValue([
     { customer: { id: "customer-existing", name: "Cliente A", phone: "11999999999" } },
   ]);
@@ -156,6 +161,7 @@ describe("agendamento publico", () => {
 
     expect(txMock.barbershopMember.findFirst).toHaveBeenCalledWith({
       where: { id: "member-a", barbershopId: "shop-a", isActive: true },
+      select: { id: true, barbershopId: true, isActive: true },
     });
   });
 
@@ -173,6 +179,7 @@ describe("agendamento publico", () => {
 
     expect(txMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-a", "svc-b"] }, barbershopId: "shop-a", isActive: true },
+      select: { id: true, price: true, durationMin: true },
     });
   });
 
@@ -241,13 +248,15 @@ describe("agendamento publico", () => {
     expect(txMock.appointment.create).not.toHaveBeenCalled();
   });
 
-  it("registra a lacuna atual: nao valida explicitamente se o profissional executa todos os servicos", async () => {
-    await POST(request(validBody), params);
+  it("rejeita profissional que nao executa todos os servicos", async () => {
+    txMock.barberService.findMany.mockResolvedValue([{ serviceId: "svc-a" }]);
 
-    expect(txMock.barbershopMember.findFirst).toHaveBeenCalledTimes(1);
-    expect(txMock.barbershopMember.findFirst).toHaveBeenCalledWith({
-      where: { id: "member-a", barbershopId: "shop-a", isActive: true },
-    });
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("PROFESSIONAL_SERVICE_MISMATCH");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
   });
 
   it("bloqueia terceiro agendamento futuro na mesma semana para a mesma barbearia", async () => {
