@@ -4,12 +4,15 @@ import { Prisma, AppointmentStatus } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
 import {
   AppointmentConflictError,
+  FitInNotAllowedError,
+  FitInReasonRequiredError,
   InvalidServiceSelectionError,
   ProfessionalNotAvailableError,
   ProfessionalServiceMismatchError,
 } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
+import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/create-fit-in-appointment";
 import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
 import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-transaction-error";
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
@@ -23,6 +26,8 @@ interface AdminAppointmentBody {
   serviceIds?: string[];
   dateTime?: string;
   notes?: string;
+  bookingMode?: "NORMAL" | "FIT_IN";
+  fitInReason?: string;
 }
 
 function conflictResponse(error: AppointmentConflictError) {
@@ -33,7 +38,12 @@ function conflictResponse(error: AppointmentConflictError) {
 }
 
 function appointmentValidationResponse(
-  error: InvalidServiceSelectionError | ProfessionalNotAvailableError | ProfessionalServiceMismatchError
+  error:
+    | InvalidServiceSelectionError
+    | ProfessionalNotAvailableError
+    | ProfessionalServiceMismatchError
+    | FitInReasonRequiredError
+    | FitInNotAllowedError
 ) {
   return NextResponse.json(
     { error: error.code, message: error.message },
@@ -264,7 +274,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
-  const { memberId, customerId, customerName, customerPhone, serviceIds, dateTime, notes } = body;
+  const {
+    memberId,
+    customerId,
+    customerName,
+    customerPhone,
+    serviceIds,
+    dateTime,
+    notes,
+    bookingMode,
+    fitInReason,
+  } = body;
 
   if (!memberId || !serviceIds?.length || !dateTime) {
     return NextResponse.json(
@@ -282,9 +302,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "dateTime invalido." }, { status: 400 });
   }
 
+  if (bookingMode && bookingMode !== "NORMAL" && bookingMode !== "FIT_IN") {
+    return NextResponse.json({ error: "bookingMode invalido." }, { status: 400 });
+  }
+
+  const requestedBookingMode = bookingMode === "FIT_IN" ? "FIT_IN" : "NORMAL";
+
   try {
     const result = await runSerializableTransaction(
       async (tx) => {
+        if (requestedBookingMode === "FIT_IN" && !["OWNER", "MANAGER"].includes(data!.role)) {
+          throw new FitInNotAllowedError();
+        }
+
+        const normalizedFitInReason = fitInReason?.trim() ?? "";
+        if (requestedBookingMode === "FIT_IN" && !normalizedFitInReason) {
+          throw new FitInReasonRequiredError();
+        }
+
         const { services } = await validateProfessionalServiceCapability(tx, {
           barbershopId,
           memberId,
@@ -317,17 +352,35 @@ export async function POST(request: NextRequest) {
           throw resolveError;
         }
 
-      const { totalPrice, durationMin } = calculateAppointmentTotals(services);
-      const appointment = await createAppointmentWithScheduleLock(tx, {
-        barbershopId,
-        memberId,
-        customerId: resolvedCustomerId,
-        dateTime: requestedDateTime,
-        totalPrice,
-        durationMin,
-        services,
-        notes: notes ?? null,
-      });
+        const { totalPrice, durationMin } = calculateAppointmentTotals(services);
+
+        if (requestedBookingMode === "FIT_IN") {
+          const { appointment } = await createFitInAppointmentWithScheduleLock(tx, {
+            barbershopId,
+            memberId,
+            customerId: resolvedCustomerId,
+            dateTime: requestedDateTime,
+            totalPrice,
+            durationMin,
+            services,
+            notes: notes ?? null,
+            fitInReason: normalizedFitInReason,
+            fitInCreatedById: data!.userId,
+          });
+
+          return { appointment };
+        }
+
+        const appointment = await createAppointmentWithScheduleLock(tx, {
+          barbershopId,
+          memberId,
+          customerId: resolvedCustomerId,
+          dateTime: requestedDateTime,
+          totalPrice,
+          durationMin,
+          services,
+          notes: notes ?? null,
+        });
 
         return { appointment };
       }
@@ -342,7 +395,9 @@ export async function POST(request: NextRequest) {
     if (
       error instanceof InvalidServiceSelectionError ||
       error instanceof ProfessionalNotAvailableError ||
-      error instanceof ProfessionalServiceMismatchError
+      error instanceof ProfessionalServiceMismatchError ||
+      error instanceof FitInReasonRequiredError ||
+      error instanceof FitInNotAllowedError
     ) {
       return appointmentValidationResponse(error);
     }

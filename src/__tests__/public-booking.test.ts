@@ -111,6 +111,21 @@ describe("agendamento publico", () => {
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
+  it("bloqueia tentativa publica de criar encaixe operacional", async () => {
+    const response = await POST(
+      request({
+        ...validBody,
+        bookingMode: "FIT_IN",
+      }),
+      params
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe("FIT_IN_NOT_ALLOWED");
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
   it("aceita barbearia ativa e cria appointment com barbershopId correto", async () => {
     const response = await POST(request(validBody), params);
 

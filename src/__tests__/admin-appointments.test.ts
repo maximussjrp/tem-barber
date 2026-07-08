@@ -8,7 +8,13 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     user: { findFirst: vi.fn(), create: vi.fn() },
     service: { findMany: vi.fn() },
     barberService: { findMany: vi.fn() },
-    appointment: { findMany: vi.fn(), count: vi.fn(), create: vi.fn(), findFirst: vi.fn() },
+    appointment: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+    },
     $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -64,6 +70,11 @@ beforeEach(() => {
   );
   prismaMock.appointment.findFirst.mockResolvedValue({
     customer: { id: "customer-a", name: "Cliente A", phone: "11999999999" },
+  });
+  prismaMock.appointment.findUnique.mockResolvedValue({
+    id: "conflict-a",
+    dateTime: new Date("2026-07-20T13:00:00.000Z"),
+    durationMin: 30,
   });
   prismaMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   prismaMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
@@ -278,6 +289,61 @@ describe("agendamento administrativo", () => {
 
     expect(response.status).toBe(409);
     expect(data.error).toBe("SLOT_UNAVAILABLE");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("permite criar encaixe mesmo com conflito e persiste bookingMode FIT_IN", async () => {
+    prismaMock.$queryRaw.mockResolvedValueOnce([{ id: "conflict-a" }]);
+
+    const response = await POST(
+      jsonRequest({
+        ...body,
+        bookingMode: "FIT_IN",
+        fitInReason: "Cliente premium em atraso operacional",
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          bookingMode: "FIT_IN",
+          fitInReason: "Cliente premium em atraso operacional",
+          fitInCreatedById: "admin-a",
+          conflictSnapshot: expect.any(Object),
+        }),
+      })
+    );
+  });
+
+  it("rejeita encaixe sem motivo", async () => {
+    const response = await POST(
+      jsonRequest({
+        ...body,
+        bookingMode: "FIT_IN",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("FIT_IN_REASON_REQUIRED");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita encaixe para SUPER_ADMIN sem papel operacional no tenant", async () => {
+    getAdminSessionMock.mockResolvedValue(adminSession("SUPER_ADMIN"));
+
+    const response = await POST(
+      jsonRequest({
+        ...body,
+        bookingMode: "FIT_IN",
+        fitInReason: "Tentativa sem papel operacional",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe("FIT_IN_NOT_ALLOWED");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
   });
 

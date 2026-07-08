@@ -250,16 +250,26 @@ enum AppointmentStatus {
   NO_SHOW    // Cliente não compareceu
 }
 
+enum AppointmentBookingMode {
+  NORMAL
+  FIT_IN
+}
+
 model Appointment {
-  id           String            @id @default(uuid())
-  barbershopId String            @map("barbershop_id")
-  memberId     String            @map("member_id") // O barbeiro que executará o serviço
-  customerId   String            @map("customer_id") // O cliente que reservou
-  dateTime     DateTime          @map("date_time") // Data e hora de início do atendimento
-  totalPrice   Decimal           @map("total_price") @db.Decimal(10, 2)
-  durationMin  Int               @map("duration_min") // Soma das durações dos serviços escolhidos
-  status       AppointmentStatus @default(CONFIRMED)
-  notes        String?
+  id                String                 @id @default(uuid())
+  barbershopId      String                 @map("barbershop_id")
+  memberId          String                 @map("member_id") // O barbeiro que executará o serviço
+  customerId        String                 @map("customer_id") // O cliente que reservou
+  dateTime          DateTime               @map("date_time") // Data e hora de início do atendimento
+  totalPrice        Decimal                @map("total_price") @db.Decimal(10, 2)
+  durationMin       Int                    @map("duration_min") // Soma das durações dos serviços escolhidos
+  status            AppointmentStatus      @default(CONFIRMED)
+  bookingMode       AppointmentBookingMode @default(NORMAL) @map("booking_mode")
+  fitInReason       String?                @map("fit_in_reason")
+  fitInCreatedById  String?                @map("fit_in_created_by_id")
+  fitInCreatedAt    DateTime?              @map("fit_in_created_at")
+  conflictSnapshot  Json?                  @map("conflict_snapshot")
+  notes             String?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
