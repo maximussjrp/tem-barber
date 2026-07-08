@@ -8,6 +8,7 @@ import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } fr
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AppStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+type BookingMode = "NORMAL" | "FIT_IN";
 
 interface AppService {
   service: { id: string; name: string; durationMin: number };
@@ -20,11 +21,22 @@ interface Appointment {
   totalPrice: string;
   durationMin: number;
   status: AppStatus;
+  bookingMode?: BookingMode;
+  fitInReason?: string | null;
+  fitInCreatedAt?: string | null;
+  conflictSnapshot?: unknown;
   notes: string | null;
   customer: { id: string; name: string; phone: string };
   barber: { id: string; user: { name: string; avatarUrl: string | null } };
   services: AppService[];
   comandas?: { id: string; status: string; total: string; paidTotal: string }[];
+}
+
+interface FitInConflictPreview {
+  id: string;
+  customerName: string;
+  start: string;
+  end: string;
 }
 
 interface Member {
@@ -177,20 +189,27 @@ export function AppointmentModal({
   appointment,
   members,
   barbershopServices,
+  appointments = [],
   currentDate,
   initialState,
+  initialBookingMode,
   onClose,
   onSaved,
 }: {
   appointment: Appointment | null;
   members: Member[];
   barbershopServices: Service[];
+  appointments?: Appointment[];
   currentDate: string;
   initialState?: NewAppointmentInitialState | null;
+  initialBookingMode?: BookingMode;
   onClose: () => void;
   onSaved: (a: Appointment) => void;
 }) {
   const isEdit = !!appointment;
+  const [bookingMode, setBookingMode] = useState<BookingMode>(
+    appointment?.bookingMode ?? initialBookingMode ?? "NORMAL"
+  );
   const [memberId, setMemberId] = useState(appointment?.barber.id ?? initialState?.memberId ?? "");
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
     appointment
@@ -220,6 +239,7 @@ export function AppointmentModal({
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [phoneSuggestion, setPhoneSuggestion] = useState<CustomerSearchResult | null>(null);
   const [notes, setNotes] = useState(appointment?.notes ?? "");
+  const [fitInReason, setFitInReason] = useState(appointment?.fitInReason ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [customerClubBalance, setCustomerClubBalance] = useState<any>(null);
@@ -327,6 +347,39 @@ export function AppointmentModal({
   const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 5;
   const canShowCustomerResults = customerLookupQuery.trim().length > 0 && !selectedCustomer;
 
+  const selectedDurationMin = selectedServiceIds.reduce((sum, serviceId) => {
+    const service = barbershopServices.find((item) => item.id === serviceId);
+    return sum + (service?.durationMin ?? 0);
+  }, 0);
+
+  const fitInConflicts: FitInConflictPreview[] =
+    !isEdit && bookingMode === "FIT_IN" && memberId && dateTime && selectedDurationMin > 0
+      ? appointments
+          .filter((candidate) => {
+            if (candidate.barber.id !== memberId) return false;
+            if (!["PENDING", "CONFIRMED"].includes(candidate.status)) return false;
+
+            const targetStart = new Date(dateTime.endsWith("Z") ? dateTime : `${dateTime}:00Z`);
+            if (Number.isNaN(targetStart.getTime())) return false;
+            const targetEnd = new Date(targetStart.getTime() + selectedDurationMin * 60_000);
+
+            const candidateStart = new Date(candidate.dateTime);
+            const candidateEnd = new Date(candidateStart.getTime() + candidate.durationMin * 60_000);
+
+            return targetStart < candidateEnd && targetEnd > candidateStart;
+          })
+          .map((candidate) => {
+            const start = new Date(candidate.dateTime);
+            const end = new Date(start.getTime() + candidate.durationMin * 60_000);
+            return {
+              id: candidate.id,
+              customerName: candidate.customer.name,
+              start: start.toISOString(),
+              end: end.toISOString(),
+            };
+          })
+      : [];
+
   const toggleService = (id: string) =>
     setSelectedServiceIds((prev) =>
       prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
@@ -339,6 +392,10 @@ export function AppointmentModal({
     if (selectedServiceIds.length === 0) { setError("Selecione ao menos um serviço."); return; }
     if (!dateTime) { setError("Informe data e hora."); return; }
     if (!isEdit && !customerPhone.trim()) { setError("Informe o telefone do cliente."); return; }
+    if (!isEdit && bookingMode === "FIT_IN" && !fitInReason.trim()) {
+      setError("Informe o motivo do encaixe.");
+      return;
+    }
     setSaving(true);
     try {
       let res: Response;
@@ -359,6 +416,8 @@ export function AppointmentModal({
             customerId: selectedCustomer?.id,
             customerName: customerName.trim() || undefined,
             customerPhone: customerPhone.trim(),
+            bookingMode,
+            fitInReason: bookingMode === "FIT_IN" ? fitInReason.trim() : undefined,
             notes: notes || undefined,
           }),
         });
@@ -444,13 +503,68 @@ export function AppointmentModal({
       <div className="relative bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
         <div className="sticky top-0 bg-[var(--surface-2)] border-b border-[var(--border-subtle)] px-6 py-4 flex items-center justify-between rounded-t-2xl">
           <h2 className="text-base font-bold text-[var(--text-primary)]">
-            {isEdit ? "Editar Agendamento" : "Novo Agendamento"}
+            {isEdit
+              ? "Editar Agendamento"
+              : bookingMode === "FIT_IN"
+                ? "Novo Encaixe"
+                : "Novo Agendamento"}
           </h2>
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Fechar">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {!isEdit && (
+            <div className="space-y-1.5">
+              <label className={LABEL_INPUT}>Tipo de Reserva</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBookingMode("NORMAL")}
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${bookingMode === "NORMAL" ? "border-amber-400/70 bg-amber-500/10 text-amber-300" : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]"}`}
+                >
+                  Agendamento normal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingMode("FIT_IN")}
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${bookingMode === "FIT_IN" ? "border-orange-400/70 bg-orange-500/10 text-orange-300" : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]"}`}
+                >
+                  Encaixe operacional
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isEdit && bookingMode === "FIT_IN" && (
+            <div className="space-y-2 rounded-xl border border-orange-500/30 bg-orange-500/5 p-3">
+              <label className={LABEL_INPUT}>Motivo do Encaixe</label>
+              <textarea
+                value={fitInReason}
+                onChange={(e) => setFitInReason(e.target.value)}
+                placeholder="Explique por que este encaixe esta sendo feito..."
+                className={`${INPUT_CLASS} min-h-[80px]`}
+              />
+              <p className="text-xs text-orange-200/80">
+                O encaixe ignora bloqueio de sobreposicao e registra o conflito para auditoria.
+              </p>
+              {fitInConflicts.length > 0 ? (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2">
+                  <p className="text-xs font-bold text-red-300 mb-1">Conflitos detectados:</p>
+                  <ul className="space-y-1">
+                    {fitInConflicts.map((conflict) => (
+                      <li key={conflict.id} className="text-xs text-red-200/90">
+                        {conflict.customerName} · {formatTime(conflict.start)}-{formatTime(conflict.end)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-300/80">Nenhum conflito detectado para este encaixe.</p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className={LABEL_INPUT}>Barbeiro</label>
             <select value={memberId} onChange={(e) => setMemberId(e.target.value)} title="Barbeiro" className={INPUT_CLASS}>
@@ -907,6 +1021,9 @@ function AppointmentBlock({
         <p className="text-[11px] font-bold tabular-nums leading-tight">
           {formatTime(appointment.dateTime)}
         </p>
+        {appointment.bookingMode === "FIT_IN" && (
+          <p className="text-[9px] font-black tracking-wide text-orange-200">ENCAIXE</p>
+        )}
         <p className="text-[11px] font-semibold leading-tight truncate">{appointment.customer.name}</p>
         {height >= 56 && (
           <p className="text-[10px] opacity-70 leading-tight truncate">{serviceNames}</p>
@@ -922,6 +1039,11 @@ function AppointmentBlock({
               <div>
                 <p className="text-base font-bold text-[var(--text-primary)]">{appointment.customer.name}</p>
                 <p className="text-sm text-[var(--text-muted)]">{appointment.customer.phone}</p>
+                {appointment.bookingMode === "FIT_IN" && (
+                  <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold border border-orange-500/30 bg-orange-500/10 text-orange-300">
+                    ENCAIXE OPERACIONAL
+                  </span>
+                )}
                 {loadingClub && (
                   <p className="text-xs text-stone-500 italic mt-1">Consultando benefícios do Clube...</p>
                 )}
@@ -1019,6 +1141,12 @@ function AppointmentBlock({
 
             {appointment.notes && (
               <p className="text-sm text-[var(--text-muted)] italic border-l-2 border-[var(--gold-border)] pl-3">{appointment.notes}</p>
+            )}
+
+            {appointment.bookingMode === "FIT_IN" && appointment.fitInReason && (
+              <p className="text-sm text-orange-200/90 border-l-2 border-orange-500/40 pl-3">
+                Motivo do encaixe: {appointment.fitInReason}
+              </p>
             )}
 
             {/* WhatsApp Reminder Section */}
@@ -1270,6 +1398,7 @@ function AgendamentosContent() {
   const [editTarget, setEditTarget] = useState<Appointment | null | "new">(null);
   const [newAppointmentInitial, setNewAppointmentInitial] =
     useState<NewAppointmentInitialState | null>(null);
+  const [newAppointmentMode, setNewAppointmentMode] = useState<BookingMode>("NORMAL");
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
 
   const fetchData = useCallback(async (date: string) => {
@@ -1310,6 +1439,7 @@ function AgendamentosContent() {
     });
     setEditTarget(null);
     setNewAppointmentInitial(null);
+    setNewAppointmentMode("NORMAL");
   };
 
   const handleCancelled = (a: Appointment) => {
@@ -1335,8 +1465,12 @@ function AgendamentosContent() {
     }
   };
 
-  const openNewAppointment = (initialState: NewAppointmentInitialState | null = null) => {
+  const openNewAppointment = (
+    initialState: NewAppointmentInitialState | null = null,
+    mode: BookingMode = "NORMAL"
+  ) => {
     setNewAppointmentInitial(initialState);
+    setNewAppointmentMode(mode);
     setEditTarget("new");
   };
 
@@ -1360,11 +1494,14 @@ function AgendamentosContent() {
           appointment={editTarget === "new" ? null : editTarget}
           members={members}
           barbershopServices={barbershopServices}
+          appointments={appointments}
           currentDate={currentDate}
           initialState={editTarget === "new" ? newAppointmentInitial : null}
+          initialBookingMode={editTarget === "new" ? newAppointmentMode : undefined}
           onClose={() => {
             setEditTarget(null);
             setNewAppointmentInitial(null);
+            setNewAppointmentMode("NORMAL");
           }}
           onSaved={handleSaved}
         />
@@ -1429,10 +1566,16 @@ function AgendamentosContent() {
                 todayStr={currentDate}
               />
               <button
-                onClick={() => openNewAppointment()}
+                onClick={() => openNewAppointment(null, "NORMAL")}
                 className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm px-3.5 py-2 rounded-lg transition-colors shrink-0"
               >
                 + Novo
+              </button>
+              <button
+                onClick={() => openNewAppointment(null, "FIT_IN")}
+                className="bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 border border-orange-500/30 font-bold text-sm px-3.5 py-2 rounded-lg transition-colors shrink-0"
+              >
+                + Encaixe
               </button>
             </div>
           </div>

@@ -41,6 +41,7 @@ interface PublicBookingBody {
   customerPhone?: string;
   notes?: string;
   idempotencyKey?: string;
+  bookingMode?: "NORMAL" | "FIT_IN";
 }
 
 function getUtcWeekRange(inputDate: Date) {
@@ -185,7 +186,17 @@ export async function POST(
     return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
-  const { memberId, serviceIds, dateTime, customerName, customerPhone, notes } = body;
+  const { memberId, serviceIds, dateTime, customerName, customerPhone, notes, bookingMode } = body;
+
+  if (bookingMode === "FIT_IN") {
+    return NextResponse.json(
+      {
+        error: "FIT_IN_NOT_ALLOWED",
+        message: "Encaixe operacional so pode ser criado pela equipe administrativa.",
+      },
+      { status: 403 }
+    );
+  }
 
   const ip = resolveClientIp(request);
   const normalizedPhoneKey = normalizePhone(customerPhone);

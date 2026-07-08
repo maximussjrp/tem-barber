@@ -5,6 +5,8 @@ export const IDEMPOTENCY_KEY_INVALID = "IDEMPOTENCY_KEY_INVALID";
 export const INVALID_SERVICE_SELECTION = "INVALID_SERVICE_SELECTION";
 export const PROFESSIONAL_NOT_AVAILABLE = "PROFESSIONAL_NOT_AVAILABLE";
 export const PROFESSIONAL_SERVICE_MISMATCH = "PROFESSIONAL_SERVICE_MISMATCH";
+export const FIT_IN_REASON_REQUIRED = "FIT_IN_REASON_REQUIRED";
+export const FIT_IN_NOT_ALLOWED = "FIT_IN_NOT_ALLOWED";
 
 export class AppointmentConflictError extends Error {
   readonly code = SLOT_UNAVAILABLE;
@@ -65,6 +67,24 @@ export class ProfessionalServiceMismatchError extends Error {
   readonly status = 422;
 
   constructor(message = "Profissional indisponivel para um ou mais servicos selecionados.") {
+    super(message);
+  }
+}
+
+export class FitInReasonRequiredError extends Error {
+  readonly code = FIT_IN_REASON_REQUIRED;
+  readonly status = 400;
+
+  constructor(message = "Informe o motivo do encaixe.") {
+    super(message);
+  }
+}
+
+export class FitInNotAllowedError extends Error {
+  readonly code = FIT_IN_NOT_ALLOWED;
+  readonly status = 403;
+
+  constructor(message = "Somente OWNER ou MANAGER podem criar encaixes.") {
     super(message);
   }
 }
