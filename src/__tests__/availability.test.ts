@@ -5,6 +5,7 @@ const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
     service: { findMany: vi.fn() },
+    barberService: { findMany: vi.fn() },
     barbershopMember: { findMany: vi.fn(), findFirst: vi.fn() },
     appointment: { findMany: vi.fn() },
   },
@@ -44,6 +45,7 @@ beforeEach(() => {
   prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a", slug: "barbearia-a" });
   prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.service.findMany.mockResolvedValue([{ id: "svc-a", durationMin: 60, price: "50.00" }]);
+  prismaMock.barberService.findMany.mockResolvedValue([{ barberId: "member-a", serviceId: "svc-a" }]);
   prismaMock.barbershopMember.findFirst.mockResolvedValue(member());
   prismaMock.barbershopMember.findMany.mockResolvedValue([{ id: "member-a" }]);
   prismaMock.appointment.findMany.mockResolvedValue([]);
@@ -138,6 +140,9 @@ describe("disponibilidade publica", () => {
   });
 
   it("isola disponibilidade por barbeiro quando memberId e informado", async () => {
+    prismaMock.barbershopMember.findMany.mockResolvedValue([{ id: "member-b" }]);
+    prismaMock.barberService.findMany.mockResolvedValue([{ barberId: "member-b", serviceId: "svc-a" }]);
+
     await slots("memberId=member-b&serviceIds=svc-a&date=2026-07-20");
 
     expect(prismaMock.barbershopMember.findFirst).toHaveBeenCalledWith(
@@ -155,14 +160,30 @@ describe("disponibilidade publica", () => {
 
     expect(prismaMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-a"] }, barbershopId: "shop-a", isActive: true },
+      select: { id: true, price: true, durationMin: true },
     });
     expect(prismaMock.barbershopMember.findMany).toHaveBeenCalledWith({
       where: {
         barbershopId: "shop-a",
         isActive: true,
-        services: { some: { serviceId: { in: ["svc-a"] } } },
       },
       select: { id: true },
     });
+    expect(prismaMock.barberService.findMany).toHaveBeenCalledWith({
+      where: {
+        barberId: { in: ["member-a"] },
+        serviceId: { in: ["svc-a"] },
+      },
+      select: { barberId: true, serviceId: true },
+    });
+  });
+
+  it("nao retorna slots para membro incompatível com o servico", async () => {
+    prismaMock.barberService.findMany.mockResolvedValue([]);
+
+    const { body } = await slots();
+
+    expect(body.results).toEqual([]);
+    expect(body.totalDuration).toBe(60);
   });
 });

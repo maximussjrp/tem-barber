@@ -5,6 +5,7 @@ const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
+  barberService: { findMany: vi.fn() },
   appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
@@ -53,6 +54,9 @@ beforeEach(() => {
   txMock.idempotencyKey.update.mockResolvedValue({ id: "idem-a" });
   txMock.$executeRaw.mockResolvedValue(0);
   txMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
+  txMock.barberService.findMany.mockImplementation(async ({ where }) =>
+    (where.serviceId.in as string[]).map((serviceId) => ({ serviceId }))
+  );
   txMock.$queryRaw.mockResolvedValue([]);
   txMock.user.findFirst.mockResolvedValue({ id: "customer-a", phone: "11999999999" });
   txMock.appointment.findMany.mockResolvedValue([
@@ -167,6 +171,7 @@ describe("calculo de servicos no agendamento publico", () => {
 
     expect(txMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-a", "svc-other-tenant"] }, barbershopId: "shop-a", isActive: true },
+      select: { id: true, price: true, durationMin: true },
     });
     expect(response.status).toBe(400);
   });
@@ -186,6 +191,7 @@ describe("calculo de servicos no agendamento publico", () => {
 
     expect(txMock.service.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["svc-inactive"] }, barbershopId: "shop-a", isActive: true },
+      select: { id: true, price: true, durationMin: true },
     });
     expect(response.status).toBe(400);
   });

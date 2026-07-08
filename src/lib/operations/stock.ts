@@ -2,33 +2,9 @@ import { Prisma, StockMovementType } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { OperationalError } from "./comandas";
 
-export function isRetryableTransactionError(error: unknown): boolean {
-  const errStr = String(error);
-  if (errStr.includes("TransactionWriteConflict") || errStr.includes("WriteConflict")) {
-    return true;
-  }
+import { isRetryableTransactionError } from "../transactions/is-retryable-transaction-error";
+export { isRetryableTransactionError };
 
-  if (error && typeof error === "object" && "message" in error) {
-    const msg = String((error as any).message);
-    if (
-      msg.includes("TransactionWriteConflict") ||
-      msg.includes("could not serialize access") ||
-      msg.includes("write conflict") ||
-      msg.includes("deadlock")
-    ) {
-      return true;
-    }
-  }
-
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-
-  return (
-    error.code === "P2034" ||
-    error.message.includes("could not serialize access") ||
-    error.message.includes("write conflict") ||
-    error.message.includes("deadlock")
-  );
-}
 
 export async function runSerializableTransaction<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>

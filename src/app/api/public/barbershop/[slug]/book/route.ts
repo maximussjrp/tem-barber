@@ -10,9 +10,13 @@ import {
   IdempotencyKeyInvalidError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
+  InvalidServiceSelectionError,
+  ProfessionalNotAvailableError,
+  ProfessionalServiceMismatchError,
 } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
+import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
 import {
   findBarbershopCustomerById,
   normalizePhone,
@@ -58,7 +62,10 @@ function jsonError(error: unknown) {
     error instanceof AppointmentConflictError ||
     error instanceof IdempotencyKeyReusedError ||
     error instanceof IdempotencyKeyRequiredError ||
-    error instanceof IdempotencyKeyInvalidError
+    error instanceof IdempotencyKeyInvalidError ||
+    error instanceof InvalidServiceSelectionError ||
+    error instanceof ProfessionalNotAvailableError ||
+    error instanceof ProfessionalServiceMismatchError
   ) {
     return NextResponse.json(
       { error: error.code, message: error.message },
@@ -86,33 +93,7 @@ function isUserPhoneUniqueConstraint(error: unknown) {
   return Array.isArray(target) ? target.includes("phone") : String(target ?? "").includes("phone");
 }
 
-function isRetryableTransactionError(error: unknown) {
-  const errStr = String(error);
-  if (errStr.includes("TransactionWriteConflict") || errStr.includes("WriteConflict")) {
-    return true;
-  }
-
-  if (error && typeof error === "object" && "message" in error) {
-    const msg = String((error as any).message);
-    if (
-      msg.includes("TransactionWriteConflict") ||
-      msg.includes("could not serialize access") ||
-      msg.includes("write conflict") ||
-      msg.includes("deadlock")
-    ) {
-      return true;
-    }
-  }
-
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-
-  return (
-    error.code === "P2034" ||
-    error.message.includes("could not serialize access") ||
-    error.message.includes("write conflict") ||
-    error.message.includes("deadlock")
-  );
-}
+import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-transaction-error";
 
 async function runSerializableTransaction<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>
@@ -308,23 +289,11 @@ export async function POST(
         });
       }
 
-      const member = await tx.barbershopMember.findFirst({
-        where: { id: memberId, barbershopId: barbershop.id, isActive: true },
+      const { services } = await validateProfessionalServiceCapability(tx, {
+        barbershopId: barbershop.id,
+        memberId,
+        serviceIds,
       });
-      if (!member) {
-        return {
-          error: NextResponse.json({ error: "Barbeiro nao disponivel." }, { status: 404 }),
-        };
-      }
-
-      const services = await tx.service.findMany({
-        where: { id: { in: serviceIds }, barbershopId: barbershop.id, isActive: true },
-      });
-      if (services.length !== serviceIds.length) {
-        return {
-          error: NextResponse.json({ error: "Um ou mais servicos invalidos." }, { status: 400 }),
-        };
-      }
 
       const { totalPrice, durationMin } = calculateAppointmentTotals(services);
 

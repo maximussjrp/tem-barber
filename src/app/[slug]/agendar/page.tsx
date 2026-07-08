@@ -86,6 +86,7 @@ function StepIndicator({ current }: { current: number }) {
 function BookingWizard() {
   const params = useParams();
   const slug = params.slug as string;
+  const safeSlug = sanitizeBarbershopSlug(slug);
   const router = useRouter();
   const { data: session } = useSession();
 
@@ -94,7 +95,7 @@ function BookingWizard() {
   // Data
   const [categories, setCategories] = useState<PublicCategory[]>([]);
   const [members, setMembers] = useState<PublicMember[]>([]);
-  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(Boolean(safeSlug));
 
   // Selections
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
@@ -125,23 +126,18 @@ function BookingWizard() {
   const [notFoundError, setNotFoundError] = useState(false);
 
   useEffect(() => {
-    const safeSlug = sanitizeBarbershopSlug(slug);
     if (!safeSlug) {
-      setNotFoundError(true);
       return;
     }
 
     localStorage.setItem("lastBarbershopSlug", safeSlug);
     document.cookie = `lastBarbershopSlug=${safeSlug}; Path=/; Max-Age=2592000; SameSite=Lax`;
-  }, [slug]);
+  }, [safeSlug]);
 
   // ─── Load profile ────────────────────────────────────────────────────────
 
   useEffect(() => {
-    const safeSlug = sanitizeBarbershopSlug(slug);
     if (!safeSlug) {
-      setNotFoundError(true);
-      setLoadingProfile(false);
       return;
     }
 
@@ -167,7 +163,7 @@ function BookingWizard() {
         setNotFoundError(true);
       })
       .finally(() => setLoadingProfile(false));
-  }, [slug]);
+  }, [safeSlug]);
 
   // ─── Computed ────────────────────────────────────────────────────────────
 
@@ -178,10 +174,9 @@ function BookingWizard() {
   const totalDuration = selectedServices.reduce((s, svc) => s + svc.durationMin, 0);
 
   // Eligible members: perform ALL selected services
-  // If member has no services linked (not configured), show them anyway
+  // BarberService links are the source of truth for online booking eligibility.
   const eligibleMembers = members.filter(
     (m) =>
-      m.serviceIds.length === 0 ||
       selectedServiceIds.length === 0 ||
       selectedServiceIds.every((id) => m.serviceIds.includes(id))
   );
@@ -400,7 +395,7 @@ function BookingWizard() {
     );
   }
 
-  if (notFoundError) {
+  if (notFoundError || !safeSlug) {
     return (
       <div className="min-h-screen bg-stone-950 flex items-center justify-center p-6 text-stone-100 relative overflow-hidden">
         <div className="absolute w-[500px] h-[500px] rounded-full bg-amber-500/5 blur-[120px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
