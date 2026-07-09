@@ -1288,42 +1288,65 @@ function CalendarGrid({
   const nowTop = minutesToTop(nowMinutes);
 
   return (
-    <div className="flex min-w-0">
-      {/* Time gutter */}
-      <div className="shrink-0 w-14 relative select-none" style={{ height: totalHeight }}>
-        {hours.map((h) => (
-          <div
-            key={h}
-            className="absolute left-0 right-0 flex items-start justify-end pr-2"
-            style={{ top: minutesToTop(h * 60), height: ROW_HEIGHT * 2 }}
-          >
-            <span className="text-[10px] text-[var(--text-muted)] tabular-nums -mt-1.5">
-              {String(h).padStart(2, "0")}:00
-            </span>
-          </div>
-        ))}
-        {showNowLine && (
-          <div className="absolute right-0 left-0 flex items-center justify-end pr-1" style={{ top: nowTop - 8 }}>
-            <span className="text-[9px] text-red-400 font-bold tabular-nums">
-              {String(nowBR.getUTCHours()).padStart(2, "0")}:{String(nowBR.getUTCMinutes()).padStart(2, "0")}
-            </span>
-          </div>
-        )}
+    <div className="flex-1 flex flex-col overflow-x-auto min-w-0 md:scrollbar-thin">
+      {/* Cabeçalho de profissionais integrado na mesma rolagem horizontal */}
+      <div className="shrink-0 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
+        <div className="shrink-0 w-14 border-r border-[var(--border-subtle)]" />
+        <div className="flex flex-1 border-l border-[var(--border-subtle)]">
+          {visibleMembers.map((m) => {
+            const count = appointments.filter(
+              (a) => a.barber.id === m.id && !["CANCELLED", "NO_SHOW"].includes(a.status)
+            ).length;
+            return (
+              <div
+                key={m.id}
+                className="w-[280px] lg:w-[320px] shrink-0 px-3 py-2.5 border-r border-[var(--border-subtle)] flex items-center gap-2.5"
+              >
+                <div className="w-7 h-7 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center text-[11px] font-bold text-[var(--gold)] font-serif shrink-0">
+                  {m.user.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-[var(--text-primary)] truncate">{m.user.name}</p>
+                  <p className="text-[10px] text-[var(--text-muted)]">{count} agend.</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Member columns */}
-      <div className="flex flex-1 border-l border-[var(--border-subtle)] overflow-x-auto snap-x snap-mandatory hide-scrollbar">
-        {visibleMembers.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-[var(--text-muted)] text-sm py-20">
-            Nenhum barbeiro encontrado
-          </div>
-        ) : (
-          visibleMembers.map((m) => {
+      {/* Corpo da grade (scroll vertical restrito a esta div) */}
+      <div className="flex-1 overflow-y-auto flex min-w-0">
+        {/* Time gutter */}
+        <div className="shrink-0 w-14 relative select-none border-r border-[var(--border-subtle)] bg-[var(--background)]" style={{ height: totalHeight }}>
+          {hours.map((h) => (
+            <div
+              key={h}
+              className="absolute left-0 right-0 flex items-start justify-end pr-2"
+              style={{ top: minutesToTop(h * 60), height: ROW_HEIGHT * 2 }}
+            >
+              <span className="text-[10px] text-[var(--text-muted)] tabular-nums -mt-1.5">
+                {String(h).padStart(2, "0")}:00
+              </span>
+            </div>
+          ))}
+          {showNowLine && (
+            <div className="absolute right-0 left-0 flex items-center justify-end pr-1" style={{ top: nowTop - 8 }}>
+              <span className="text-[9px] text-red-400 font-bold tabular-nums">
+                {String(nowBR.getUTCHours()).padStart(2, "0")}:{String(nowBR.getUTCMinutes()).padStart(2, "0")}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Member columns */}
+        <div className="flex flex-1 border-l border-[var(--border-subtle)]">
+          {visibleMembers.map((m) => {
             const hasActiveBlock = activeBlockId && (byMember[m.id] ?? []).some((a) => a.id === activeBlockId);
             return (
               <div
                 key={m.id}
-                className={`flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] snap-start ${hasActiveBlock ? "z-30" : "z-10"}`}
+                className={`w-[280px] lg:w-[320px] shrink-0 relative border-r border-[var(--border-subtle)] ${hasActiveBlock ? "z-30" : "z-10"}`}
               >
                 {/* Grid lines */}
                 <div className="absolute inset-0 pointer-events-none">
@@ -1378,8 +1401,8 @@ function CalendarGrid({
                 </div>
               </div>
             );
-          })
-        )}
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1593,7 +1616,7 @@ function AgendamentosContent() {
         />
       )}
 
-      <div className="flex flex-col h-[calc(100vh-57px)] lg:h-[calc(100vh-64px)]">
+      <div className="flex flex-col h-[calc(100dvh-57px)] lg:h-[calc(100dvh-64px)]">
         {/* ── Top bar ─────────────────────────────────────────────────── */}
         <div className="shrink-0 px-4 md:px-6 py-3 border-b border-stone-800 bg-stone-950 flex flex-col md:flex-row md:items-center gap-3">
           {/* Row 1 on mobile: Date Nav & Hoje */}
@@ -1660,33 +1683,8 @@ function AgendamentosContent() {
           </div>
         </div>
 
-        {/* ── Member column headers ──────────────────────────────────── */}
-        {!loading && members.length > 0 && (
-          <div className="shrink-0 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
-            <div className="shrink-0 w-14 border-r border-[var(--border-subtle)]" />
-            <div className="flex flex-1 overflow-x-auto border-l border-[var(--border-subtle)]">
-              {(filterMember ? members.filter((m) => m.id === filterMember) : members).map((m) => {
-                const count = appointments.filter(
-                  (a) => a.barber.id === m.id && !["CANCELLED", "NO_SHOW"].includes(a.status)
-                ).length;
-                return (
-                  <div key={m.id} className="flex-1 min-w-[160px] px-3 py-2.5 border-r border-[var(--border-subtle)] flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center text-[11px] font-bold text-[var(--gold)] font-serif shrink-0">
-                      {m.user.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[var(--text-primary)] truncate">{m.user.name}</p>
-                      <p className="text-[10px] text-[var(--text-muted)]">{count} agend.</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* ── Calendar body ──────────────────────────────────────────── */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center py-20 text-stone-600 text-sm">
               Carregando agenda...
