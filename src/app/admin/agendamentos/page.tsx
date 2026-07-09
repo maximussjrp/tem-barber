@@ -1300,7 +1300,7 @@ function CalendarGrid({
             return (
               <div
                 key={m.id}
-                className="w-[280px] lg:w-[320px] shrink-0 px-3 py-2.5 border-r border-[var(--border-subtle)] flex items-center gap-2.5"
+                className="flex-1 min-w-[280px] lg:min-w-[320px] px-3 py-2.5 border-r border-[var(--border-subtle)] flex items-center gap-2.5"
               >
                 <div className="w-7 h-7 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center text-[11px] font-bold text-[var(--gold)] font-serif shrink-0">
                   {m.user.name.charAt(0).toUpperCase()}
@@ -1346,7 +1346,7 @@ function CalendarGrid({
             return (
               <div
                 key={m.id}
-                className={`w-[280px] lg:w-[320px] shrink-0 relative border-r border-[var(--border-subtle)] ${hasActiveBlock ? "z-30" : "z-10"}`}
+                className={`flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] ${hasActiveBlock ? "z-30" : "z-10"}`}
               >
                 {/* Grid lines */}
                 <div className="absolute inset-0 pointer-events-none">
