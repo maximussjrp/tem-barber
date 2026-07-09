@@ -219,7 +219,7 @@ export function AppointmentModal({
             return match?.id ?? "";
           })
           .filter(Boolean)
-      : []
+      : (initialState as any)?.serviceIds ?? []
   );
   const [dateTime, setDateTime] = useState(() => {
     if (appointment) {
@@ -229,10 +229,18 @@ export function AppointmentModal({
     }
     return initialState?.dateTime ?? `${currentDate}T09:00`;
   });
-  const [customerName, setCustomerName] = useState(appointment?.customer.name ?? "");
-  const [customerPhone, setCustomerPhone] = useState(appointment?.customer.phone ?? "");
+  const [customerName, setCustomerName] = useState(appointment?.customer.name ?? (initialState as any)?.customerName ?? "");
+  const [customerPhone, setCustomerPhone] = useState(appointment?.customer.phone ?? (initialState as any)?.customerPhone ?? "");
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(
-    appointment ? appointment.customer : null
+    appointment
+      ? appointment.customer
+      : (initialState as any)?.customerId
+        ? {
+            id: (initialState as any).customerId,
+            name: (initialState as any).customerName ?? "",
+            phone: (initialState as any).customerPhone ?? "",
+          }
+        : null
   );
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
@@ -1400,6 +1408,77 @@ function AgendamentosContent() {
     useState<NewAppointmentInitialState | null>(null);
   const [newAppointmentMode, setNewAppointmentMode] = useState<BookingMode>("NORMAL");
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+
+  useEffect(() => {
+    const customerId = searchParams.get("customerId");
+    const sourceAppointmentId = searchParams.get("sourceAppointmentId");
+    const memberIdParam = searchParams.get("memberId");
+    const serviceIdsParam = searchParams.get("serviceIds");
+
+    if (!customerId || loading) return;
+
+    async function setupPreFilledBooking() {
+      // Clear query params to prevent repeating modal trigger
+      const newParams = new URLSearchParams(window.location.search);
+      newParams.delete("customerId");
+      newParams.delete("sourceAppointmentId");
+      newParams.delete("memberId");
+      newParams.delete("serviceIds");
+      router.replace(`${window.location.pathname}?${newParams.toString()}`);
+
+      let prefilledMemberId = memberIdParam ?? "";
+      let prefilledServices: string[] = [];
+
+      if (sourceAppointmentId) {
+        try {
+          const res = await fetch(`/api/admin/appointments/${sourceAppointmentId}`);
+          if (res.ok) {
+            const appt = await res.json();
+            prefilledMemberId = appt.barber?.id ?? "";
+            prefilledServices = (appt.services ?? [])
+              .map((s: { service?: { name?: string } }) => {
+                const match = barbershopServices.find((bs) => bs.name === s.service?.name);
+                return match?.id ?? "";
+              })
+              .filter(Boolean);
+          }
+        } catch (e) {
+          console.error("Erro ao carregar agendamento de origem para rebook:", e);
+        }
+      } else if (serviceIdsParam) {
+        prefilledServices = serviceIdsParam.split(",").filter(Boolean);
+      }
+
+      // Fetch customer details
+      let clientDetails = null;
+      try {
+        const clientRes = await fetch(`/api/admin/clients/${customerId}`);
+        if (clientRes.ok) {
+          const clientData = await clientRes.json();
+          clientDetails = {
+            id: clientData.id,
+            name: clientData.name,
+            phone: clientData.phone,
+          };
+        }
+      } catch (e) {
+        console.error("Erro ao buscar detalhes do cliente para prefill:", e);
+      }
+
+      setNewAppointmentInitial({
+        memberId: prefilledMemberId || undefined,
+        dateTime: `${currentDate}T09:00`,
+        customerId: customerId,
+        customerName: clientDetails?.name ?? "",
+        customerPhone: clientDetails?.phone ?? "",
+        serviceIds: prefilledServices,
+      } as unknown as NewAppointmentInitialState);
+      setNewAppointmentMode("NORMAL");
+      setEditTarget("new");
+    }
+
+    setupPreFilledBooking();
+  }, [searchParams, loading, barbershopServices, router, currentDate]);
 
   const fetchData = useCallback(async (date: string) => {
     setLoading(true);
