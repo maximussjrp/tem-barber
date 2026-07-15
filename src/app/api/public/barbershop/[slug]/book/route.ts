@@ -22,6 +22,7 @@ import {
   normalizePhone,
   resolveBarbershopCustomerForBooking,
 } from "@/lib/customers";
+import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import {
   getIdempotencyExpiresAt,
   getIdempotencyKeyFromRequest,
@@ -330,9 +331,9 @@ export async function POST(
         }
 
         const cleanPhone = normalizePhone(customerPhone);
-        if (cleanPhone.length < 10) {
+        if (!validateBrazilianMobilePhone(cleanPhone)) {
           return {
-            error: NextResponse.json({ error: "Telefone invalido." }, { status: 400 }),
+            error: NextResponse.json({ error: "Informe um WhatsApp válido com DDD." }, { status: 400 }),
           };
         }
 

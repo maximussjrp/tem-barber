@@ -65,6 +65,18 @@ export default function ComandasPage() {
   async function handleWalkInSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!walkInDialog.customerName || !walkInDialog.customerPhone) return;
+
+    let clean = walkInDialog.customerPhone.replace(/\D/g, "");
+    if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
+      clean = clean.substring(2);
+    }
+    const isMobile = clean.length === 11 && clean[2] === "9";
+    const isAllSame = /^(\d)\1+$/.test(clean);
+    if (!isMobile || isAllSame) {
+      setError("Informe um WhatsApp válido com DDD.");
+      return;
+    }
+
     setCreating(true);
     try {
       const res = await fetch("/api/admin/comandas", {
@@ -91,7 +103,29 @@ export default function ComandasPage() {
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">Telefone</label>
-            <input type="tel" value={walkInDialog.customerPhone} onChange={(e) => setWalkInDialog((p) => ({ ...p, customerPhone: e.target.value }))} className="w-full bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]" required />
+            <input
+              type="tel"
+              value={walkInDialog.customerPhone}
+              onChange={(e) => {
+                let value = e.target.value.replace(/\D/g, "");
+                if (value.startsWith("55") && (value.length === 12 || value.length === 13)) {
+                  value = value.substring(2);
+                }
+                if (value.length > 11) value = value.substring(0, 11);
+
+                if (value.length > 6) {
+                  value = `(${value.substring(0, 2)}) ${value.substring(2, 7)}-${value.substring(7)}`;
+                } else if (value.length > 2) {
+                  value = `(${value.substring(0, 2)}) ${value.substring(2)}`;
+                } else if (value.length > 0) {
+                  value = `(${value}`;
+                }
+                setWalkInDialog((p) => ({ ...p, customerPhone: value }));
+              }}
+              placeholder="(11) 99999-9999"
+              className="w-full bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]"
+              required
+            />
           </div>
           <div className="flex justify-end gap-3 pt-4">
             <button type="button" onClick={() => setWalkInDialog((prev) => ({ ...prev, isOpen: false }))} disabled={creating} className="px-4 py-2 rounded-lg border border-[var(--border-medium)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors text-sm font-semibold">Cancelar</button>

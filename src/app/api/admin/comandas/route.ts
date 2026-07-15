@@ -10,6 +10,7 @@ import {
   normalizePhone,
   resolveBarbershopCustomerForBooking,
 } from "@/lib/customers";
+import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 
 interface CreateComandaBody {
   appointmentId?: string;
@@ -158,6 +159,9 @@ export async function POST(request: NextRequest) {
       } else {
         if (!customerName || !customerPhone) {
           throw new OperationalError("CUSTOMER_REQUIRED", "Informe cliente, nome e telefone.", 400);
+        }
+        if (!validateBrazilianMobilePhone(customerPhone)) {
+          throw new OperationalError("INVALID_PHONE", "Informe um WhatsApp válido com DDD.", 400);
         }
         const customer = await resolveBarbershopCustomerForBooking(tx, {
           barbershopId: data!.barbershopId,

@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { normalizePhone, phoneLookupVariants } from "@/lib/customers";
 import { publicBarbershopWhere, isPublicBarbershop } from "@/lib/public-barbershops";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
+import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 
 
 export async function POST(request: Request) {
@@ -21,8 +22,8 @@ export async function POST(request: Request) {
     }
 
     const cleanPhone = normalizePhone(phone);
-    if (cleanPhone.length < 10) {
-      return NextResponse.json({ error: "Digite o DDD e o numero completo." }, { status: 400 });
+    if (!validateBrazilianMobilePhone(cleanPhone)) {
+      return NextResponse.json({ error: "Informe um WhatsApp válido com DDD." }, { status: 400 });
     }
 
     const ip = resolveClientIp(request);

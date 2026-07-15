@@ -222,7 +222,7 @@ describe("agendamento publico", () => {
 
     expect(txMock.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { name: "Cliente A", phone: "11999999999", role: "USER" },
+        data: { name: "Cliente A", phone: "5511999999999", role: "USER" },
       })
     );
     expect(txMock.appointment.create).toHaveBeenCalledWith(

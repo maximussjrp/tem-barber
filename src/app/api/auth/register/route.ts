@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
+import { normalizeBrazilianMobilePhone, validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 
 // Helper para gerar o slug do estabelecimento
 function slugify(text: string) {
@@ -98,10 +99,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Higienizar dados
+    // 2. Higienizar dados e validar telefone
     const cleanCpf = cpf.replace(/\D/g, "");
-    const cleanPhone = phone.replace(/\D/g, "");
     const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = normalizeBrazilianMobilePhone(phone);
+    if (!cleanPhone || !validateBrazilianMobilePhone(cleanPhone)) {
+      return NextResponse.json(
+        { error: "Informe um WhatsApp válido com DDD." },
+        { status: 400 }
+      );
+    }
 
     // 3. Validação de CPF
     if (!isValidCpf(cleanCpf)) {

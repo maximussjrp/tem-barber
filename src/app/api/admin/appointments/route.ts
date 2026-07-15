@@ -16,6 +16,7 @@ import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/creat
 import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
 import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-transaction-error";
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
+import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import { todayIsoBR, nowBR } from "@/lib/time-utils";
 
 interface AdminAppointmentBody {
@@ -328,6 +329,15 @@ export async function POST(request: NextRequest) {
 
         let resolvedCustomerId: string;
         try {
+          if (customerPhone && !customerId) {
+            const canonicalPhone = normalizePhone(customerPhone);
+            if (!validateBrazilianMobilePhone(canonicalPhone)) {
+              return {
+                error: NextResponse.json({ error: "Informe um WhatsApp válido com DDD." }, { status: 400 }),
+              };
+            }
+          }
+
           const customer = await resolveBarbershopCustomerForBooking(tx, {
             barbershopId,
             customerId,
