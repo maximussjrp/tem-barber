@@ -247,6 +247,19 @@ function BookingWizard() {
       return;
     }
     if (!customerPhone.trim()) return;
+
+    let clean = customerPhone.replace(/\D/g, "");
+    if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
+      clean = clean.substring(2);
+    }
+    const isMobile = clean.length === 11 && clean[2] === "9";
+    const isAllSame = /^(\d)\1+$/.test(clean);
+    if (!isMobile || isAllSame) {
+      setBookingError("Informe um WhatsApp válido com DDD.");
+      return;
+    }
+    setBookingError("");
+
     setLoginStep("logging-in");
     const cleanPhone = customerPhone.replace(/\D/g, "");
     const res = await signIn("credentials", {
@@ -746,18 +759,37 @@ function BookingWizard() {
                     className="w-full bg-stone-950/70 border border-stone-800 rounded-xl px-4 py-3.5 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-base"
                   />
                 </div>
-                <div className="space-y-1.5">
+                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">
                     Telefone (WhatsApp) *
                   </label>
                   <input
                     type="tel"
                     value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    onChange={(e) => {
+                      let value = e.target.value.replace(/\D/g, "");
+                      if (value.startsWith("55") && (value.length === 12 || value.length === 13)) {
+                        value = value.substring(2);
+                      }
+                      if (value.length > 11) value = value.substring(0, 11);
+
+                      if (value.length > 6) {
+                        value = `(${value.substring(0, 2)}) ${value.substring(2, 7)}-${value.substring(7)}`;
+                      } else if (value.length > 2) {
+                        value = `(${value.substring(0, 2)}) ${value.substring(2)}`;
+                      } else if (value.length > 0) {
+                        value = `(${value}`;
+                      }
+                      setCustomerPhone(value);
+                      setBookingError("");
+                    }}
                     placeholder="(11) 99999-9999"
                     title="Seu telefone"
                     className="w-full bg-stone-950/70 border border-stone-800 rounded-xl px-4 py-3.5 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-base"
                   />
+                  {bookingError && step === 3 && (
+                    <p className="text-xs text-red-400 mt-1">{bookingError}</p>
+                  )}
                 </div>
               </div>
             )}

@@ -16,9 +16,9 @@ import { GET as SEARCH_CLIENTS } from "@/app/api/admin/clients/search/route";
 
 describe("normalizacao de telefone", () => {
   it("remove mascara e prefixo brasileiro quando aplicavel", () => {
-    expect(normalizePhone("(17) 99999-9999")).toBe("17999999999");
-    expect(normalizePhone("+55 17 99999-9999")).toBe("17999999999");
-    expect(normalizePhone("55 17 99999-9999")).toBe("17999999999");
+    expect(normalizePhone("(17) 99999-9999")).toBe("5517999999999");
+    expect(normalizePhone("+55 17 99999-9999")).toBe("5517999999999");
+    expect(normalizePhone("55 17 99999-9999")).toBe("5517999999999");
   });
 
   it("compara telefones equivalentes", () => {
@@ -33,9 +33,7 @@ describe("normalizacao de telefone", () => {
   });
 
   it("gera variantes com DDI e nono digito", () => {
-    expect(phoneLookupVariants("+55 (79) 88240-050")).toEqual(
-      expect.arrayContaining(["7988240050", "557988240050", "79988240050", "5579988240050"])
-    );
+    expect(phoneLookupVariants("+55 (79) 88240-050")).toEqual(["5579988240050", "79988240050"]);
   });
 });
 

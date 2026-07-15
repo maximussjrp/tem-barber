@@ -2,6 +2,11 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import {
+  normalizeBrazilianMobilePhone,
+  validateBrazilianMobilePhone,
+  getBrazilianPhoneVariants
+} from "./phone/br-phone";
 
 interface CustomAuthUser {
   id: string;
@@ -40,24 +45,22 @@ export const authOptions: NextAuthOptions = {
             throw new Error("Nome e telefone são obrigatórios para acesso do cliente.");
           }
 
-          // Limpar formatação do telefone para consistência (apenas números)
-          const cleanPhone = phone.replace(/\D/g, "");
-
-          if (cleanPhone.length < 10) {
-            throw new Error("Telefone inválido. Informe o DDD + Número.");
+          const canonicalPhone = normalizeBrazilianMobilePhone(phone);
+          if (!canonicalPhone || !validateBrazilianMobilePhone(canonicalPhone)) {
+            throw new Error("Informe um WhatsApp válido com DDD.");
           }
 
-          // Buscar se o cliente já existe pelo telefone
+          // Buscar se o cliente já existe pelo telefone (canônico ou variantes legadas)
           let user = await prisma.user.findFirst({
-            where: { phone: cleanPhone },
+            where: { phone: { in: getBrazilianPhoneVariants(canonicalPhone) } },
           });
 
-          // Se não existir, cadastramos o cliente automaticamente
+          // Se não existir, cadastramos o cliente automaticamente com o formato canônico
           if (!user) {
             user = await prisma.user.create({
               data: {
-                name,
-                phone: cleanPhone,
+                name: name.trim(),
+                phone: canonicalPhone,
                 role: "USER",
               },
             });
@@ -140,7 +143,7 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.role = (user as CustomAuthUser).role;
         token.phone = (user as CustomAuthUser).phone;
-        (token as any).authLevel = (user as CustomAuthUser).authLevel;
+        (token as Record<string, unknown>).authLevel = (user as CustomAuthUser).authLevel;
       }
       return token;
     },
@@ -149,7 +152,7 @@ export const authOptions: NextAuthOptions = {
         (session.user as CustomAuthUser).id = token.id as string;
         (session.user as CustomAuthUser).role = token.role as string;
         (session.user as CustomAuthUser).phone = token.phone as string;
-        (session.user as CustomAuthUser).authLevel = (token as any).authLevel as
+        (session.user as CustomAuthUser).authLevel = (token as Record<string, unknown>).authLevel as
           | "phone_lookup"
           | "admin"
           | "verified_link"

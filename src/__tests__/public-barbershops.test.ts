@@ -104,12 +104,12 @@ describe("barbearias publicas", () => {
   });
 
   it("client lookup busca por variantes normalizadas do telefone", async () => {
-    await clientLookup(postLookup("+55 (79) 88240-050"));
+    await clientLookup(postLookup("+55 (79) 98824-0050"));
 
     expect(prismaMock.user.findFirst).toHaveBeenCalledWith({
       where: {
         phone: {
-          in: expect.arrayContaining(["7988240050", "557988240050", "79988240050"]),
+          in: expect.arrayContaining(["5579988240050", "79988240050"]),
         },
       },
     });
@@ -138,7 +138,7 @@ describe("barbearias publicas", () => {
   });
 
   it("client lookup sem vinculo nao retorna lista global", async () => {
-    const response = await clientLookup(postLookup("(79) 88240-050"));
+    const response = await clientLookup(postLookup("(79) 98824-0050"));
     const data = await response.json();
 
     expect(data.linkedBarbershops).toEqual([]);

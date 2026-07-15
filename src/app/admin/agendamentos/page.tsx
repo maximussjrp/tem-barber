@@ -315,7 +315,7 @@ export function AppointmentModal({
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(customerPhone)}`, {
+        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(phoneDigits)}`, {
           signal: controller.signal,
         });
         if (!res.ok) return;
@@ -399,7 +399,24 @@ export function AppointmentModal({
     if (!memberId) { setError("Selecione um barbeiro."); return; }
     if (selectedServiceIds.length === 0) { setError("Selecione ao menos um serviço."); return; }
     if (!dateTime) { setError("Informe data e hora."); return; }
-    if (!isEdit && !customerPhone.trim()) { setError("Informe o telefone do cliente."); return; }
+    if (!isEdit) {
+      if (!customerPhone.trim()) {
+        setError("Informe o telefone do cliente.");
+        return;
+      }
+      if (!selectedCustomer) {
+        let clean = customerPhone.replace(/\D/g, "");
+        if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
+          clean = clean.substring(2);
+        }
+        const isMobile = clean.length === 11 && clean[2] === "9";
+        const isAllSame = /^(\d)\1+$/.test(clean);
+        if (!isMobile || isAllSame) {
+          setError("Informe um WhatsApp válido com DDD.");
+          return;
+        }
+      }
+    }
     if (!isEdit && bookingMode === "FIT_IN" && !fitInReason.trim()) {
       setError("Informe o motivo do encaixe.");
       return;
@@ -703,7 +720,19 @@ export function AppointmentModal({
                     type="tel"
                     value={customerPhone}
                     onChange={(e) => {
-                      const value = e.target.value;
+                      let value = e.target.value.replace(/\D/g, "");
+                      if (value.startsWith("55") && (value.length === 12 || value.length === 13)) {
+                        value = value.substring(2);
+                      }
+                      if (value.length > 11) value = value.substring(0, 11);
+
+                      if (value.length > 6) {
+                        value = `(${value.substring(0, 2)}) ${value.substring(2, 7)}-${value.substring(7)}`;
+                      } else if (value.length > 2) {
+                        value = `(${value.substring(0, 2)}) ${value.substring(2)}`;
+                      } else if (value.length > 0) {
+                        value = `(${value}`;
+                      }
                       setCustomerPhone(value);
                       if (value.replace(/\D/g, "").length < 5) setPhoneSuggestion(null);
                       if (selectedCustomer) setSelectedCustomer(null);

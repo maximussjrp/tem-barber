@@ -1,4 +1,8 @@
 import { Prisma } from "@prisma/client";
+import {
+  normalizeBrazilianMobilePhone,
+  getBrazilianPhoneVariants,
+} from "./phone/br-phone";
 
 export type CustomerLookupResult = {
   id: string;
@@ -8,40 +12,15 @@ export type CustomerLookupResult = {
 
 type CustomerTx = Pick<Prisma.TransactionClient, "appointment" | "user">;
 
-export function normalizePhone(phone: string | null | undefined) {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) {
-    return digits.slice(2);
-  }
-  return digits;
+export function normalizePhone(phone: string | null | undefined): string {
+  return normalizeBrazilianMobilePhone(phone) ?? "";
 }
 
-export function phoneLookupVariants(phone: string | null | undefined) {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  const localPhone = normalizePhone(digits);
-  const variants = new Set<string>();
-
-  if (localPhone) {
-    variants.add(localPhone);
-    variants.add(`55${localPhone}`);
-  }
-
-  if (localPhone.length === 10) {
-    const withNinthDigit = `${localPhone.slice(0, 2)}9${localPhone.slice(2)}`;
-    variants.add(withNinthDigit);
-    variants.add(`55${withNinthDigit}`);
-  }
-
-  if (localPhone.length === 11 && localPhone[2] === "9") {
-    const withoutNinthDigit = `${localPhone.slice(0, 2)}${localPhone.slice(3)}`;
-    variants.add(withoutNinthDigit);
-    variants.add(`55${withoutNinthDigit}`);
-  }
-
-  return [...variants].filter(Boolean);
+export function phoneLookupVariants(phone: string | null | undefined): string[] {
+  return getBrazilianPhoneVariants(phone);
 }
 
-export function phonesMatch(left: string | null | undefined, right: string | null | undefined) {
+export function phonesMatch(left: string | null | undefined, right: string | null | undefined): boolean {
   const normalizedLeft = normalizePhone(left);
   const normalizedRight = normalizePhone(right);
   return !!normalizedLeft && normalizedLeft === normalizedRight;
@@ -51,7 +30,12 @@ export function phoneSearchFragments(phone: string | null | undefined) {
   const normalizedPhone = normalizePhone(phone);
   const fragments = new Set<string>();
 
-  if (normalizedPhone) fragments.add(normalizedPhone);
+  if (normalizedPhone) {
+    fragments.add(normalizedPhone);
+    if (normalizedPhone.startsWith("55")) {
+      fragments.add(normalizedPhone.slice(2));
+    }
+  }
   if (normalizedPhone.length >= 8) fragments.add(normalizedPhone.slice(-8));
   if (normalizedPhone.length >= 9) fragments.add(normalizedPhone.slice(-9, -4));
   if (normalizedPhone.length >= 5) fragments.add(normalizedPhone.slice(-5));
@@ -141,7 +125,7 @@ export async function resolveBarbershopCustomerForBooking(
   if (existingCustomer) return existingCustomer;
 
   const globalUser = await tx.user.findFirst({
-    where: { phone: normalizedPhone },
+    where: { phone: { in: getBrazilianPhoneVariants(normalizedPhone) } },
     select: { id: true, name: true, phone: true },
   });
   if (globalUser && phonesMatch(globalUser.phone, normalizedPhone)) return globalUser;

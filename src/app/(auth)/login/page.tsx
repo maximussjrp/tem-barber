@@ -132,6 +132,9 @@ function LoginContent() {
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "");
+    if (value.startsWith("55") && (value.length === 12 || value.length === 13)) {
+      value = value.substring(2);
+    }
     if (value.length > 11) value = value.substring(0, 11);
 
     if (value.length > 6) {
@@ -151,12 +154,14 @@ function LoginContent() {
     setSuccessMsg(null);
 
     try {
-      const cleanPhone = clientPhone.replace(/\D/g, "");
-      if (cleanPhone.length < 10) {
-        setErrorMsg("Digite o DDD e o número completo.");
-        setLoading(false);
-        return;
-        setErrorMsg("Telefone inválido. Informe o DDD + Número.");
+      let cleanPhone = clientPhone.replace(/\D/g, "");
+      if (cleanPhone.startsWith("55") && (cleanPhone.length === 12 || cleanPhone.length === 13)) {
+        cleanPhone = cleanPhone.substring(2);
+      }
+      const isMobile = cleanPhone.length === 11 && cleanPhone[2] === "9";
+      const isAllSame = /^(\d)\1+$/.test(cleanPhone);
+      if (!isMobile || isAllSame) {
+        setErrorMsg("Informe um WhatsApp válido com DDD.");
         setLoading(false);
         return;
       }

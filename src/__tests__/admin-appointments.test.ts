@@ -139,7 +139,7 @@ describe("agendamento administrativo", () => {
 
     expect(prismaMock.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { name: "Cliente Novo", phone: "11988887777", role: "USER" },
+        data: { name: "Cliente Novo", phone: "5511988887777", role: "USER" },
       })
     );
     expect(prismaMock.appointment.create).toHaveBeenCalledWith(
