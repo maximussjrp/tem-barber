@@ -89,6 +89,7 @@ function LoginContent() {
   }, [searchParams]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (activeTab !== "client" || searchParams.get("callbackUrl")) {
       return;
@@ -111,6 +112,7 @@ function LoginContent() {
       router.replace(`/${storedSlug}/agendar`);
     }
   }, [activeTab, router, searchParams]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const selectTab = (tab: "client" | "admin") => {
     setErrorMsg(null);
