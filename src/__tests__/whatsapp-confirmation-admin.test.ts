@@ -83,8 +83,21 @@ describe("POST /api/admin/appointments/[id]/confirm-whatsapp", () => {
         confirmedAt: expect.any(Date),
         confirmedById: "admin-a",
       },
+      select: {
+        id: true,
+        appointmentId: true,
+        barbershopId: true,
+        status: true,
+        tokenHint: true,
+        expiresAt: true,
+        confirmedAt: true,
+        confirmedById: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
     expect(data.whatsappConfirmation.status).toBe("CONFIRMED");
+    expect(data.whatsappConfirmation).not.toHaveProperty("tokenHash");
   });
 
   it("rejeita token incorreto", async () => {
@@ -121,7 +134,27 @@ describe("POST /api/admin/appointments/[id]/confirm-whatsapp", () => {
 
     expect(response.status).toBe(200);
     expect(data.whatsappConfirmation.status).toBe("CONFIRMED");
+    expect(data.whatsappConfirmation).not.toHaveProperty("tokenHash");
     expect(prismaMock.appointmentWhatsappConfirmation.update).not.toHaveBeenCalled();
+  });
+
+  it("does not expose tokenHash in confirm-whatsapp responses", async () => {
+    const response = await POST(request("TB-123456"), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.whatsappConfirmation).toEqual(
+      expect.objectContaining({
+        id: "confirmation-a",
+        appointmentId: "appointment-a",
+        barbershopId: "shop-a",
+        status: "CONFIRMED",
+        tokenHint: "TB-****56",
+        confirmedById: "admin-a",
+      })
+    );
+    expect(JSON.stringify(data)).not.toContain("tokenHash");
+    expect(data.whatsappConfirmation).not.toHaveProperty("tokenHash");
   });
 
   it("rejeita SUPER_ADMIN sem papel operacional no tenant", async () => {

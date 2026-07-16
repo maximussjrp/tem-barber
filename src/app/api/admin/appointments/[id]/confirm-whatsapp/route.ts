@@ -7,6 +7,49 @@ import {
 } from "@/lib/appointments/whatsapp-confirmation";
 import { getAdminSession } from "@/lib/api-auth";
 
+type SafeWhatsappConfirmation = {
+  id: string;
+  appointmentId: string;
+  barbershopId: string;
+  status: string;
+  tokenHint: string;
+  expiresAt: Date | null;
+  confirmedAt: Date | null;
+  confirmedById: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+const safeWhatsappConfirmationSelect = {
+  id: true,
+  appointmentId: true,
+  barbershopId: true,
+  status: true,
+  tokenHint: true,
+  expiresAt: true,
+  confirmedAt: true,
+  confirmedById: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+function sanitizeWhatsappConfirmation(
+  confirmation: SafeWhatsappConfirmation
+): SafeWhatsappConfirmation {
+  return {
+    id: confirmation.id,
+    appointmentId: confirmation.appointmentId,
+    barbershopId: confirmation.barbershopId,
+    status: confirmation.status,
+    tokenHint: confirmation.tokenHint,
+    expiresAt: confirmation.expiresAt,
+    confirmedAt: confirmation.confirmedAt,
+    confirmedById: confirmation.confirmedById,
+    createdAt: confirmation.createdAt,
+    updatedAt: confirmation.updatedAt,
+  };
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -59,7 +102,9 @@ export async function POST(
   }
 
   if (confirmation.status === WHATSAPP_CONFIRMATION_STATUS_CONFIRMED) {
-    return NextResponse.json({ whatsappConfirmation: confirmation });
+    return NextResponse.json({
+      whatsappConfirmation: sanitizeWhatsappConfirmation(confirmation),
+    });
   }
 
   if (confirmation.status !== WHATSAPP_CONFIRMATION_STATUS_PENDING) {
@@ -96,7 +141,10 @@ export async function POST(
       confirmedAt: new Date(),
       confirmedById: data.userId,
     },
+    select: safeWhatsappConfirmationSelect,
   });
 
-  return NextResponse.json({ whatsappConfirmation: updated });
+  return NextResponse.json({
+    whatsappConfirmation: sanitizeWhatsappConfirmation(updated),
+  });
 }
