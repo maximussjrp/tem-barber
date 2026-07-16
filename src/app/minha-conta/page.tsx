@@ -28,6 +28,10 @@ interface AppointmentItem {
   review: { id: string; rating: number; comment: string | null } | null;
 }
 
+type ClientSessionUser = {
+  authLevel?: string;
+};
+
 const STATUS_LABEL: Record<AppStatus, string> = {
   PENDING: "Pendente",
   CONFIRMED: "Confirmado",
@@ -48,6 +52,14 @@ function isFuture(dateTime: string) {
   return new Date(dateTime).getTime() > Date.now() + 60_000;
 }
 
+function isClientAuthLevel(authLevel: string | undefined) {
+  return (
+    authLevel === "phone_lookup" ||
+    authLevel === "verified_link" ||
+    authLevel === "verified_otp"
+  );
+}
+
 export default function MinhaContaPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -58,6 +70,8 @@ export default function MinhaContaPage() {
   const [accessError, setAccessError] = useState("");
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -148,6 +162,30 @@ export default function MinhaContaPage() {
   const past = appointments.filter(
     (a) => !isFuture(a.dateTime) || ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
   );
+  const clientSessionActive = isClientAuthLevel(
+    (session?.user as ClientSessionUser | undefined)?.authLevel
+  );
+
+  const handleLogout = async () => {
+    setLogoutError("");
+    setLoggingOut(true);
+
+    try {
+      const res = await fetch("/api/client/logout", { method: "POST" });
+      if (!res.ok) {
+        throw new Error("logout failed");
+      }
+
+      setAppointments([]);
+      setLinkedBarbershops([]);
+      router.push("/login");
+      router.refresh();
+    } catch {
+      setLogoutError("Nao foi possivel sair agora. Tente novamente.");
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   const renderCard = (a: AppointmentItem) => {
     const dt = new Date(a.dateTime);
@@ -257,6 +295,16 @@ export default function MinhaContaPage() {
             <h1 className="font-serif text-lg font-bold text-[var(--text-primary)]">Meus agendamentos</h1>
             <p className="text-xs text-[var(--text-muted)]">{session?.user?.name}</p>
           </div>
+          {clientSessionActive && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="ml-auto rounded-xl bg-[var(--surface-2)] px-3 py-2 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-50"
+            >
+              {loggingOut ? "Saindo..." : "Sair"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -264,6 +312,12 @@ export default function MinhaContaPage() {
         {accessError && (
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
             {accessError}
+          </div>
+        )}
+
+        {logoutError && (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {logoutError}
           </div>
         )}
 
