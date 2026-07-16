@@ -44,6 +44,18 @@ interface BookingErrorResponse {
   message?: string;
 }
 
+type PublicSessionUser = {
+  authLevel?: string;
+};
+
+function isPublicClientAuthLevel(authLevel: string | undefined) {
+  return (
+    authLevel === "phone_lookup" ||
+    authLevel === "verified_link" ||
+    authLevel === "verified_otp"
+  );
+}
+
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 const STEPS = ["Serviço", "Barbeiro", "Horário", "Dados", "Confirmar"];
@@ -88,7 +100,7 @@ function BookingWizard() {
   const slug = params.slug as string;
   const safeSlug = sanitizeBarbershopSlug(slug);
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, update: updateSession } = useSession();
 
   const [step, setStep] = useState(0);
 
@@ -109,6 +121,9 @@ function BookingWizard() {
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [loginStep, setLoginStep] = useState<"fill" | "logging-in">("fill");
+  const [clientLoggedOut, setClientLoggedOut] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
 
   // Booking
   const [booking, setBooking] = useState(false);
@@ -176,6 +191,9 @@ function BookingWizard() {
   // ─── Computed ────────────────────────────────────────────────────────────
 
   const allServices: PublicService[] = categories.flatMap((c) => c.services);
+  const sessionUser = session?.user as PublicSessionUser | undefined;
+  const clientSessionActive =
+    !clientLoggedOut && isPublicClientAuthLevel(sessionUser?.authLevel);
 
   const selectedServices = allServices.filter((s) => selectedServiceIds.includes(s.id));
   const totalPrice = selectedServices.reduce((s, svc) => s + Number(svc.price), 0);
@@ -250,7 +268,7 @@ function BookingWizard() {
   // ─── Step 3: Customer login/fill ─────────────────────────────────────────
 
   const handleLoginOrContinue = async () => {
-    if (session?.user) {
+    if (clientSessionActive) {
       setStep(4);
       return;
     }
@@ -278,11 +296,34 @@ function BookingWizard() {
     });
     setLoginStep("fill");
     if (res?.ok) {
+      setClientLoggedOut(false);
       setStep(4);
     }
     // Even if sign-in fails (shouldn't), proceed — book API will handle session-less
     else {
       setStep(4);
+    }
+  };
+
+  const handleClientLogout = async () => {
+    setLogoutError("");
+    setLoggingOut(true);
+
+    try {
+      const res = await fetch("/api/client/logout", { method: "POST" });
+      if (!res.ok) {
+        throw new Error("logout failed");
+      }
+
+      setClientLoggedOut(true);
+      setCustomerName("");
+      setCustomerPhone("");
+      await updateSession?.();
+      router.refresh();
+    } catch {
+      setLogoutError("Nao foi possivel sair agora. Tente novamente.");
+    } finally {
+      setLoggingOut(false);
     }
   };
 
@@ -410,6 +451,20 @@ function BookingWizard() {
               >
                 Abrir WhatsApp
               </a>
+            </div>
+          )}
+
+          {clientSessionActive && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleClientLogout}
+                disabled={loggingOut}
+                className="w-full rounded-xl border border-[var(--border-medium)] px-4 py-3 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
+              >
+                {loggingOut ? "Saindo..." : "Nao e voce? Sair"}
+              </button>
+              {logoutError && <p className="text-xs text-red-400">{logoutError}</p>}
             </div>
           )}
 
@@ -543,6 +598,16 @@ function BookingWizard() {
         <div className="flex-1">
           <p className="text-xs text-[var(--text-muted)] font-medium uppercase tracking-widest">{STEPS[step]}</p>
         </div>
+        {clientSessionActive && (
+          <button
+            type="button"
+            onClick={handleClientLogout}
+            disabled={loggingOut}
+            className="px-3 h-9 rounded-xl bg-[var(--surface-2)] text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-50"
+          >
+            {loggingOut ? "Saindo..." : "Sair"}
+          </button>
+        )}
         <button
           onClick={() => router.push(`/${slug}`)}
           className="w-9 h-9 flex items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
@@ -769,14 +834,23 @@ function BookingWizard() {
           <div className="space-y-5">
             <h2 className="text-xl font-serif font-bold text-stone-100">Seus dados</h2>
 
-            {session?.user ? (
+            {clientSessionActive ? (
               <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-xl px-4 py-3">
                 <p className="text-sm text-emerald-400">
-                  ✓ Você está logado como <span className="font-semibold">{session.user.name}</span>.
+                  ✓ Você está logado como <span className="font-semibold">{session?.user?.name}</span>.
                 </p>
                 <p className="text-xs text-emerald-600 mt-0.5">
                   O agendamento será feito com sua conta.
                 </p>
+                <button
+                  type="button"
+                  onClick={handleClientLogout}
+                  disabled={loggingOut}
+                  className="mt-3 text-xs font-semibold text-emerald-200 underline-offset-4 hover:underline disabled:opacity-50"
+                >
+                  {loggingOut ? "Saindo..." : "Nao e voce? Sair"}
+                </button>
+                {logoutError && <p className="mt-2 text-xs text-red-400">{logoutError}</p>}
               </div>
             ) : (
               <div className="space-y-4">
@@ -930,7 +1004,7 @@ function BookingWizard() {
             {step === 3 && (
               <button
                 onClick={handleLoginOrContinue}
-                disabled={!session?.user && !customerPhone.trim()}
+                disabled={!clientSessionActive && !customerPhone.trim()}
                 className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-bold py-4 rounded-xl transition-colors"
               >
                 {loginStep === "logging-in" ? "Entrando..." : "Continuar"}
