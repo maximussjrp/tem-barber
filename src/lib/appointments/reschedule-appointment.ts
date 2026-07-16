@@ -55,6 +55,15 @@ export async function rescheduleAppointmentWithScheduleLock(
       customer: { select: { id: true, name: true, phone: true } },
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
       services: { include: { service: { select: { name: true, durationMin: true } } } },
+      whatsappConfirmation: {
+        select: {
+          status: true,
+          tokenHint: true,
+          expiresAt: true,
+          confirmedAt: true,
+          confirmedById: true,
+        },
+      },
     },
   });
 }

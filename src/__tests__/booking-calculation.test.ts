@@ -6,6 +6,7 @@ const txMock = {
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
   barberService: { findMany: vi.fn() },
+  appointmentWhatsappConfirmation: { create: vi.fn() },
   appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
@@ -43,7 +44,11 @@ function service(id: string, price: string, durationMin: number, barbershopId = 
 beforeEach(() => {
   vi.clearAllMocks();
   getServerSessionMock.mockResolvedValue(null);
-  prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a", name: "Barbearia A" });
+  prismaMock.barbershop.findUnique.mockResolvedValue({
+    id: "shop-a",
+    name: "Barbearia A",
+    phone: "5511999999999",
+  });
   prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.idempotencyKey.findUnique.mockResolvedValue(null);
   prismaMock.$transaction.mockImplementation((callback: (tx: typeof txMock) => unknown) =>
@@ -52,6 +57,7 @@ beforeEach(() => {
   txMock.idempotencyKey.findUnique.mockResolvedValue(null);
   txMock.idempotencyKey.create.mockResolvedValue({ id: "idem-a" });
   txMock.idempotencyKey.update.mockResolvedValue({ id: "idem-a" });
+  txMock.appointmentWhatsappConfirmation.create.mockResolvedValue({ id: "whatsapp-confirmation-a" });
   txMock.$executeRaw.mockResolvedValue(0);
   txMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
   txMock.barberService.findMany.mockImplementation(async ({ where }) =>

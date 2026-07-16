@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import WhatsAppShareSlots from "@/components/admin/WhatsAppShareSlots";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
 
@@ -9,6 +10,15 @@ import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } fr
 
 type AppStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 type BookingMode = "NORMAL" | "FIT_IN";
+type WhatsappConfirmationStatus = "PENDING" | "CONFIRMED" | "EXPIRED" | "CANCELED";
+
+interface AppointmentWhatsappConfirmation {
+  status: WhatsappConfirmationStatus;
+  tokenHint?: string | null;
+  expiresAt?: string | null;
+  confirmedAt?: string | null;
+  confirmedById?: string | null;
+}
 
 interface AppService {
   service: { id: string; name: string; durationMin: number };
@@ -30,6 +40,7 @@ interface Appointment {
   barber: { id: string; user: { name: string; avatarUrl: string | null } };
   services: AppService[];
   comandas?: { id: string; status: string; total: string; paidTotal: string }[];
+  whatsappConfirmation?: AppointmentWhatsappConfirmation | null;
 }
 
 interface FitInConflictPreview {
@@ -57,6 +68,10 @@ interface Service {
 interface NewAppointmentInitialState {
   memberId?: string;
   dateTime?: string;
+  serviceIds?: string[];
+  customerId?: string;
+  customerName?: string;
+  customerPhone?: string;
 }
 
 interface CustomerSearchResult {
@@ -64,6 +79,28 @@ interface CustomerSearchResult {
   name: string;
   phone: string;
   lastAppointmentAt?: string;
+}
+
+interface ClubBenefit {
+  serviceId: string;
+  benefitType: "INCLUDED_SERVICE" | "SERVICE_DISCOUNT";
+  isUnlimited?: boolean;
+  availableQty?: number;
+  includedQty?: number;
+  canUse?: boolean;
+  discountPercent?: number;
+}
+
+interface ClubBalance {
+  status?: string;
+  clubPlan?: { id?: string; name: string };
+  benefits?: ClubBenefit[];
+}
+
+declare global {
+  interface Window {
+    __clubBalanceCache?: Record<string, ClubBalance | null>;
+  }
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -111,6 +148,22 @@ const LABEL_INPUT = "text-xs font-bold uppercase tracking-widest text-[var(--tex
 const INPUT_CLASS =
   "w-full bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)] transition-colors text-sm";
 
+const WHATSAPP_STATUS_LABEL: Record<WhatsappConfirmationStatus, string> = {
+  PENDING: "Pendente WhatsApp",
+  CONFIRMED: "WhatsApp confirmado",
+  EXPIRED: "WhatsApp expirado",
+  CANCELED: "WhatsApp cancelado",
+};
+
+const WHATSAPP_STATUS_BG: Record<WhatsappConfirmationStatus, string> = {
+  PENDING: "bg-amber-500/10 border-amber-500/30 text-amber-200",
+  CONFIRMED: "bg-emerald-500/10 border-emerald-500/30 text-emerald-200",
+  EXPIRED: "bg-stone-800 border-stone-700 text-stone-400",
+  CANCELED: "bg-red-900/30 border-red-800/40 text-red-300",
+};
+
+const INACTIVE_CLUB_STATUSES = ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"];
+
 // Calendar config
 const HOUR_START = 7;
 const HOUR_END = 22;
@@ -143,6 +196,18 @@ function formatTime(iso: string) {
   });
 }
 
+function formatDateTime(iso?: string | null) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
 function isoToMinutes(iso: string) {
   const d = new Date(iso);
   return d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -162,9 +227,9 @@ function minutesToLocalInput(dateStr: string, minutes: number) {
   return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-const clubBalanceCache: Record<string, any> = {};
+const clubBalanceCache: Record<string, ClubBalance | null> = {};
 if (typeof window !== "undefined") {
-  (window as any).__clubBalanceCache = clubBalanceCache;
+  window.__clubBalanceCache = clubBalanceCache;
 }
 
 async function fetchClubBalance(customerId: string) {
@@ -193,8 +258,10 @@ export function AppointmentModal({
   currentDate,
   initialState,
   initialBookingMode,
+  canConfirmWhatsapp = false,
   onClose,
   onSaved,
+  onUpdated,
 }: {
   appointment: Appointment | null;
   members: Member[];
@@ -203,8 +270,10 @@ export function AppointmentModal({
   currentDate: string;
   initialState?: NewAppointmentInitialState | null;
   initialBookingMode?: BookingMode;
+  canConfirmWhatsapp?: boolean;
   onClose: () => void;
   onSaved: (a: Appointment) => void;
+  onUpdated?: (a: Appointment) => void;
 }) {
   const isEdit = !!appointment;
   const [bookingMode, setBookingMode] = useState<BookingMode>(
@@ -219,7 +288,7 @@ export function AppointmentModal({
             return match?.id ?? "";
           })
           .filter(Boolean)
-      : (initialState as any)?.serviceIds ?? []
+      : initialState?.serviceIds ?? []
   );
   const [dateTime, setDateTime] = useState(() => {
     if (appointment) {
@@ -229,16 +298,16 @@ export function AppointmentModal({
     }
     return initialState?.dateTime ?? `${currentDate}T09:00`;
   });
-  const [customerName, setCustomerName] = useState(appointment?.customer.name ?? (initialState as any)?.customerName ?? "");
-  const [customerPhone, setCustomerPhone] = useState(appointment?.customer.phone ?? (initialState as any)?.customerPhone ?? "");
+  const [customerName, setCustomerName] = useState(appointment?.customer.name ?? initialState?.customerName ?? "");
+  const [customerPhone, setCustomerPhone] = useState(appointment?.customer.phone ?? initialState?.customerPhone ?? "");
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(
     appointment
       ? appointment.customer
-      : (initialState as any)?.customerId
+      : initialState?.customerId
         ? {
-            id: (initialState as any).customerId,
-            name: (initialState as any).customerName ?? "",
-            phone: (initialState as any).customerPhone ?? "",
+            id: initialState.customerId,
+            name: initialState.customerName ?? "",
+            phone: initialState.customerPhone ?? "",
           }
         : null
   );
@@ -250,16 +319,21 @@ export function AppointmentModal({
   const [fitInReason, setFitInReason] = useState(appointment?.fitInReason ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [customerClubBalance, setCustomerClubBalance] = useState<any>(null);
+  const [customerClubBalance, setCustomerClubBalance] = useState<ClubBalance | null>(null);
   const [loadingClub, setLoadingClub] = useState(false);
+  const [whatsappConfirmationOverride, setWhatsappConfirmationOverride] =
+    useState<AppointmentWhatsappConfirmation | null | undefined>(undefined);
+  const [whatsappToken, setWhatsappToken] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
+  const [whatsappSuccess, setWhatsappSuccess] = useState("");
+  const [confirmingWhatsapp, setConfirmingWhatsapp] = useState(false);
+  const whatsappConfirmation = whatsappConfirmationOverride ?? appointment?.whatsappConfirmation ?? null;
 
   useEffect(() => {
     if (!selectedCustomer?.id) {
-      setCustomerClubBalance(null);
       return;
     }
     let active = true;
-    setLoadingClub(true);
     fetchClubBalance(selectedCustomer.id).then((data) => {
       if (active) {
         setCustomerClubBalance(data);
@@ -350,6 +424,7 @@ export function AppointmentModal({
     setCustomerLookupQuery("");
     setCustomerResults([]);
     setPhoneSuggestion(null);
+    setCustomerClubBalance(null);
   };
 
   const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 5;
@@ -456,6 +531,47 @@ export function AppointmentModal({
     }
   };
 
+  const handleConfirmWhatsapp = async () => {
+    if (!appointment) return;
+    setWhatsappError("");
+    setWhatsappSuccess("");
+
+    const token = whatsappToken.trim();
+    if (!token) {
+      setWhatsappError("Informe o codigo recebido no WhatsApp.");
+      return;
+    }
+
+    setConfirmingWhatsapp(true);
+    try {
+      const res = await fetch(`/api/admin/appointments/${appointment.id}/confirm-whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (res.status === 422 || data.error === "INVALID_WHATSAPP_CONFIRMATION_TOKEN") {
+          setWhatsappError("Código inválido. Confira a mensagem recebida no WhatsApp.");
+          return;
+        }
+        setWhatsappError(data.message ?? data.error ?? "Erro ao confirmar WhatsApp.");
+        return;
+      }
+
+      const updated = data.whatsappConfirmation as AppointmentWhatsappConfirmation;
+      setWhatsappConfirmationOverride(updated);
+      setWhatsappToken("");
+      setWhatsappSuccess("WhatsApp confirmado");
+      onUpdated?.({ ...appointment, whatsappConfirmation: updated });
+    } catch {
+      setWhatsappError("Erro ao confirmar WhatsApp.");
+    } finally {
+      setConfirmingWhatsapp(false);
+    }
+  };
+
   const getSelectedServicesPreview = () => {
     const selectedServices = selectedServiceIds
       .map(id => barbershopServices.find(s => s.id === id))
@@ -464,8 +580,8 @@ export function AppointmentModal({
     let totalOriginal = 0;
     let totalToday = 0;
 
-    const benefits = customerClubBalance?.benefits ? customerClubBalance.benefits.map((b: any) => ({ ...b })) : [];
-    const isInactive = customerClubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(customerClubBalance.status);
+    const benefits = customerClubBalance?.benefits ? customerClubBalance.benefits.map((b) => ({ ...b })) : [];
+    const isInactive = !!customerClubBalance?.status && INACTIVE_CLUB_STATUSES.includes(customerClubBalance.status);
 
     const processed = selectedServices.map(s => {
       const originalPrice = parseFloat(s.price);
@@ -478,7 +594,7 @@ export function AppointmentModal({
       let limitExhausted = false;
 
       if (customerClubBalance && !isInactive) {
-        const match = benefits.find((b: any) => b.serviceId === s.id);
+        const match = benefits.find((b) => b.serviceId === s.id);
         if (match) {
           if (match.benefitType === "INCLUDED_SERVICE") {
             if (match.isUnlimited || (match.availableQty && match.availableQty > 0)) {
@@ -626,8 +742,8 @@ export function AppointmentModal({
                   const originalPrice = Number(s.price);
 
                   // Match service to benefits
-                  const benefit = customerClubBalance?.benefits?.find((b: any) => b.serviceId === s.id);
-                  const isInactive = customerClubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(customerClubBalance.status);
+                  const benefit = customerClubBalance?.benefits?.find((b) => b.serviceId === s.id);
+                  const isInactive = !!customerClubBalance?.status && INACTIVE_CLUB_STATUSES.includes(customerClubBalance.status);
 
                   let priceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
                   let strikethroughPriceText = "";
@@ -707,7 +823,10 @@ export function AppointmentModal({
                       setCustomerName(value);
                       setCustomerLookupQuery(value);
                       if (!value.trim()) setCustomerResults([]);
-                      if (selectedCustomer) setSelectedCustomer(null);
+                      if (selectedCustomer) {
+                        setSelectedCustomer(null);
+                        setCustomerClubBalance(null);
+                      }
                     }}
                     placeholder="Digite nome ou telefone"
                     title="Cliente"
@@ -735,7 +854,10 @@ export function AppointmentModal({
                       }
                       setCustomerPhone(value);
                       if (value.replace(/\D/g, "").length < 5) setPhoneSuggestion(null);
-                      if (selectedCustomer) setSelectedCustomer(null);
+                      if (selectedCustomer) {
+                        setSelectedCustomer(null);
+                        setCustomerClubBalance(null);
+                      }
                     }}
                     placeholder="(11) 99999-9999"
                     title="Telefone do cliente"
@@ -796,6 +918,84 @@ export function AppointmentModal({
             <label className={LABEL_INPUT}>Observações</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Observações opcionais..." title="Observações" className={`${INPUT_CLASS} resize-none`} />
           </div>
+          {isEdit && (
+            <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-bold text-[var(--text-primary)]">Confirmação WhatsApp</p>
+                {whatsappConfirmation ? (
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full border ${WHATSAPP_STATUS_BG[whatsappConfirmation.status]}`}>
+                    {WHATSAPP_STATUS_LABEL[whatsappConfirmation.status]}
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold px-2 py-1 rounded-full border border-stone-700 bg-stone-800 text-stone-400">
+                    Sem confirmação WhatsApp
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-[var(--text-secondary)]">
+                <div>
+                  <p className={LABEL_INPUT}>Telefone</p>
+                  <p className="mt-1 text-sm text-[var(--text-primary)]">{appointment?.customer.phone ?? "-"}</p>
+                </div>
+                <div>
+                  <p className={LABEL_INPUT}>Código</p>
+                  <p className="mt-1 text-sm text-[var(--text-primary)]">{whatsappConfirmation?.tokenHint ?? "-"}</p>
+                </div>
+              </div>
+
+              {whatsappConfirmation?.status === "CONFIRMED" ? (
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
+                  <p className="font-bold">WhatsApp confirmado</p>
+                  {whatsappConfirmation.confirmedAt && (
+                    <p className="mt-1 text-emerald-200/80">
+                      Em {formatDateTime(whatsappConfirmation.confirmedAt)}
+                    </p>
+                  )}
+                  {whatsappConfirmation.confirmedById && (
+                    <p className="mt-1 text-emerald-200/80">Por {whatsappConfirmation.confirmedById}</p>
+                  )}
+                </div>
+              ) : whatsappConfirmation?.status === "PENDING" ? (
+                <div className="space-y-2">
+                  {canConfirmWhatsapp ? (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={whatsappToken}
+                        onChange={(e) => setWhatsappToken(e.target.value)}
+                        placeholder="TB-000000"
+                        title="Código de confirmação WhatsApp"
+                        className={`${INPUT_CLASS} sm:flex-1`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmWhatsapp}
+                        disabled={confirmingWhatsapp}
+                        className="btn-gold px-4 py-3 text-sm whitespace-nowrap disabled:opacity-50"
+                      >
+                        {confirmingWhatsapp ? "Confirmando..." : "Confirmar WhatsApp"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Confirmação manual disponível apenas para OWNER ou MANAGER.
+                    </p>
+                  )}
+                  {whatsappSuccess && (
+                    <p className="text-xs font-semibold text-emerald-300">{whatsappSuccess}</p>
+                  )}
+                  {whatsappError && (
+                    <p className="text-xs font-semibold text-red-300">{whatsappError}</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Este agendamento ainda não possui confirmação WhatsApp pendente.
+                </p>
+              )}
+            </div>
+          )}
           {selectedServiceIds.length > 0 && (
             <div className="p-3.5 rounded-xl bg-stone-900/60 border border-stone-800 text-sm flex flex-col gap-1">
               <div className="flex justify-between items-center text-stone-400 text-xs">
@@ -904,16 +1104,14 @@ function AppointmentBlock({
 }) {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const router = useRouter();
-  const [clubBalance, setClubBalance] = useState<any>(null);
+  const [clubBalance, setClubBalance] = useState<ClubBalance | null>(null);
   const [loadingClub, setLoadingClub] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !appointment.customer.id) {
-      setClubBalance(null);
       return;
     }
     let active = true;
-    setLoadingClub(true);
     fetchClubBalance(appointment.customer.id).then((data) => {
       if (active) {
         setClubBalance(data);
@@ -929,8 +1127,8 @@ function AppointmentBlock({
     let totalOriginal = 0;
     let totalToday = 0;
 
-    const benefits = clubBalance?.benefits ? clubBalance.benefits.map((b: any) => ({ ...b })) : [];
-    const isInactive = clubBalance && ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"].includes(clubBalance.status);
+    const benefits = clubBalance?.benefits ? clubBalance.benefits.map((b) => ({ ...b })) : [];
+    const isInactive = !!clubBalance?.status && INACTIVE_CLUB_STATUSES.includes(clubBalance.status);
 
     const processed = appointment.services.map(s => {
       const originalPrice = parseFloat(s.priceApplied);
@@ -943,7 +1141,7 @@ function AppointmentBlock({
       let limitExhausted = false;
 
       if (clubBalance && !isInactive) {
-        const match = benefits.find((b: any) => b.serviceId === s.service.id);
+        const match = benefits.find((b) => b.serviceId === s.service.id);
         if (match) {
           if (match.benefitType === "INCLUDED_SERVICE") {
             if (match.isUnlimited || (match.availableQty && match.availableQty > 0)) {
@@ -993,11 +1191,6 @@ function AppointmentBlock({
   const uiStatus = getUIStatus(appointment);
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
   const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
-  const price = parseFloat(appointment.totalPrice).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
   const message = generateWhatsAppMessage(
@@ -1027,27 +1220,6 @@ function AppointmentBlock({
     }
   };
 
-  const startComandaService = async () => {
-    const comanda = appointment.comandas?.[0];
-    if (!comanda) return;
-    setLoadingStatus(true);
-    try {
-      const res = await fetch(`/api/admin/comandas/${comanda.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "IN_SERVICE" }),
-      });
-      if (res.ok) {
-        router.push(`/admin/comandas/${comanda.id}`);
-      } else {
-        const data = await res.json();
-        alert(data.error || "Erro ao iniciar atendimento");
-      }
-    } finally {
-      setLoadingStatus(false);
-    }
-  };
-
   return (
     <div className={`absolute left-1 right-1 ${isOpen ? "z-50" : "z-10"}`} style={{ top, height }}>
       {/* Block */}
@@ -1060,6 +1232,11 @@ function AppointmentBlock({
         </p>
         {appointment.bookingMode === "FIT_IN" && (
           <p className="text-[9px] font-black tracking-wide text-orange-200">ENCAIXE</p>
+        )}
+        {appointment.whatsappConfirmation?.status && (
+          <p className="text-[9px] font-black tracking-wide opacity-90">
+            {WHATSAPP_STATUS_LABEL[appointment.whatsappConfirmation.status]}
+          </p>
         )}
         <p className="text-[11px] font-semibold leading-tight truncate">{appointment.customer.name}</p>
         {height >= 56 && (
@@ -1079,6 +1256,11 @@ function AppointmentBlock({
                 {appointment.bookingMode === "FIT_IN" && (
                   <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold border border-orange-500/30 bg-orange-500/10 text-orange-300">
                     ENCAIXE OPERACIONAL
+                  </span>
+                )}
+                {appointment.whatsappConfirmation?.status && (
+                  <span className={`inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-bold border ${WHATSAPP_STATUS_BG[appointment.whatsappConfirmation.status]}`}>
+                    {WHATSAPP_STATUS_LABEL[appointment.whatsappConfirmation.status]}
                   </span>
                 )}
                 {loadingClub && (
@@ -1442,6 +1624,9 @@ function CalendarGrid({
 function AgendamentosContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
+  const currentRole = (session?.user as { role?: string } | undefined)?.role;
+  const canConfirmWhatsapp = currentRole === "OWNER" || currentRole === "MANAGER";
   const dateParam = searchParams.get("date");
   const today = getTodayStr();
   const currentDate =
@@ -1468,6 +1653,7 @@ function AgendamentosContent() {
     const serviceIdsParam = searchParams.get("serviceIds");
 
     if (!customerId || loading) return;
+    const requestedCustomerId = customerId;
 
     async function setupPreFilledBooking() {
       // Clear query params to prevent repeating modal trigger
@@ -1504,7 +1690,7 @@ function AgendamentosContent() {
       // Fetch customer details
       let clientDetails = null;
       try {
-        const clientRes = await fetch(`/api/admin/clients/${customerId}`);
+        const clientRes = await fetch(`/api/admin/clients/${requestedCustomerId}`);
         if (clientRes.ok) {
           const clientData = await clientRes.json();
           clientDetails = {
@@ -1520,11 +1706,11 @@ function AgendamentosContent() {
       setNewAppointmentInitial({
         memberId: prefilledMemberId || undefined,
         dateTime: `${currentDate}T09:00`,
-        customerId: customerId,
+        customerId: requestedCustomerId,
         customerName: clientDetails?.name ?? "",
         customerPhone: clientDetails?.phone ?? "",
         serviceIds: prefilledServices,
-      } as unknown as NewAppointmentInitialState);
+      });
       setNewAppointmentMode("NORMAL");
       setEditTarget("new");
     }
@@ -1571,6 +1757,11 @@ function AgendamentosContent() {
     setEditTarget(null);
     setNewAppointmentInitial(null);
     setNewAppointmentMode("NORMAL");
+  };
+
+  const handleUpdated = (a: Appointment) => {
+    setAppointments((prev) => prev.map((x) => (x.id === a.id ? a : x)));
+    setEditTarget((current) => (current && current !== "new" && current.id === a.id ? a : current));
   };
 
   const handleCancelled = (a: Appointment) => {
@@ -1629,12 +1820,14 @@ function AgendamentosContent() {
           currentDate={currentDate}
           initialState={editTarget === "new" ? newAppointmentInitial : null}
           initialBookingMode={editTarget === "new" ? newAppointmentMode : undefined}
+          canConfirmWhatsapp={canConfirmWhatsapp}
           onClose={() => {
             setEditTarget(null);
             setNewAppointmentInitial(null);
             setNewAppointmentMode("NORMAL");
           }}
           onSaved={handleSaved}
+          onUpdated={handleUpdated}
         />
       )}
       {cancelTarget && (

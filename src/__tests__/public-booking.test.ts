@@ -7,6 +7,7 @@ const txMock = {
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
   barberService: { findMany: vi.fn() },
+  appointmentWhatsappConfirmation: { create: vi.fn() },
   appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
@@ -58,6 +59,7 @@ beforeEach(() => {
     id: "shop-a",
     name: "Barbearia A",
     slug: "barbearia-a",
+    phone: "5511999999999",
   });
   prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.idempotencyKey.findUnique.mockResolvedValue(null);
@@ -67,6 +69,7 @@ beforeEach(() => {
   txMock.idempotencyKey.findUnique.mockResolvedValue(null);
   txMock.idempotencyKey.create.mockResolvedValue({ id: "idem-a" });
   txMock.idempotencyKey.update.mockResolvedValue({ id: "idem-a" });
+  txMock.appointmentWhatsappConfirmation.create.mockResolvedValue({ id: "whatsapp-confirmation-a" });
   txMock.$executeRaw.mockResolvedValue(0);
   txMock.barbershopMember.findFirst.mockResolvedValue({
     id: "member-a",
@@ -145,6 +148,60 @@ describe("agendamento publico", () => {
         data: { result: expect.objectContaining({ appointment: expect.any(Object) }) },
       })
     );
+  });
+
+  it("cria confirmacao WhatsApp pendente com token hash e retorna link wa.me", async () => {
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(txMock.appointmentWhatsappConfirmation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        barbershopId: "shop-a",
+        appointmentId: "appointment-a",
+        customerPhone: "5511999999999",
+        status: "PENDING",
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        tokenHint: expect.stringMatching(/^TB-\*\*\*\*\d{2}$/),
+        expiresAt: expect.any(Date),
+      }),
+    });
+    expect(data.whatsappConfirmation).toEqual(
+      expect.objectContaining({
+        status: "PENDING",
+        token: expect.stringMatching(/^TB-\d{6}$/),
+        link: expect.stringMatching(/^https:\/\/wa\.me\/5511999999999\?text=/),
+      })
+    );
+    expect(txMock.idempotencyKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          result: expect.objectContaining({
+            whatsappConfirmation: expect.not.objectContaining({
+              token: expect.any(String),
+              message: expect.any(String),
+              link: expect.any(String),
+            }),
+          }),
+        },
+      })
+    );
+  });
+
+  it("rejeita booking publico quando a barbearia nao tem WhatsApp valido", async () => {
+    prismaMock.barbershop.findUnique.mockResolvedValue({
+      id: "shop-a",
+      name: "Barbearia A",
+      slug: "barbearia-a",
+      phone: "1732223333",
+    });
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("BARBERSHOP_WHATSAPP_NOT_CONFIGURED");
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
   it("rejeita chave reaproveitada com outra requisicao", async () => {

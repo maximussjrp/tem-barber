@@ -40,6 +40,15 @@ export async function GET(
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
       services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
       comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
+      whatsappConfirmation: {
+        select: {
+          status: true,
+          tokenHint: true,
+          expiresAt: true,
+          confirmedAt: true,
+          confirmedById: true,
+        },
+      },
     },
   });
 
@@ -257,6 +266,15 @@ export async function PATCH(
             barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
             services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
             comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
+            whatsappConfirmation: {
+              select: {
+                status: true,
+                tokenHint: true,
+                expiresAt: true,
+                confirmedAt: true,
+                confirmedById: true,
+              },
+            },
           },
         });
       });
@@ -276,6 +294,15 @@ export async function PATCH(
       barber: { include: { user: { select: { name: true, avatarUrl: true } } } },
       services: { include: { service: { select: { id: true, name: true, durationMin: true } } } },
       comandas: { select: { id: true, status: true, total: true, paidTotal: true } },
+      whatsappConfirmation: {
+        select: {
+          status: true,
+          tokenHint: true,
+          expiresAt: true,
+          confirmedAt: true,
+          confirmedById: true,
+        },
+      },
     },
   });
 

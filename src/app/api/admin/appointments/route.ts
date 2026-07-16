@@ -138,6 +138,15 @@ export async function GET(request: NextRequest) {
         comandas: {
           select: { id: true, status: true, total: true, paidTotal: true },
         },
+        whatsappConfirmation: {
+          select: {
+            status: true,
+            tokenHint: true,
+            expiresAt: true,
+            confirmedAt: true,
+            confirmedById: true,
+          },
+        },
       },
       orderBy: { dateTime: "asc" },
       skip: (page - 1) * pageSize,

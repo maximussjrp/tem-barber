@@ -120,6 +120,14 @@ function BookingWizard() {
     dateTime: string;
     services: string[];
     totalPrice: string;
+    whatsappConfirmation?: {
+      status: string;
+      token: string;
+      tokenHint: string;
+      expiresAt: string;
+      message: string;
+      link: string;
+    } | null;
   } | null>(null);
 
   const [subscriptionSuspended, setSubscriptionSuspended] = useState(false);
@@ -326,6 +334,7 @@ function BookingWizard() {
         dateTime: data.appointment.dateTime,
         services: data.appointment.services,
         totalPrice: data.appointment.totalPrice,
+        whatsappConfirmation: data.whatsappConfirmation ?? null,
       });
     } catch (error: unknown) {
       setBookingError(error instanceof Error ? error.message : "Erro ao agendar.");
@@ -353,7 +362,11 @@ function BookingWizard() {
 
           <div>
             <h1 className="font-serif text-3xl font-bold text-[var(--text-primary)]">Agendado!</h1>
-            <p className="text-[var(--text-secondary)] text-sm mt-2">Seu horário está confirmado.</p>
+            <p className="text-[var(--text-secondary)] text-sm mt-2">
+              {confirmed.whatsappConfirmation
+                ? "Envie o codigo pelo WhatsApp para finalizar a confirmacao."
+                : "Seu horario esta confirmado."}
+            </p>
           </div>
 
           <div className="bg-[var(--surface-1)] border border-[var(--gold-border)] rounded-2xl p-5 text-left space-y-0 divide-y divide-[var(--border-subtle)]">
@@ -375,6 +388,30 @@ function BookingWizard() {
               </span>
             </div>
           </div>
+
+          {confirmed.whatsappConfirmation && (
+            <div className="bg-emerald-950/30 border border-emerald-800/60 rounded-2xl p-5 text-left space-y-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                  Confirmacao WhatsApp
+                </p>
+                <p className="text-sm text-[var(--text-secondary)] mt-1">
+                  Codigo:{" "}
+                  <span className="font-mono text-lg font-bold text-[var(--text-primary)]">
+                    {confirmed.whatsappConfirmation.token}
+                  </span>
+                </p>
+              </div>
+              <a
+                href={confirmed.whatsappConfirmation.link}
+                target="_blank"
+                rel="noreferrer"
+                className="block w-full text-center rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold py-3.5 transition-colors text-sm"
+              >
+                Abrir WhatsApp
+              </a>
+            </div>
+          )}
 
           <div className="flex gap-3">
             <button

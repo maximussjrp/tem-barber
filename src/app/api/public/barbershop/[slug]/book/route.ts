@@ -24,6 +24,15 @@ import {
 } from "@/lib/customers";
 import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import {
+  buildWhatsappConfirmationLink,
+  generateWhatsappConfirmationToken,
+  getWhatsappConfirmationExpiresAt,
+  getWhatsappConfirmationTokenHint,
+  getValidWhatsappPhone,
+  hashWhatsappConfirmationToken,
+  WHATSAPP_CONFIRMATION_STATUS_PENDING,
+} from "@/lib/appointments/whatsapp-confirmation";
+import {
   getIdempotencyExpiresAt,
   getIdempotencyKeyFromRequest,
   hashPublicBookingPayload,
@@ -119,7 +128,14 @@ async function runSerializableTransaction<T>(
 function buildAppointmentPayload(
   appointment: Awaited<ReturnType<typeof createAppointmentWithScheduleLock>>,
   barbershop: { name: string },
-  slug: string
+  slug: string,
+  whatsappConfirmation?: {
+    token?: string;
+    tokenHint: string;
+    expiresAt: Date;
+    message?: string;
+    link?: string;
+  }
 ) {
   return {
     appointment: {
@@ -134,6 +150,16 @@ function buildAppointmentPayload(
       barbershopName: barbershop.name,
       barbershopSlug: slug,
     },
+    ...(whatsappConfirmation && {
+      whatsappConfirmation: {
+        status: WHATSAPP_CONFIRMATION_STATUS_PENDING,
+        ...(whatsappConfirmation.token && { token: whatsappConfirmation.token }),
+        tokenHint: whatsappConfirmation.tokenHint,
+        expiresAt: whatsappConfirmation.expiresAt.toISOString(),
+        ...(whatsappConfirmation.message && { message: whatsappConfirmation.message }),
+        ...(whatsappConfirmation.link && { link: whatsappConfirmation.link }),
+      },
+    }),
   };
 }
 
@@ -248,6 +274,17 @@ export async function POST(
     return NextResponse.json(
       { error: "SUBSCRIPTION_SUSPENDED", message: "Esta barbearia está temporariamente indisponível para agendamentos." },
       { status: 403 }
+    );
+  }
+
+  const barbershopWhatsappPhone = getValidWhatsappPhone(barbershop.phone);
+  if (!barbershopWhatsappPhone) {
+    return NextResponse.json(
+      {
+        error: "BARBERSHOP_WHATSAPP_NOT_CONFIGURED",
+        message: "Esta barbearia ainda nao possui WhatsApp valido para confirmar agendamentos online.",
+      },
+      { status: 422 }
     );
   }
 
@@ -410,10 +447,56 @@ export async function POST(
         notes: notes?.trim() || null,
       });
 
-      const result = buildAppointmentPayload(appointment, barbershop, slug);
+      const token = generateWhatsappConfirmationToken();
+      const tokenHint = getWhatsappConfirmationTokenHint(token);
+      const expiresAt = getWhatsappConfirmationExpiresAt();
+      const whatsapp = buildWhatsappConfirmationLink({
+        barbershopPhone: barbershopWhatsappPhone,
+        barbershopName: barbershop.name,
+        customerName: appointment.customer.name,
+        services: appointment.services.map((service) => service.service.name),
+        dateTime: appointment.dateTime,
+        token,
+      });
+
+      if (!whatsapp) {
+        return {
+          error: NextResponse.json(
+            {
+              error: "BARBERSHOP_WHATSAPP_NOT_CONFIGURED",
+              message: "Esta barbearia ainda nao possui WhatsApp valido para confirmar agendamentos online.",
+            },
+            { status: 422 }
+          ),
+        };
+      }
+
+      await tx.appointmentWhatsappConfirmation.create({
+        data: {
+          barbershopId: barbershop.id,
+          appointmentId: appointment.id,
+          customerPhone: normalizePhone(appointment.customer.phone),
+          status: WHATSAPP_CONFIRMATION_STATUS_PENDING,
+          tokenHash: hashWhatsappConfirmationToken(token),
+          tokenHint,
+          expiresAt,
+        },
+      });
+
+      const result = buildAppointmentPayload(appointment, barbershop, slug, {
+        token,
+        tokenHint,
+        expiresAt,
+        message: whatsapp.message,
+        link: whatsapp.link,
+      });
+      const idempotencyResult = buildAppointmentPayload(appointment, barbershop, slug, {
+        tokenHint,
+        expiresAt,
+      });
       await tx.idempotencyKey.update({
         where: { barbershopId_key: { barbershopId: barbershop.id, key: idempotencyKey } },
-        data: { result },
+        data: { result: idempotencyResult },
       });
 
         return { replay: false, result };
