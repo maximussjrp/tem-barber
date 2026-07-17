@@ -145,6 +145,8 @@ export async function GET(request: NextRequest) {
             expiresAt: true,
             confirmedAt: true,
             confirmedById: true,
+            confirmationMethod: true,
+            manualConfirmationReason: true,
           },
         },
       },

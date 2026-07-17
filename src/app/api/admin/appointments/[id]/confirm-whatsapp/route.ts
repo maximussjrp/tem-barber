@@ -7,6 +7,8 @@ import {
 } from "@/lib/appointments/whatsapp-confirmation";
 import { getAdminSession } from "@/lib/api-auth";
 
+type ConfirmationMode = "TOKEN" | "MANUAL_OVERRIDE";
+
 type SafeWhatsappConfirmation = {
   id: string;
   appointmentId: string;
@@ -16,6 +18,8 @@ type SafeWhatsappConfirmation = {
   expiresAt: Date | null;
   confirmedAt: Date | null;
   confirmedById: string | null;
+  confirmationMethod: string | null;
+  manualConfirmationReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -29,6 +33,8 @@ const safeWhatsappConfirmationSelect = {
   expiresAt: true,
   confirmedAt: true,
   confirmedById: true,
+  confirmationMethod: true,
+  manualConfirmationReason: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -45,6 +51,8 @@ function sanitizeWhatsappConfirmation(
     expiresAt: confirmation.expiresAt,
     confirmedAt: confirmation.confirmedAt,
     confirmedById: confirmation.confirmedById,
+    confirmationMethod: confirmation.confirmationMethod,
+    manualConfirmationReason: confirmation.manualConfirmationReason,
     createdAt: confirmation.createdAt,
     updatedAt: confirmation.updatedAt,
   };
@@ -57,24 +65,41 @@ export async function POST(
   const { error, data } = await getAdminSession();
   if (error) return error;
 
-  if (!data?.barbershopId || !["OWNER", "MANAGER"].includes(data.role)) {
+  if (!data?.barbershopId) {
     return NextResponse.json(
-      { error: "Apenas OWNER ou MANAGER podem confirmar WhatsApp." },
+      { error: "Sem barbearia vinculada." },
       { status: 403 }
     );
   }
 
-  let body: { token?: string };
+  if (!["OWNER", "MANAGER"].includes(data.role)) {
+    return NextResponse.json(
+      { error: "FORBIDDEN", message: "Apenas OWNER ou MANAGER podem confirmar WhatsApp no admin." },
+      { status: 403 }
+    );
+  }
+
+  let body: { token?: string; mode?: ConfirmationMode; reason?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
+  const mode: ConfirmationMode = body.mode === "MANUAL_OVERRIDE" ? "MANUAL_OVERRIDE" : "TOKEN";
   const token = body.token?.trim();
-  if (!token) {
+  const reason = body.reason?.trim();
+
+  if (mode === "TOKEN" && !token) {
     return NextResponse.json(
       { error: "TOKEN_REQUIRED", message: "Informe o codigo de confirmacao." },
+      { status: 400 }
+    );
+  }
+
+  if (mode === "MANUAL_OVERRIDE" && !reason) {
+    return NextResponse.json(
+      { error: "MANUAL_REASON_REQUIRED", message: "Informe o motivo da confirmação manual." },
       { status: 400 }
     );
   }
@@ -85,7 +110,23 @@ export async function POST(
     select: {
       id: true,
       barbershopId: true,
-      whatsappConfirmation: true,
+      whatsappConfirmation: {
+        select: {
+          id: true,
+          appointmentId: true,
+          barbershopId: true,
+          status: true,
+          tokenHash: true,
+          tokenHint: true,
+          expiresAt: true,
+          confirmedAt: true,
+          confirmedById: true,
+          confirmationMethod: true,
+          manualConfirmationReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
     },
   });
 
@@ -114,7 +155,11 @@ export async function POST(
     );
   }
 
-  if (confirmation.expiresAt && confirmation.expiresAt <= new Date()) {
+  if (
+    mode === "TOKEN" &&
+    confirmation.expiresAt &&
+    confirmation.expiresAt <= new Date()
+  ) {
     return NextResponse.json(
       {
         error: "WHATSAPP_CONFIRMATION_EXPIRED",
@@ -124,7 +169,10 @@ export async function POST(
     );
   }
 
-  if (!verifyWhatsappConfirmationToken(token, confirmation.tokenHash)) {
+  if (
+    mode === "TOKEN" &&
+    !verifyWhatsappConfirmationToken(token as string, confirmation.tokenHash)
+  ) {
     return NextResponse.json(
       {
         error: "INVALID_WHATSAPP_CONFIRMATION_TOKEN",
@@ -140,6 +188,8 @@ export async function POST(
       status: WHATSAPP_CONFIRMATION_STATUS_CONFIRMED,
       confirmedAt: new Date(),
       confirmedById: data.userId,
+      confirmationMethod: mode,
+      manualConfirmationReason: mode === "MANUAL_OVERRIDE" ? reason : null,
     },
     select: safeWhatsappConfirmationSelect,
   });
