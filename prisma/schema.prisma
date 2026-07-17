@@ -264,6 +264,11 @@ enum WhatsappConfirmationStatus {
   CANCELED
 }
 
+enum AppointmentWhatsappConfirmationMethod {
+  TOKEN
+  MANUAL_OVERRIDE
+}
+
 model Appointment {
   id                String                 @id @default(uuid())
   barbershopId      String                 @map("barbershop_id")
@@ -309,6 +314,8 @@ model AppointmentWhatsappConfirmation {
   expiresAt     DateTime?                  @map("expires_at")
   confirmedAt   DateTime?                  @map("confirmed_at")
   confirmedById String?                    @map("confirmed_by_id")
+  confirmationMethod     AppointmentWhatsappConfirmationMethod? @map("confirmation_method")
+  manualConfirmationReason String?         @map("manual_confirmation_reason")
   createdAt     DateTime                   @default(now()) @map("created_at")
   updatedAt     DateTime                   @updatedAt @map("updated_at")
 

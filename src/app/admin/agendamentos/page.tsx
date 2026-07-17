@@ -11,6 +11,7 @@ import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } fr
 type AppStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 type BookingMode = "NORMAL" | "FIT_IN";
 type WhatsappConfirmationStatus = "PENDING" | "CONFIRMED" | "EXPIRED" | "CANCELED";
+type WhatsappConfirmationMethod = "TOKEN" | "MANUAL_OVERRIDE";
 
 interface AppointmentWhatsappConfirmation {
   status: WhatsappConfirmationStatus;
@@ -18,6 +19,8 @@ interface AppointmentWhatsappConfirmation {
   expiresAt?: string | null;
   confirmedAt?: string | null;
   confirmedById?: string | null;
+  confirmationMethod?: WhatsappConfirmationMethod | null;
+  manualConfirmationReason?: string | null;
 }
 
 interface AppService {
@@ -162,6 +165,40 @@ const WHATSAPP_STATUS_BG: Record<WhatsappConfirmationStatus, string> = {
   CANCELED: "bg-red-900/30 border-red-800/40 text-red-300",
 };
 
+function getWhatsappConfirmedLabel(
+  confirmation: AppointmentWhatsappConfirmation | null | undefined
+) {
+  if (!confirmation || confirmation.status !== "CONFIRMED") return "WhatsApp confirmado";
+  if (confirmation.confirmationMethod === "MANUAL_OVERRIDE") return "Confirmado manualmente";
+  return "WhatsApp confirmado";
+}
+
+function getPrimaryStatusPresentation(app: Appointment) {
+  const whatsapp = app.whatsappConfirmation;
+  if (whatsapp?.status === "PENDING") {
+    return {
+      label: "Pendente WhatsApp",
+      bgClass: WHATSAPP_STATUS_BG.PENDING,
+      helperText: "Horário reservado",
+    };
+  }
+
+  if (whatsapp?.status === "CONFIRMED") {
+    return {
+      label: getWhatsappConfirmedLabel(whatsapp),
+      bgClass: WHATSAPP_STATUS_BG.CONFIRMED,
+      helperText: null,
+    };
+  }
+
+  const uiStatus = getUIStatus(app);
+  return {
+    label: UI_STATUS_LABEL[uiStatus],
+    bgClass: UI_STATUS_BG[uiStatus],
+    helperText: null,
+  };
+}
+
 const INACTIVE_CLUB_STATUSES = ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"];
 
 // Calendar config
@@ -258,10 +295,8 @@ export function AppointmentModal({
   currentDate,
   initialState,
   initialBookingMode,
-  canConfirmWhatsapp = false,
   onClose,
   onSaved,
-  onUpdated,
 }: {
   appointment: Appointment | null;
   members: Member[];
@@ -270,10 +305,8 @@ export function AppointmentModal({
   currentDate: string;
   initialState?: NewAppointmentInitialState | null;
   initialBookingMode?: BookingMode;
-  canConfirmWhatsapp?: boolean;
   onClose: () => void;
   onSaved: (a: Appointment) => void;
-  onUpdated?: (a: Appointment) => void;
 }) {
   const isEdit = !!appointment;
   const [bookingMode, setBookingMode] = useState<BookingMode>(
@@ -321,13 +354,6 @@ export function AppointmentModal({
   const [error, setError] = useState("");
   const [customerClubBalance, setCustomerClubBalance] = useState<ClubBalance | null>(null);
   const [loadingClub, setLoadingClub] = useState(false);
-  const [whatsappConfirmationOverride, setWhatsappConfirmationOverride] =
-    useState<AppointmentWhatsappConfirmation | null | undefined>(undefined);
-  const [whatsappToken, setWhatsappToken] = useState("");
-  const [whatsappError, setWhatsappError] = useState("");
-  const [whatsappSuccess, setWhatsappSuccess] = useState("");
-  const [confirmingWhatsapp, setConfirmingWhatsapp] = useState(false);
-  const whatsappConfirmation = whatsappConfirmationOverride ?? appointment?.whatsappConfirmation ?? null;
 
   useEffect(() => {
     if (!selectedCustomer?.id) {
@@ -531,46 +557,6 @@ export function AppointmentModal({
     }
   };
 
-  const handleConfirmWhatsapp = async () => {
-    if (!appointment) return;
-    setWhatsappError("");
-    setWhatsappSuccess("");
-
-    const token = whatsappToken.trim();
-    if (!token) {
-      setWhatsappError("Informe o codigo recebido no WhatsApp.");
-      return;
-    }
-
-    setConfirmingWhatsapp(true);
-    try {
-      const res = await fetch(`/api/admin/appointments/${appointment.id}/confirm-whatsapp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        if (res.status === 422 || data.error === "INVALID_WHATSAPP_CONFIRMATION_TOKEN") {
-          setWhatsappError("Código inválido. Confira a mensagem recebida no WhatsApp.");
-          return;
-        }
-        setWhatsappError(data.message ?? data.error ?? "Erro ao confirmar WhatsApp.");
-        return;
-      }
-
-      const updated = data.whatsappConfirmation as AppointmentWhatsappConfirmation;
-      setWhatsappConfirmationOverride(updated);
-      setWhatsappToken("");
-      setWhatsappSuccess("WhatsApp confirmado");
-      onUpdated?.({ ...appointment, whatsappConfirmation: updated });
-    } catch {
-      setWhatsappError("Erro ao confirmar WhatsApp.");
-    } finally {
-      setConfirmingWhatsapp(false);
-    }
-  };
 
   const getSelectedServicesPreview = () => {
     const selectedServices = selectedServiceIds
@@ -918,84 +904,6 @@ export function AppointmentModal({
             <label className={LABEL_INPUT}>Observações</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Observações opcionais..." title="Observações" className={`${INPUT_CLASS} resize-none`} />
           </div>
-          {isEdit && (
-            <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-bold text-[var(--text-primary)]">Confirmação WhatsApp</p>
-                {whatsappConfirmation ? (
-                  <span className={`text-xs font-bold px-2 py-1 rounded-full border ${WHATSAPP_STATUS_BG[whatsappConfirmation.status]}`}>
-                    {WHATSAPP_STATUS_LABEL[whatsappConfirmation.status]}
-                  </span>
-                ) : (
-                  <span className="text-xs font-bold px-2 py-1 rounded-full border border-stone-700 bg-stone-800 text-stone-400">
-                    Sem confirmação WhatsApp
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-[var(--text-secondary)]">
-                <div>
-                  <p className={LABEL_INPUT}>Telefone</p>
-                  <p className="mt-1 text-sm text-[var(--text-primary)]">{appointment?.customer.phone ?? "-"}</p>
-                </div>
-                <div>
-                  <p className={LABEL_INPUT}>Código</p>
-                  <p className="mt-1 text-sm text-[var(--text-primary)]">{whatsappConfirmation?.tokenHint ?? "-"}</p>
-                </div>
-              </div>
-
-              {whatsappConfirmation?.status === "CONFIRMED" ? (
-                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
-                  <p className="font-bold">WhatsApp confirmado</p>
-                  {whatsappConfirmation.confirmedAt && (
-                    <p className="mt-1 text-emerald-200/80">
-                      Em {formatDateTime(whatsappConfirmation.confirmedAt)}
-                    </p>
-                  )}
-                  {whatsappConfirmation.confirmedById && (
-                    <p className="mt-1 text-emerald-200/80">Por {whatsappConfirmation.confirmedById}</p>
-                  )}
-                </div>
-              ) : whatsappConfirmation?.status === "PENDING" ? (
-                <div className="space-y-2">
-                  {canConfirmWhatsapp ? (
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        value={whatsappToken}
-                        onChange={(e) => setWhatsappToken(e.target.value)}
-                        placeholder="TB-000000"
-                        title="Código de confirmação WhatsApp"
-                        className={`${INPUT_CLASS} sm:flex-1`}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleConfirmWhatsapp}
-                        disabled={confirmingWhatsapp}
-                        className="btn-gold px-4 py-3 text-sm whitespace-nowrap disabled:opacity-50"
-                      >
-                        {confirmingWhatsapp ? "Confirmando..." : "Confirmar WhatsApp"}
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-[var(--text-muted)]">
-                      Confirmação manual disponível apenas para OWNER ou MANAGER.
-                    </p>
-                  )}
-                  {whatsappSuccess && (
-                    <p className="text-xs font-semibold text-emerald-300">{whatsappSuccess}</p>
-                  )}
-                  {whatsappError && (
-                    <p className="text-xs font-semibold text-red-300">{whatsappError}</p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-xs text-[var(--text-muted)]">
-                  Este agendamento ainda não possui confirmação WhatsApp pendente.
-                </p>
-              )}
-            </div>
-          )}
           {selectedServiceIds.length > 0 && (
             <div className="p-3.5 rounded-xl bg-stone-900/60 border border-stone-800 text-sm flex flex-col gap-1">
               <div className="flex justify-between items-center text-stone-400 text-xs">
@@ -1083,11 +991,12 @@ function CancelModal({
 
 // ─── Appointment Block (calendar cell) ───────────────────────────────────────
 
-function AppointmentBlock({
+export function AppointmentBlock({
   appointment,
   onEdit,
   onCancel,
   onStatusChange,
+  onAppointmentUpdated,
   onOpenComanda,
   isOpen,
   onToggleOpen,
@@ -1097,6 +1006,7 @@ function AppointmentBlock({
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
+  onAppointmentUpdated: (a: Appointment) => void;
   onOpenComanda: (a: Appointment) => void;
   isOpen: boolean;
   onToggleOpen: (open: boolean) => void;
@@ -1104,8 +1014,16 @@ function AppointmentBlock({
 }) {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const router = useRouter();
+  const { data: session } = useSession();
   const [clubBalance, setClubBalance] = useState<ClubBalance | null>(null);
   const [loadingClub, setLoadingClub] = useState(false);
+  const [whatsappConfirmationOverride, setWhatsappConfirmationOverride] =
+    useState<AppointmentWhatsappConfirmation | null | undefined>(undefined);
+  const [whatsappToken, setWhatsappToken] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
+  const [whatsappSuccess, setWhatsappSuccess] = useState("");
+  const [confirmingWhatsapp, setConfirmingWhatsapp] = useState(false);
+  const [showManualConfirmDialog, setShowManualConfirmDialog] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !appointment.customer.id) {
@@ -1188,8 +1106,21 @@ function AppointmentBlock({
   const top = minutesToTop(startMin);
   const height = Math.max(minutesToHeight(appointment.durationMin), ROW_HEIGHT);
 
-  const uiStatus = getUIStatus(appointment);
+  const currentRole = (session?.user as { role?: string } | undefined)?.role;
+  const currentMemberId = (session?.user as { memberId?: string } | undefined)?.memberId;
+  const effectiveWhatsappConfirmation =
+    whatsappConfirmationOverride ?? appointment.whatsappConfirmation ?? null;
+  const appointmentWithEffectiveWhatsapp: Appointment = {
+    ...appointment,
+    whatsappConfirmation: effectiveWhatsappConfirmation,
+  };
+  const uiStatus = getUIStatus(appointmentWithEffectiveWhatsapp);
+  const primaryStatus = getPrimaryStatusPresentation(appointmentWithEffectiveWhatsapp);
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
+  const canConfirmWhatsapp =
+    currentRole === "OWNER" ||
+    currentRole === "MANAGER" ||
+    (currentRole === "BARBER" && !!currentMemberId && currentMemberId === appointment.barber.id);
   const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
@@ -1201,6 +1132,79 @@ function AppointmentBlock({
   );
   const waLink = formattedPhone ? generateWhatsAppLink(appointment.customer.phone, message) : null;
   const showWhatsAppAction = !isTerminal;
+
+  const applyUpdatedWhatsappConfirmation = (
+    updatedConfirmation: AppointmentWhatsappConfirmation
+  ) => {
+    setWhatsappConfirmationOverride(updatedConfirmation);
+    const updatedAppointment: Appointment = {
+      ...appointment,
+      whatsappConfirmation: updatedConfirmation,
+    };
+    onAppointmentUpdated(updatedAppointment);
+  };
+
+  const handleConfirmWhatsapp = async (mode: "TOKEN" | "MANUAL_OVERRIDE") => {
+    setWhatsappError("");
+    setWhatsappSuccess("");
+
+    if (effectiveWhatsappConfirmation?.status !== "PENDING") {
+      setWhatsappError("Este agendamento não possui confirmação WhatsApp pendente.");
+      return;
+    }
+
+    if (!canConfirmWhatsapp) {
+      setWhatsappError("Você não tem permissão para confirmar este agendamento.");
+      return;
+    }
+
+    const token = whatsappToken.trim();
+    if (mode === "TOKEN" && !token) {
+      setWhatsappError("Informe o codigo recebido no WhatsApp.");
+      return;
+    }
+
+    setConfirmingWhatsapp(true);
+    try {
+      const payload =
+        mode === "TOKEN"
+          ? { mode: "TOKEN", token }
+          : {
+              mode: "MANUAL_OVERRIDE",
+              reason: "Cliente validado pelo telefone/WhatsApp",
+            };
+
+      const res = await fetch(`/api/admin/appointments/${appointment.id}/confirm-whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (res.status === 422 || data.error === "INVALID_WHATSAPP_CONFIRMATION_TOKEN") {
+          setWhatsappError("Código inválido. Confira a mensagem recebida no WhatsApp.");
+          return;
+        }
+        setWhatsappError(data.message ?? data.error ?? "Erro ao confirmar WhatsApp.");
+        return;
+      }
+
+      const updated = data.whatsappConfirmation as AppointmentWhatsappConfirmation;
+      applyUpdatedWhatsappConfirmation(updated);
+      setWhatsappToken("");
+      setShowManualConfirmDialog(false);
+      setWhatsappSuccess(
+        mode === "MANUAL_OVERRIDE"
+          ? "Agendamento confirmado manualmente."
+          : "WhatsApp confirmado"
+      );
+    } catch {
+      setWhatsappError("Erro ao confirmar WhatsApp.");
+    } finally {
+      setConfirmingWhatsapp(false);
+    }
+  };
 
   const changeStatus = async (status: AppStatus) => {
     setLoadingStatus(true);
@@ -1225,7 +1229,7 @@ function AppointmentBlock({
       {/* Block */}
       <button
         onClick={() => onToggleOpen(!isOpen)}
-        className={`w-full h-full rounded-lg border px-2 py-1 text-left overflow-hidden transition-all shadow-sm ${UI_STATUS_BG[uiStatus]} ${isTerminal ? "opacity-50" : "hover:brightness-110 cursor-pointer"}`}
+        className={`w-full h-full rounded-lg border px-2 py-1 text-left overflow-hidden transition-all shadow-sm ${primaryStatus.bgClass} ${isTerminal ? "opacity-50" : "hover:brightness-110 cursor-pointer"}`}
       >
         <p className="text-[11px] font-bold tabular-nums leading-tight">
           {formatTime(appointment.dateTime)}
@@ -1233,9 +1237,11 @@ function AppointmentBlock({
         {appointment.bookingMode === "FIT_IN" && (
           <p className="text-[9px] font-black tracking-wide text-orange-200">ENCAIXE</p>
         )}
-        {appointment.whatsappConfirmation?.status && (
+        {effectiveWhatsappConfirmation?.status && (
           <p className="text-[9px] font-black tracking-wide opacity-90">
-            {WHATSAPP_STATUS_LABEL[appointment.whatsappConfirmation.status]}
+            {effectiveWhatsappConfirmation.status === "CONFIRMED"
+              ? getWhatsappConfirmedLabel(effectiveWhatsappConfirmation)
+              : WHATSAPP_STATUS_LABEL[effectiveWhatsappConfirmation.status]}
           </p>
         )}
         <p className="text-[11px] font-semibold leading-tight truncate">{appointment.customer.name}</p>
@@ -1258,9 +1264,11 @@ function AppointmentBlock({
                     ENCAIXE OPERACIONAL
                   </span>
                 )}
-                {appointment.whatsappConfirmation?.status && (
-                  <span className={`inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-bold border ${WHATSAPP_STATUS_BG[appointment.whatsappConfirmation.status]}`}>
-                    {WHATSAPP_STATUS_LABEL[appointment.whatsappConfirmation.status]}
+                {effectiveWhatsappConfirmation?.status && (
+                  <span className={`inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-bold border ${WHATSAPP_STATUS_BG[effectiveWhatsappConfirmation.status]}`}>
+                    {effectiveWhatsappConfirmation.status === "CONFIRMED"
+                      ? getWhatsappConfirmedLabel(effectiveWhatsappConfirmation)
+                      : WHATSAPP_STATUS_LABEL[effectiveWhatsappConfirmation.status]}
                   </span>
                 )}
                 {loadingClub && (
@@ -1282,10 +1290,13 @@ function AppointmentBlock({
                   </div>
                 )}
               </div>
-              <span className={`shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${UI_STATUS_BG[uiStatus]}`}>
-                {UI_STATUS_LABEL[uiStatus]}
+              <span className={`shrink-0 text-xs font-bold px-2 py-1 rounded-full border ${primaryStatus.bgClass}`}>
+                {primaryStatus.label}
               </span>
             </div>
+            {primaryStatus.helperText && (
+              <p className="text-[10px] text-[var(--text-muted)] text-right">{primaryStatus.helperText}</p>
+            )}
             
             <div className="text-sm text-[var(--text-secondary)] space-y-3">
               <p className="flex items-center gap-2 text-stone-300">
@@ -1389,6 +1400,97 @@ function AppointmentBlock({
               </div>
             )}
 
+            {effectiveWhatsappConfirmation?.status === "PENDING" && (
+              <div className="space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-[var(--text-primary)]">Confirmação WhatsApp</p>
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full border ${WHATSAPP_STATUS_BG.PENDING}`}>
+                    Pendente WhatsApp
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-[var(--text-secondary)]">
+                  <div>
+                    <p className={LABEL_INPUT}>Telefone</p>
+                    <p className="mt-1 text-sm text-[var(--text-primary)]">{appointment.customer.phone}</p>
+                  </div>
+                  <div>
+                    <p className={LABEL_INPUT}>Código</p>
+                    <p className="mt-1 text-sm text-[var(--text-primary)]">{effectiveWhatsappConfirmation.tokenHint ?? "-"}</p>
+                  </div>
+                </div>
+
+                {canConfirmWhatsapp ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={whatsappToken}
+                      onChange={(e) => setWhatsappToken(e.target.value)}
+                      placeholder="TB-000000"
+                      title="Código de confirmação WhatsApp"
+                      className={INPUT_CLASS}
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmWhatsapp("TOKEN")}
+                        disabled={confirmingWhatsapp}
+                        className="btn-gold px-4 py-3 text-sm whitespace-nowrap disabled:opacity-50"
+                      >
+                        {confirmingWhatsapp ? "Confirmando..." : "Confirmar com código"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowManualConfirmDialog(true)}
+                        disabled={confirmingWhatsapp}
+                        className="px-4 py-3 text-sm rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                      >
+                        Confirmar sem código
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Você não tem permissão para confirmar este agendamento.
+                  </p>
+                )}
+
+                {whatsappSuccess && (
+                  <p className="text-xs font-semibold text-emerald-300">{whatsappSuccess}</p>
+                )}
+                {whatsappError && (
+                  <p className="text-xs font-semibold text-red-300">{whatsappError}</p>
+                )}
+              </div>
+            )}
+
+            {effectiveWhatsappConfirmation?.status === "CONFIRMED" && (
+              <div className="space-y-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-emerald-200">{getWhatsappConfirmedLabel(effectiveWhatsappConfirmation)}</p>
+                  <span className="text-xs font-bold px-2 py-1 rounded-full border border-emerald-500/30 text-emerald-200">
+                    {getWhatsappConfirmedLabel(effectiveWhatsappConfirmation)}
+                  </span>
+                </div>
+                {effectiveWhatsappConfirmation.confirmedAt && (
+                  <p className="text-xs text-emerald-200/80">
+                    Em {formatDateTime(effectiveWhatsappConfirmation.confirmedAt)}
+                  </p>
+                )}
+                {effectiveWhatsappConfirmation.confirmedById && (
+                  <p className="text-xs text-emerald-200/80">
+                    Por {effectiveWhatsappConfirmation.confirmedById}
+                  </p>
+                )}
+                {effectiveWhatsappConfirmation.confirmationMethod === "MANUAL_OVERRIDE" &&
+                  effectiveWhatsappConfirmation.manualConfirmationReason && (
+                    <p className="text-xs text-emerald-200/80">
+                      Motivo: {effectiveWhatsappConfirmation.manualConfirmationReason}
+                    </p>
+                  )}
+              </div>
+            )}
+
             <div className="space-y-2 border-t border-[var(--border-subtle)] pt-4">
               
               {/* Matriz de Botões */}
@@ -1439,6 +1541,32 @@ function AppointmentBlock({
                 Fechar
               </button>
             </div>
+
+            {showManualConfirmDialog && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-3">
+                <p className="text-sm font-bold text-amber-200">Confirmar sem código?</p>
+                <p className="text-xs text-amber-100/80">
+                  Use esta opção apenas se você verificou manualmente que o telefone/cliente é real. Esta ação ficará registrada.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualConfirmDialog(false)}
+                    className="px-3 py-2 text-sm rounded-xl border border-amber-500/30 text-amber-100 hover:bg-amber-500/10 transition-colors"
+                  >
+                    Voltar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmWhatsapp("MANUAL_OVERRIDE")}
+                    disabled={confirmingWhatsapp}
+                    className="px-3 py-2 text-sm rounded-xl bg-amber-400 text-stone-900 font-bold hover:bg-amber-300 transition-colors disabled:opacity-50"
+                  >
+                    Confirmar manualmente
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1455,6 +1583,7 @@ function CalendarGrid({
   onEdit,
   onCancel,
   onStatusChange,
+  onAppointmentUpdated,
   onOpenComanda,
   currentDate,
   onEmptySlotClick,
@@ -1466,6 +1595,7 @@ function CalendarGrid({
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
+  onAppointmentUpdated: (a: Appointment) => void;
   onOpenComanda: (a: Appointment) => void;
   currentDate: string;
   onEmptySlotClick: (initialState: NewAppointmentInitialState) => void;
@@ -1603,6 +1733,7 @@ function CalendarGrid({
                       onEdit={onEdit}
                       onCancel={onCancel}
                       onStatusChange={onStatusChange}
+                      onAppointmentUpdated={onAppointmentUpdated}
                       onOpenComanda={onOpenComanda}
                       isOpen={activeBlockId === a.id}
                       onToggleOpen={(open) => setActiveBlockId(open ? a.id : null)}
@@ -1624,9 +1755,6 @@ function CalendarGrid({
 function AgendamentosContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data: session } = useSession();
-  const currentRole = (session?.user as { role?: string } | undefined)?.role;
-  const canConfirmWhatsapp = currentRole === "OWNER" || currentRole === "MANAGER";
   const dateParam = searchParams.get("date");
   const today = getTodayStr();
   const currentDate =
@@ -1820,14 +1948,12 @@ function AgendamentosContent() {
           currentDate={currentDate}
           initialState={editTarget === "new" ? newAppointmentInitial : null}
           initialBookingMode={editTarget === "new" ? newAppointmentMode : undefined}
-          canConfirmWhatsapp={canConfirmWhatsapp}
           onClose={() => {
             setEditTarget(null);
             setNewAppointmentInitial(null);
             setNewAppointmentMode("NORMAL");
           }}
           onSaved={handleSaved}
-          onUpdated={handleUpdated}
         />
       )}
       {cancelTarget && (
@@ -1923,6 +2049,7 @@ function AgendamentosContent() {
               onEdit={(a) => setEditTarget(a)}
               onCancel={(a) => setCancelTarget(a)}
               onStatusChange={handleStatusChange}
+              onAppointmentUpdated={handleUpdated}
               onOpenComanda={handleOpenComanda}
               currentDate={currentDate}
               onEmptySlotClick={openNewAppointment}

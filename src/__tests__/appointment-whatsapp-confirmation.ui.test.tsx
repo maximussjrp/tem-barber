@@ -2,7 +2,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AppointmentModal } from "@/app/admin/agendamentos/page";
+import { AppointmentBlock, AppointmentModal } from "@/app/admin/agendamentos/page";
+
+const sessionState = {
+  user: { role: "OWNER", memberId: "member-a" },
+};
+
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: sessionState, status: "authenticated" }),
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -12,6 +20,7 @@ vi.mock("next/navigation", () => ({
 const members = [{ id: "member-a", user: { name: "Bruno Smoke" } }];
 const services = [{ id: "svc-a", name: "Corte", price: "40.00", durationMin: 30 }];
 type ModalAppointment = NonNullable<ComponentProps<typeof AppointmentModal>["appointment"]>;
+type BlockAppointment = ComponentProps<typeof AppointmentBlock>["appointment"];
 
 function appointment(overrides: Partial<ModalAppointment> = {}): ModalAppointment {
   const base: ModalAppointment = {
@@ -42,26 +51,44 @@ function appointment(overrides: Partial<ModalAppointment> = {}): ModalAppointmen
 }
 
 function renderModal({
-  canConfirmWhatsapp = true,
   appointmentOverrides = {},
-  onUpdated = vi.fn(),
 }: {
-  canConfirmWhatsapp?: boolean;
   appointmentOverrides?: Partial<ModalAppointment>;
-  onUpdated?: (a: ModalAppointment) => void;
 } = {}) {
   return {
-    onUpdated,
     ...render(
       <AppointmentModal
         appointment={appointment(appointmentOverrides)}
         members={members}
         barbershopServices={services}
         currentDate="2026-07-20"
-        canConfirmWhatsapp={canConfirmWhatsapp}
         onClose={vi.fn()}
         onSaved={vi.fn()}
-        onUpdated={onUpdated}
+      />
+    ),
+  };
+}
+
+function renderBlock({
+  appointmentOverrides = {},
+}: {
+  appointmentOverrides?: Partial<BlockAppointment>;
+} = {}) {
+  const onAppointmentUpdated = vi.fn();
+  const data = appointment(appointmentOverrides) as BlockAppointment;
+  return {
+    onAppointmentUpdated,
+    ...render(
+      <AppointmentBlock
+        appointment={data}
+        onEdit={vi.fn()}
+        onCancel={vi.fn()}
+        onStatusChange={vi.fn()}
+        onAppointmentUpdated={onAppointmentUpdated}
+        onOpenComanda={vi.fn()}
+        isOpen
+        onToggleOpen={vi.fn()}
+        barbershopName="Tem Barber"
       />
     ),
   };
@@ -70,39 +97,37 @@ function renderModal({
 describe("UI de confirmação WhatsApp no modal de agendamento", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionState.user.role = "OWNER";
+    sessionState.user.memberId = "member-a";
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({}),
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/api/admin/clube/")) {
+          return { ok: false, json: async () => ({}) };
+        }
+        return { ok: false, json: async () => ({}) };
       })
     );
   });
 
-  it("exibe badge pendente, telefone e dica do token", () => {
+  it("não exibe confirmação WhatsApp dentro de Editar Agendamento", () => {
     renderModal();
 
-    expect(screen.getByText("Pendente WhatsApp")).toBeInTheDocument();
-    expect(screen.getByText("5517988887777")).toBeInTheDocument();
-    expect(screen.getByText("TB-****56")).toBeInTheDocument();
+    expect(screen.queryByText("Confirmação WhatsApp")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Código de confirmação WhatsApp")).not.toBeInTheDocument();
   });
 
-  it("OWNER/MANAGER vê input e botão de confirmação", () => {
-    renderModal({ canConfirmWhatsapp: true });
+  it("exibe confirmação WhatsApp no modal principal com ações e badge pendente", () => {
+    renderBlock();
 
     expect(screen.getByTitle("Código de confirmação WhatsApp")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirmar WhatsApp" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar com código" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar sem código" })).toBeInTheDocument();
+    expect(screen.getAllByText("Pendente WhatsApp").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Confirmado", { selector: "span" })).not.toBeInTheDocument();
   });
 
-  it("BARBER vê status, mas não vê botão de confirmação", () => {
-    renderModal({ canConfirmWhatsapp: false });
-
-    expect(screen.getByText("Pendente WhatsApp")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirmar WhatsApp" })).not.toBeInTheDocument();
-    expect(screen.getByText("Confirmação manual disponível apenas para OWNER ou MANAGER.")).toBeInTheDocument();
-  });
-
-  it("token correto chama endpoint e atualiza para confirmado", async () => {
+  it("token correto muda para WhatsApp confirmado", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/confirm-whatsapp")) {
         return {
@@ -114,20 +139,20 @@ describe("UI de confirmação WhatsApp no modal de agendamento", () => {
               expiresAt: "2026-07-20T12:10:00.000Z",
               confirmedAt: "2026-07-20T12:02:00.000Z",
               confirmedById: "user-owner",
+              confirmationMethod: "TOKEN",
+              manualConfirmationReason: null,
             },
           }),
         };
       }
-
       return { ok: false, json: async () => ({}) };
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const onUpdated = vi.fn();
-    renderModal({ onUpdated });
+    const { onAppointmentUpdated } = renderBlock();
 
     await user.type(screen.getByTitle("Código de confirmação WhatsApp"), "TB-123456");
-    await user.click(screen.getByRole("button", { name: "Confirmar WhatsApp" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar com código" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -136,14 +161,48 @@ describe("UI de confirmação WhatsApp no modal de agendamento", () => {
       );
     });
     expect(await screen.findAllByText("WhatsApp confirmado")).not.toHaveLength(0);
-    expect(onUpdated).toHaveBeenCalledWith(
+    expect(onAppointmentUpdated).toHaveBeenCalledWith(
       expect.objectContaining({
-        whatsappConfirmation: expect.objectContaining({ status: "CONFIRMED" }),
+        whatsappConfirmation: expect.objectContaining({
+          status: "CONFIRMED",
+          confirmationMethod: "TOKEN",
+        }),
       })
     );
   });
 
-  it("token errado mostra erro específico", async () => {
+  it("confirmar sem código muda para Confirmado manualmente", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/confirm-whatsapp")) {
+        return {
+          ok: true,
+          json: async () => ({
+            whatsappConfirmation: {
+              status: "CONFIRMED",
+              tokenHint: "TB-****56",
+              expiresAt: "2026-07-20T12:10:00.000Z",
+              confirmedAt: "2026-07-20T12:02:00.000Z",
+              confirmedById: "user-owner",
+              confirmationMethod: "MANUAL_OVERRIDE",
+              manualConfirmationReason: "Cliente validado pelo telefone/WhatsApp",
+            },
+          }),
+        };
+      }
+      return { ok: false, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderBlock();
+
+    await user.click(screen.getByRole("button", { name: "Confirmar sem código" }));
+    expect(screen.getByText("Confirmar sem código?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirmar manualmente" }));
+
+    expect(await screen.findAllByText("Confirmado manualmente")).not.toHaveLength(0);
+  });
+
+  it("token errado exibe mensagem amigável", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -158,35 +217,38 @@ describe("UI de confirmação WhatsApp no modal de agendamento", () => {
       })
     );
     const user = userEvent.setup();
-    renderModal();
+    renderBlock();
 
     await user.type(screen.getByTitle("Código de confirmação WhatsApp"), "TB-000000");
-    await user.click(screen.getByRole("button", { name: "Confirmar WhatsApp" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar com código" }));
 
-    expect(await screen.findByText("Código inválido. Confira a mensagem recebida no WhatsApp.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Código inválido. Confira a mensagem recebida no WhatsApp.")
+    ).toBeInTheDocument();
   });
 
-  it("agendamento confirmado mostra badge e não mostra input", () => {
-    renderModal({
-      appointmentOverrides: {
-        whatsappConfirmation: {
-          status: "CONFIRMED",
-          tokenHint: "TB-****56",
-          expiresAt: "2026-07-20T12:10:00.000Z",
-          confirmedAt: "2026-07-20T12:02:00.000Z",
-          confirmedById: "user-owner",
-        },
-      },
-    });
+  it("BARBER do próprio agendamento pode confirmar", () => {
+    sessionState.user.role = "BARBER";
+    sessionState.user.memberId = "member-a";
+    renderBlock();
 
-    expect(screen.getAllByText("WhatsApp confirmado")).not.toHaveLength(0);
-    expect(screen.queryByTitle("Código de confirmação WhatsApp")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar com código" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar sem código" })).toBeInTheDocument();
+  });
+
+  it("BARBER de outro agendamento fica bloqueado", () => {
+    sessionState.user.role = "BARBER";
+    sessionState.user.memberId = "member-other";
+    renderBlock();
+
+    expect(screen.queryByRole("button", { name: "Confirmar com código" })).not.toBeInTheDocument();
+    expect(screen.getByText("Você não tem permissão para confirmar este agendamento.")).toBeInTheDocument();
   });
 
   it("agendamento antigo sem whatsappConfirmation continua renderizando", () => {
-    renderModal({ appointmentOverrides: { whatsappConfirmation: null } });
+    renderBlock({ appointmentOverrides: { whatsappConfirmation: null } });
 
-    expect(screen.getByText("Sem confirmação WhatsApp")).toBeInTheDocument();
-    expect(screen.getByText("Este agendamento ainda não possui confirmação WhatsApp pendente.")).toBeInTheDocument();
+    expect(screen.queryByText("Confirmação WhatsApp")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Abrir Atendimento" })).toBeInTheDocument();
   });
 });
