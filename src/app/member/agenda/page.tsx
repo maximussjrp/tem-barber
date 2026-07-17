@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { todayIsoBR, formatHeaderDate } from "@/lib/time-utils";
+import { todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -125,10 +125,12 @@ function AppointmentCard({
 
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
+  const { date: waDate, time: waTime } = formatAppointmentDateTimeForMessage(appointment.dateTime);
   const message = generateWhatsAppMessage(
     appointment.customer.name,
     appointment.barbershop?.name || "Barbearia",
-    formatTime(appointment.dateTime),
+    waDate,
+    waTime,
     serviceNames
   );
   const waLink = formattedPhone ? generateWhatsAppLink(appointment.customer.phone, message) : null;

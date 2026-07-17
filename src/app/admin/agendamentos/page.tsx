@@ -209,7 +209,7 @@ const ROW_HEIGHT = 48; // px per 30-min slot
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-import { toBR, todayIsoBR, formatHeaderDate } from "@/lib/time-utils";
+import { toBR, todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 
 function getTodayStr() {
   return todayIsoBR();
@@ -1120,11 +1120,14 @@ export function AppointmentBlock({
   const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
+  const { date: waDate, time: waTime } = formatAppointmentDateTimeForMessage(appointment.dateTime);
   const message = generateWhatsAppMessage(
     appointment.customer.name,
     barbershopName || "Barbearia",
-    formatTime(appointment.dateTime),
-    serviceNames
+    waDate,
+    waTime,
+    serviceNames,
+    appointment.barber.user.name
   );
   const waLink = formattedPhone ? generateWhatsAppLink(appointment.customer.phone, message) : null;
   const showWhatsAppAction = !isTerminal;

@@ -35,10 +35,26 @@ export function formatWhatsAppPhone(phone: string | null | undefined): string | 
 export function generateWhatsAppMessage(
   customerName: string,
   barbershopName: string,
+  date: string,
   time: string,
-  serviceNames: string
+  serviceNames: string,
+  barberName?: string
 ): string {
-  return `Olá, ${customerName}! Passando para lembrar do seu agendamento na ${barbershopName} hoje às ${time} para ${serviceNames}. Te esperamos no horário combinado. ✂️`;
+  const lines = [
+    `Olá, ${customerName}! Passando para lembrar do seu agendamento na ${barbershopName}.`,
+    "",
+    `Data: ${date}`,
+    `Horário: ${time}`,
+    `Serviço: ${serviceNames}`,
+  ];
+
+  if (barberName) {
+    lines.push(`Profissional: ${barberName}`);
+  }
+
+  lines.push("", "Se não puder comparecer, avise a barbearia com antecedência.");
+
+  return lines.join("\n");
 }
 
 /**
