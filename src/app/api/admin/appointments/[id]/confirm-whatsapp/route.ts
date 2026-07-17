@@ -72,6 +72,13 @@ export async function POST(
     );
   }
 
+  if (!["OWNER", "MANAGER"].includes(data.role)) {
+    return NextResponse.json(
+      { error: "FORBIDDEN", message: "Apenas OWNER ou MANAGER podem confirmar WhatsApp no admin." },
+      { status: 403 }
+    );
+  }
+
   let body: { token?: string; mode?: ConfirmationMode; reason?: string };
   try {
     body = await request.json();
@@ -103,7 +110,6 @@ export async function POST(
     select: {
       id: true,
       barbershopId: true,
-      memberId: true,
       whatsappConfirmation: {
         select: {
           id: true,
@@ -126,16 +132,6 @@ export async function POST(
 
   if (!appointment) {
     return NextResponse.json({ error: "Agendamento nao encontrado." }, { status: 404 });
-  }
-
-  const canConfirmAny = ["OWNER", "MANAGER"].includes(data.role);
-  const canConfirmOwn =
-    data.role === "BARBER" && !!data.memberId && appointment.memberId === data.memberId;
-  if (!canConfirmAny && !canConfirmOwn) {
-    return NextResponse.json(
-      { error: "FORBIDDEN", message: "Sem permissão para confirmar este agendamento." },
-      { status: 403 }
-    );
   }
 
   const confirmation = appointment.whatsappConfirmation;

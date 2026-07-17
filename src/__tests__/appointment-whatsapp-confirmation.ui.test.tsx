@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppointmentBlock, AppointmentModal } from "@/app/admin/agendamentos/page";
 
 const sessionState = {
-  user: { role: "OWNER", memberId: "member-a" },
+  user: { role: "OWNER" },
 };
 
 vi.mock("next-auth/react", () => ({
@@ -98,7 +98,6 @@ describe("UI de confirmação WhatsApp no modal de agendamento", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionState.user.role = "OWNER";
-    sessionState.user.memberId = "member-a";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -227,21 +226,12 @@ describe("UI de confirmação WhatsApp no modal de agendamento", () => {
     ).toBeInTheDocument();
   });
 
-  it("BARBER do próprio agendamento pode confirmar", () => {
+  it("BARBER não vê ações de confirmação no admin UI", () => {
     sessionState.user.role = "BARBER";
-    sessionState.user.memberId = "member-a";
-    renderBlock();
-
-    expect(screen.getByRole("button", { name: "Confirmar com código" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirmar sem código" })).toBeInTheDocument();
-  });
-
-  it("BARBER de outro agendamento fica bloqueado", () => {
-    sessionState.user.role = "BARBER";
-    sessionState.user.memberId = "member-other";
     renderBlock();
 
     expect(screen.queryByRole("button", { name: "Confirmar com código" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirmar sem código" })).not.toBeInTheDocument();
     expect(screen.getByText("Você não tem permissão para confirmar este agendamento.")).toBeInTheDocument();
   });
 

@@ -174,7 +174,7 @@ describe("POST /api/admin/appointments/[id]/confirm-whatsapp", () => {
     const response = await POST(request({ mode: "TOKEN", token: "TB-123456" }), params);
 
     expect(response.status).toBe(403);
-    expect(prismaMock.appointment.findFirst).toHaveBeenCalled();
+    expect(prismaMock.appointment.findFirst).not.toHaveBeenCalled();
   });
 
   it("confirma manualmente sem token e grava metodo MANUAL_OVERRIDE", async () => {
@@ -209,35 +209,25 @@ describe("POST /api/admin/appointments/[id]/confirm-whatsapp", () => {
     expect(data.whatsappConfirmation.manualConfirmationReason).toBe("Cliente validado por ligação");
   });
 
-  it("BARBER confirma apenas o proprio agendamento", async () => {
-    getAdminSessionMock.mockResolvedValue(adminSession("BARBER"));
-    prismaMock.appointment.findFirst.mockResolvedValue({
-      id: "appointment-a",
-      barbershopId: "shop-a",
-      memberId: "member-admin",
-      whatsappConfirmation: confirmation(),
-    });
+  it("rejeita MANUAL_OVERRIDE sem reason", async () => {
+    const response = await POST(request({ mode: "MANUAL_OVERRIDE" }), params);
+    const data = await response.json();
 
-    const response = await POST(request({ mode: "TOKEN", token: "TB-123456" }), params);
-
-    expect(response.status).toBe(200);
-    expect(prismaMock.appointmentWhatsappConfirmation.update).toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("MANUAL_REASON_REQUIRED");
+    expect(prismaMock.appointment.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.appointmentWhatsappConfirmation.update).not.toHaveBeenCalled();
   });
 
-  it("BARBER nao confirma agendamento de outro profissional", async () => {
+  it("BARBER recebe 403 no endpoint admin mesmo no proprio agendamento", async () => {
     getAdminSessionMock.mockResolvedValue(adminSession("BARBER"));
-    prismaMock.appointment.findFirst.mockResolvedValue({
-      id: "appointment-a",
-      barbershopId: "shop-a",
-      memberId: "member-other",
-      whatsappConfirmation: confirmation(),
-    });
 
     const response = await POST(request({ mode: "TOKEN", token: "TB-123456" }), params);
     const data = await response.json();
 
     expect(response.status).toBe(403);
     expect(data.error).toBe("FORBIDDEN");
+    expect(prismaMock.appointment.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.appointmentWhatsappConfirmation.update).not.toHaveBeenCalled();
   });
 });

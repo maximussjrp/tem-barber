@@ -1107,7 +1107,6 @@ export function AppointmentBlock({
   const height = Math.max(minutesToHeight(appointment.durationMin), ROW_HEIGHT);
 
   const currentRole = (session?.user as { role?: string } | undefined)?.role;
-  const currentMemberId = (session?.user as { memberId?: string } | undefined)?.memberId;
   const effectiveWhatsappConfirmation =
     whatsappConfirmationOverride ?? appointment.whatsappConfirmation ?? null;
   const appointmentWithEffectiveWhatsapp: Appointment = {
@@ -1117,10 +1116,7 @@ export function AppointmentBlock({
   const uiStatus = getUIStatus(appointmentWithEffectiveWhatsapp);
   const primaryStatus = getPrimaryStatusPresentation(appointmentWithEffectiveWhatsapp);
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
-  const canConfirmWhatsapp =
-    currentRole === "OWNER" ||
-    currentRole === "MANAGER" ||
-    (currentRole === "BARBER" && !!currentMemberId && currentMemberId === appointment.barber.id);
+  const canConfirmWhatsapp = currentRole === "OWNER" || currentRole === "MANAGER";
   const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
