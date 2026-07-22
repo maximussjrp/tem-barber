@@ -399,3 +399,28 @@ graph TD
   9. Barbershop default (`CommissionConfig`)
 * **Garantia de Não-Regressão:** Nenhuma comissão existente é afetada por este PR.
 
+---
+
+## 18. DECISÃO PR #16 — FINANCIAL RANGE API
+
+* **Endpoint:** `GET /api/admin/financial/summary`
+* **Parâmetros de Consulta:** `startDate` e `endDate` no formato `YYYY-MM-DD` (período máximo de 366 dias).
+* **Métricas Retornadas:**
+  * `grossRevenue`: Faturamento bruto das comandas concluídas no período (soma dos itens de serviço/produto antes dos descontos).
+  * `totalDiscounts`: Total de descontos concedidos em comandas encerradas.
+  * `netRevenue`: Faturamento líquido (`grossRevenue - totalDiscounts`).
+  * `totalReceived`: Soma dos pagamentos confirmados no período por forma de pagamento (`CASH`, `PIX`, `DEBIT`, `CREDIT`, `OTHER`) subtraindo estornos/refunds.
+  * `totalReceivable`: Valor restante a receber de comandas em aberto (`OPEN`, `IN_SERVICE`, `PENDING_PAYMENT`).
+  * `totalExpenses`: Soma de lançamentos manuais de saída (`FinancialEntry` de tipo `MANUAL_OUT`).
+  * `releasedCommissions`: Comissões liberadas no período (`CommissionEntry.releasedAmount - reversedAmount`).
+  * `estimatedCommissions`: Comissões geradas pendentes de liberação (`status: GENERATED`).
+  * `operationalResult`: Resultado operacional calculado.
+* **Fórmula Operacional:**
+  $$\text{Resultado Operacional} = \text{Total Recebido} - \text{Despesas} - \text{Comissões Liberadas}$$
+* **Diferença Conceitual:**
+  * **Vendido (Faturamento):** Registrado pela conclusão da comanda (`closedAt` no período).
+  * **Recebido:** Registrado pela data do pagamento confirmado (`paidAt` no período).
+  * **A Receber:** Carteira de comandas ativas em aberto/atendimento/pendente.
+* **Isolamento por Tenant & Permissões:** Exige sessão operacional (`requireOperationalSession`). Acesso restrito a `OWNER`, `MANAGER` e `SUPER_ADMIN`. Usuários com papel `BARBER` recebem erro HTTP 403. Consultas isoladas por `barbershopId`.
+* **Limitações Atuais:** Não há módulo de contas a pagar/receber formais com vencimentos futuros; `totalReceivable` reflete comandas ativas.
+* **Próximo Passo:** O **PR #17** implementará a interface gráfica do dashboard financeiro por período em `/admin/financeiro`.
