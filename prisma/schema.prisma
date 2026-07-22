@@ -83,6 +83,8 @@ model Barbershop {
   commissionEntries CommissionEntry[]
   commissionPeriods CommissionPeriod[]
   commissionAdjustments CommissionAdjustment[]
+  careerLevels               CareerLevel[]
+  serviceCommissionRules     ServiceCommissionRule[]
   clubPlans                  ClubPlan[]
   customerClubSubscriptions  CustomerClubSubscription[]
   clubSubscriptionPayments   ClubSubscriptionPayment[]
@@ -144,7 +146,11 @@ model BarbershopMember {
   clubPointEntries           ClubPointEntry[]
   clubSettlementMembers      ClubSettlementMember[]
 
+  careerLevelId String?      @map("career_level_id")
+  careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
+
   @@unique([barbershopId, userId])
+  @@index([careerLevelId])
   @@map("barbershop_members")
 }
 
@@ -186,6 +192,7 @@ model Service {
   appointments AppointmentService[]
   comandaItems ComandaItem[]
   commissionConfigs CommissionConfig[]
+  serviceCommissionRules ServiceCommissionRule[]
   clubPlanBenefits           ClubPlanBenefit[]
   clubBenefitUsages          ClubBenefitUsage[]
 
@@ -827,6 +834,61 @@ model CommissionAdjustment {
   @@index([paymentId])
   @@index([rolloverFromCompetence])
   @@map("commission_adjustments")
+}
+
+// ----------------------------------------------------
+// 7.1 PLANO DE CARREIRA E MATRIZ DE COMISSÃO (COMISSÃO 2.0)
+// Ordem de Fallback da Comissão 2.0 (Resolução futura de comissão):
+// 1. CommissionConfig individual por membro + serviço (memberId + serviceId)
+// 2. CommissionConfig individual por membro + categoria (memberId + categoryId)
+// 3. CommissionConfig individual default do membro (memberId + default)
+// 4. ServiceCommissionRule por serviço + nível (serviceId + careerLevelId)
+// 5. CommissionConfig padrão do serviço (serviceId)
+// 6. CommissionConfig padrão da categoria (categoryId)
+// 7. CommissionConfig padrão do produto, quando aplicável (productId)
+// 8. CareerLevel.defaultCommissionRate
+// 9. CommissionConfig padrão da barbearia (barbershop:default)
+// ----------------------------------------------------
+
+model CareerLevel {
+  id                    String   @id @default(uuid())
+  barbershopId          String   @map("barbershop_id")
+  name                  String
+  description           String?
+  sortOrder             Int      @default(0) @map("sort_order")
+  defaultCommissionRate Decimal? @map("default_commission_rate") @db.Decimal(10, 2)
+  active                Boolean  @default(true)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  members    BarbershopMember[]
+  rules      ServiceCommissionRule[]
+
+  @@unique([barbershopId, name])
+  @@index([barbershopId, active])
+  @@map("career_levels")
+}
+
+model ServiceCommissionRule {
+  id             String               @id @default(uuid())
+  barbershopId   String               @map("barbershop_id")
+  serviceId      String               @map("service_id")
+  careerLevelId  String               @map("career_level_id")
+  type           CommissionConfigType @default(PERCENTAGE)
+  commissionRate Decimal              @map("commission_rate") @db.Decimal(10, 2)
+  active         Boolean              @default(true)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  barbershop  Barbershop  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  careerLevel CareerLevel @relation(fields: [careerLevelId], references: [id], onDelete: Cascade)
+
+  @@unique([barbershopId, serviceId, careerLevelId])
+  @@index([barbershopId, serviceId])
+  @@index([barbershopId, careerLevelId])
+  @@map("service_commission_rules")
 }
 
 // ----------------------------------------------------
