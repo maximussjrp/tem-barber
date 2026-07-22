@@ -12,8 +12,11 @@ interface WorkingHour {
   breakStart: string | null; breakEnd: string | null; isActive: boolean;
 }
 interface TimeOff { id: string; startDate: string; endDate: string; reason: string | null }
+interface CareerLevelOption { id: string; name: string }
 interface Member {
   id: string; role: string; bio: string | null; isActive: boolean; ratingAvg: number;
+  careerLevelId?: string | null;
+  careerLevel?: { id: string; name: string } | null;
   user: { id: string; name: string; email: string | null; phone: string; avatarUrl: string | null };
   workingHours: WorkingHour[];
   services: { service: { id: string; name: string; price: string } }[];
@@ -55,6 +58,7 @@ export default function MemberDetailPage() {
 
   const [member, setMember] = useState<Member | null>(null);
   const [allServices, setAllServices] = useState<Service[]>([]);
+  const [careerLevels, setCareerLevels] = useState<CareerLevelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("perfil");
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +67,7 @@ export default function MemberDetailPage() {
   // Perfil state
   const [role, setRole] = useState("");
   const [bio, setBio] = useState("");
+  const [careerLevelId, setCareerLevelId] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
   // Serviços state
@@ -88,17 +93,22 @@ export default function MemberDetailPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [mRes, sRes] = await Promise.all([
+      const [mRes, sRes, lRes] = await Promise.all([
         fetch(`/api/admin/team/${memberId}`),
         fetch("/api/admin/services"),
+        fetch("/api/admin/career-levels"),
       ]);
       if (!mRes.ok) { router.push("/admin/equipe"); return; }
       const m: Member = await mRes.json();
       const s: Service[] = await sRes.json();
+      if (lRes.ok) {
+        setCareerLevels(await lRes.json());
+      }
       setMember(m);
       setAllServices(s);
       setRole(m.role);
       setBio(m.bio ?? "");
+      setCareerLevelId(m.careerLevelId ?? "");
       setHours(defaultHours(m.workingHours));
       setSelectedServices(new Set(m.services.map((bs) => bs.service.id)));
     } catch {
@@ -124,11 +134,11 @@ export default function MemberDetailPage() {
       const res = await fetch(`/api/admin/team/${memberId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, bio }),
+        body: JSON.stringify({ role, bio, careerLevelId: careerLevelId || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setMember((prev) => prev ? { ...prev, role: data.role, bio: data.bio } : prev);
+      setMember((prev) => prev ? { ...prev, role: data.role, bio: data.bio, careerLevelId: data.careerLevelId, careerLevel: data.careerLevel } : prev);
       showSuccess("Perfil atualizado!");
     } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingProfile(false); }
@@ -238,41 +248,31 @@ export default function MemberDetailPage() {
     <div className="p-6 md:p-8 max-w-3xl">
       {/* Back + header */}
       <div className="mb-6">
-        <Link href="/admin/equipe" className="text-stone-500 hover:text-amber-400 text-sm transition-all">
+        <Link href="/admin/equipe" className="text-stone-500 hover:text-stone-300 text-xs font-medium transition-all mb-4 inline-block">
           ← Voltar para Equipe
         </Link>
-        <div className="flex items-center gap-4 mt-4">
-          <div className="w-14 h-14 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0 relative">
-            <Avatar src={member.user.avatarUrl} alt={member.user.name} size="lg" />
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0">
+            <Avatar src={member.user.avatarUrl} alt={member.user.name} size="xl" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-stone-100">{member.user.name}</h1>
-            <p className="text-stone-400 text-sm">{member.user.phone} · {member.user.email ?? "Sem e-mail"}</p>
+            <h1 className="text-xl font-bold text-stone-100">{member.user.name}</h1>
+            <p className="text-stone-400 text-sm font-medium">{member.user.email ?? member.user.phone}</p>
           </div>
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-sm px-4 py-3 rounded-lg mb-5">
-          ⚠️ {error}
-        </div>
-      )}
-      {success && (
-        <div className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-sm px-4 py-3 rounded-lg mb-5">
-          ✓ {success}
-        </div>
-      )}
+      {error && <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-sm px-4 py-3 rounded-lg mb-6">⚠️ {error}</div>}
+      {success && <div className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-sm px-4 py-3 rounded-lg mb-6">✓ {success}</div>}
 
       {/* Tabs */}
-      <div className="flex bg-stone-950/80 p-1 rounded-lg border border-stone-800 mb-6 overflow-x-auto gap-1">
+      <div className="flex border-b border-stone-800 mb-6 gap-2">
         {tabs.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setActiveTab(t.key); setError(null); }}
-            className={`flex-1 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-              activeTab === t.key
-                ? "bg-amber-500 text-stone-950 shadow-md font-semibold"
-                : "text-stone-400 hover:text-stone-200"
+            onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
+              activeTab === t.key ? "border-amber-500 text-amber-400" : "border-transparent text-stone-500 hover:text-stone-300"
             }`}
           >
             {t.label}
@@ -282,22 +282,38 @@ export default function MemberDetailPage() {
 
       {/* ── Tab: Perfil ── */}
       {activeTab === "perfil" && (
-        <form onSubmit={saveProfile} className="space-y-4">
-          <div className="bg-stone-900 border border-stone-800 rounded-xl p-5">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-amber-500/80 mb-4">Cargo e Bio</h2>
+        <form onSubmit={saveProfile} className="space-y-6">
+          <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-stone-400">Informações Profissionais</h2>
             <div className="space-y-4">
-              <div>
-                <label className={labelClass}>Cargo</label>
-                <select
-                  title="Cargo do colaborador"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  className={inputClass}
-                >
-                  {ROLE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Cargo</label>
+                  <select
+                    title="Cargo do colaborador"
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className={inputClass}
+                  >
+                    {ROLE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Nível de Carreira</label>
+                  <select
+                    title="Nível de carreira do colaborador"
+                    value={careerLevelId}
+                    onChange={(e) => setCareerLevelId(e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Sem nível atribuído</option>
+                    {careerLevels.map((lvl) => (
+                      <option key={lvl.id} value={lvl.id}>{lvl.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className={labelClass}>Bio / Especialidade</label>
@@ -315,7 +331,7 @@ export default function MemberDetailPage() {
             <button
               type="submit"
               disabled={savingProfile}
-              className="bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold px-8 py-3 rounded-lg text-sm transition-all disabled:opacity-50"
+              className="bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold px-8 py-3 rounded-lg text-sm transition-all disabled:opacity-50 cursor-pointer"
             >
               {savingProfile ? "Salvando..." : "Salvar Perfil"}
             </button>

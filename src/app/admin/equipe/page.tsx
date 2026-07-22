@@ -5,11 +5,21 @@ import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 
+interface CareerLevelOption {
+  id: string;
+  name: string;
+}
+
 interface Member {
   id: string;
   role: string;
   isActive: boolean;
   ratingAvg: number;
+  careerLevelId?: string | null;
+  careerLevel?: {
+    id: string;
+    name: string;
+  } | null;
   user: {
     id: string;
     name: string;
@@ -43,10 +53,12 @@ const emptyForm = {
   password: "",
   role: "BARBER",
   bio: "",
+  careerLevelId: "",
 };
 
 export default function EquipePage() {
   const [members, setMembers] = useState<Member[]>([]);
+  const [careerLevels, setCareerLevels] = useState<CareerLevelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -65,8 +77,12 @@ export default function EquipePage() {
   async function loadMembers() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/team");
-      setMembers(await res.json());
+      const [teamRes, levelsRes] = await Promise.all([
+        fetch("/api/admin/team"),
+        fetch("/api/admin/career-levels"),
+      ]);
+      if (teamRes.ok) setMembers(await teamRes.json());
+      if (levelsRes.ok) setCareerLevels(await levelsRes.json());
     } catch {
       setError("Erro ao carregar a equipe.");
     } finally {
@@ -161,7 +177,7 @@ export default function EquipePage() {
         </div>
         <button
           onClick={() => { setError(null); setModalOpen(true); }}
-          className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-5 py-2.5 rounded-lg text-sm transition-all"
+          className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-5 py-2.5 rounded-lg text-sm transition-all cursor-pointer"
         >
           + Convidar Colaborador
         </button>
@@ -205,6 +221,11 @@ export default function EquipePage() {
                     <span className={`text-xs px-2 py-0.5 rounded border font-medium ${ROLE_COLORS[member.role]}`}>
                       {ROLE_LABELS[member.role] ?? member.role}
                     </span>
+                    {member.careerLevel && (
+                      <span className="text-xs px-2 py-0.5 rounded border bg-amber-500/10 text-amber-300 border-amber-500/20">
+                        {member.careerLevel.name}
+                      </span>
+                    )}
                     {!member.isActive && (
                       <span className="text-xs px-2 py-0.5 rounded border bg-stone-800 text-stone-500 border-stone-700">
                         Inativo
@@ -352,6 +373,23 @@ export default function EquipePage() {
                 </div>
 
                 <div>
+                  <label className={labelClass}>Nível de Carreira</label>
+                  <select
+                    title="Nível de carreira do colaborador"
+                    value={form.careerLevelId}
+                    onChange={(e) => setForm((f) => ({ ...f, careerLevelId: e.target.value }))}
+                    className={inputClass}
+                  >
+                    <option value="">Sem nível atribuído</option>
+                    {careerLevels.map((lvl) => (
+                      <option key={lvl.id} value={lvl.id}>
+                        {lvl.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className={labelClass}>Bio / Especialidade</label>
                   <textarea
                     rows={2}
@@ -366,14 +404,14 @@ export default function EquipePage() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold py-3 rounded-lg text-sm transition-all disabled:opacity-50"
+                    className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold py-3 rounded-lg text-sm transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {saving ? "Cadastrando..." : "Cadastrar Colaborador"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}
-                    className="px-5 border border-stone-700 text-stone-400 hover:text-stone-200 rounded-lg text-sm transition-all"
+                    className="px-5 border border-stone-700 text-stone-400 hover:text-stone-200 rounded-lg text-sm transition-all cursor-pointer"
                   >
                     Cancelar
                   </button>

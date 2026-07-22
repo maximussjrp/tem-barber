@@ -14,6 +14,9 @@ export async function GET() {
       user: {
         select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
       },
+      careerLevel: {
+        select: { id: true, name: true, defaultCommissionRate: true },
+      },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -27,7 +30,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, phone, cpf, email, password, role, bio } = body;
+    const { name, phone, cpf, email, password, role, bio, careerLevelId } = body;
 
     // Validation
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -44,6 +47,17 @@ export async function POST(request: Request) {
     }
     if (!["BARBER", "MANAGER"].includes(role)) {
       return NextResponse.json({ error: "Cargo inválido." }, { status: 400 });
+    }
+
+    let validCareerLevelId: string | null = null;
+    if (careerLevelId && typeof careerLevelId === "string" && careerLevelId.trim().length > 0) {
+      const level = await prisma.careerLevel.findFirst({
+        where: { id: careerLevelId, barbershopId: data!.barbershopId!, active: true },
+      });
+      if (!level) {
+        return NextResponse.json({ error: "Nível de carreira não encontrado ou inválido." }, { status: 400 });
+      }
+      validCareerLevelId = level.id;
     }
 
     const cleanPhone = phone.replace(/\D/g, "");
@@ -93,10 +107,14 @@ export async function POST(request: Request) {
           userId: existingUser.id,
           role,
           bio: bio?.trim() || null,
+          careerLevelId: validCareerLevelId,
         },
         include: {
           user: {
             select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+          },
+          careerLevel: {
+            select: { id: true, name: true, defaultCommissionRate: true },
           },
         },
       });
@@ -125,10 +143,14 @@ export async function POST(request: Request) {
           userId: user.id,
           role,
           bio: bio?.trim() || null,
+          careerLevelId: validCareerLevelId,
         },
         include: {
           user: {
             select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+          },
+          careerLevel: {
+            select: { id: true, name: true, defaultCommissionRate: true },
           },
         },
       });

@@ -22,6 +22,9 @@ export async function GET(
       user: {
         select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
       },
+      careerLevel: {
+        select: { id: true, name: true, defaultCommissionRate: true },
+      },
       workingHours: { orderBy: { dayOfWeek: "asc" } },
       services: { include: { service: { select: { id: true, name: true, price: true } } } },
       timeOffs: { orderBy: { startDate: "asc" } },
@@ -48,21 +51,40 @@ export async function PUT(
 
   try {
     const body = await request.json();
-    const { role, bio } = body;
+    const { role, bio, careerLevelId } = body;
 
     if (role && !["BARBER", "MANAGER", "OWNER"].includes(role)) {
       return NextResponse.json({ error: "Cargo inválido." }, { status: 400 });
+    }
+
+    let updatedCareerLevelId: string | null | undefined = undefined;
+    if (careerLevelId !== undefined) {
+      if (careerLevelId === null || careerLevelId === "") {
+        updatedCareerLevelId = null;
+      } else if (typeof careerLevelId === "string") {
+        const level = await prisma.careerLevel.findFirst({
+          where: { id: careerLevelId, barbershopId: data!.barbershopId!, active: true },
+        });
+        if (!level) {
+          return NextResponse.json({ error: "Nível de carreira não encontrado ou inválido." }, { status: 400 });
+        }
+        updatedCareerLevelId = level.id;
+      }
     }
 
     const updated = await prisma.barbershopMember.update({
       where: { id },
       data: {
         ...(role ? { role } : {}),
-        bio: bio?.trim() || null,
+        bio: bio !== undefined ? (bio?.trim() || null) : member.bio,
+        ...(updatedCareerLevelId !== undefined ? { careerLevelId: updatedCareerLevelId } : {}),
       },
       include: {
         user: {
           select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+        },
+        careerLevel: {
+          select: { id: true, name: true, defaultCommissionRate: true },
         },
       },
     });
