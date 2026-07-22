@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { NextResponse } from "next/server";
 import { GET as getLevels, POST as postLevel } from "@/app/api/admin/career-levels/route";
 import { PUT as putLevel, DELETE as deleteLevel } from "@/app/api/admin/career-levels/[id]/route";
 import { GET as getMatrix, PUT as putMatrix } from "@/app/api/admin/commission-rules/matrix/route";
 import { PUT as putTeamMember } from "@/app/api/admin/team/[id]/route";
 import { getAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 vi.mock("@/lib/api-auth", () => ({
   getAdminSession: vi.fn(),
@@ -98,8 +100,8 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
     expect(postBody.name).toBe("Pleno");
 
     // PUT update
-    mockedCareerLevel.findFirst.mockImplementation(({ where }: { where?: { id?: string } }) => {
-      if (where?.id === "level-2") {
+    (mockedCareerLevel.findFirst as any).mockImplementation((args: any) => {
+      if (args?.where?.id === "level-2") {
         return Promise.resolve({
           id: "level-2",
           barbershopId: barbershopId1,
@@ -140,9 +142,9 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
   });
 
   it("2. BARBER não consegue criar nível de carreira (403 pelo auth session)", async () => {
-    const errorResponse = new Response(JSON.stringify({ error: "Acesso negado." }), { status: 403 }) as unknown as import("next/server").NextResponse;
+    const errorResponse = NextResponse.json({ error: "Acesso negado." }, { status: 403 });
     mockedGetAdminSession.mockResolvedValue({
-      error: errorResponse,
+      error: errorResponse as any,
       data: null,
     });
 
@@ -242,6 +244,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       role: "BARBER",
       bio: null,
       careerLevelId: null,
+      ratingAvg: 5.0,
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -264,6 +267,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       role: "BARBER",
       bio: null,
       careerLevelId: "level-valid",
+      ratingAvg: 5.0,
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -293,6 +297,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       role: "BARBER",
       bio: null,
       careerLevelId: null,
+      ratingAvg: 5.0,
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -330,7 +335,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
         updatedAt: new Date(),
         category: { id: "c-1", barbershopId: barbershopId1, name: "Cortes", slug: "cortes", createdAt: new Date(), updatedAt: new Date() },
       },
-    ]);
+    ] as any);
     mockedCareerLevel.findMany.mockResolvedValue([
       { id: "l-1", barbershopId: barbershopId1, name: "Sênior", description: null, sortOrder: 0, defaultCommissionRate: null, active: true, createdAt: new Date(), updatedAt: new Date() },
     ]);
