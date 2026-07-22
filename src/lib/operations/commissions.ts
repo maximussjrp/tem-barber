@@ -137,7 +137,93 @@ export async function upsertCommissionConfig(
   });
 }
 
-async function resolveCommissionConfig(
+export type CommissionOrigin =
+  | "MEMBER_SERVICE"
+  | "MEMBER_CATEGORY"
+  | "MEMBER_DEFAULT"
+  | "SERVICE_CAREER_LEVEL"
+  | "SERVICE_DEFAULT"
+  | "CATEGORY_DEFAULT"
+  | "MEMBER_PRODUCT"
+  | "MEMBER_PRODUCT_DEFAULT"
+  | "PRODUCT"
+  | "PRODUCT_DEFAULT"
+  | "CAREER_LEVEL_DEFAULT"
+  | "BARBERSHOP_DEFAULT";
+
+export interface ResolvedCommissionRule {
+  id: string;
+  configId: string | null;
+  serviceCommissionRuleId?: string | null;
+  careerLevelId?: string | null;
+  origin: CommissionOrigin;
+  type: CommissionConfigType;
+  value: Prisma.Decimal;
+  scopeKey?: string | null;
+  memberId: string;
+  serviceId?: string | null;
+  productId?: string | null;
+  configSnapshot: {
+    id: string;
+    configId: string | null;
+    serviceCommissionRuleId?: string | null;
+    careerLevelId?: string | null;
+    origin: CommissionOrigin;
+    scopeKey?: string | null;
+    type: CommissionConfigType;
+    value: string;
+    memberId: string;
+    serviceId?: string | null;
+    productId?: string | null;
+    createdAt: string;
+  };
+}
+
+function buildResolvedRule(input: {
+  id: string;
+  configId?: string | null;
+  serviceCommissionRuleId?: string | null;
+  careerLevelId?: string | null;
+  origin: CommissionOrigin;
+  type: CommissionConfigType;
+  value: Prisma.Decimal;
+  scopeKey?: string | null;
+  memberId: string;
+  serviceId?: string | null;
+  productId?: string | null;
+  createdAt?: Date | null;
+}): ResolvedCommissionRule {
+  const createdAtIso = input.createdAt ? input.createdAt.toISOString() : new Date().toISOString();
+  return {
+    id: input.id,
+    configId: input.configId ?? null,
+    serviceCommissionRuleId: input.serviceCommissionRuleId ?? null,
+    careerLevelId: input.careerLevelId ?? null,
+    origin: input.origin,
+    type: input.type,
+    value: input.value,
+    scopeKey: input.scopeKey ?? null,
+    memberId: input.memberId,
+    serviceId: input.serviceId ?? null,
+    productId: input.productId ?? null,
+    configSnapshot: {
+      id: input.id,
+      configId: input.configId ?? null,
+      serviceCommissionRuleId: input.serviceCommissionRuleId ?? null,
+      careerLevelId: input.careerLevelId ?? null,
+      origin: input.origin,
+      scopeKey: input.scopeKey ?? null,
+      type: input.type,
+      value: input.value.toString(),
+      memberId: input.memberId,
+      serviceId: input.serviceId ?? null,
+      productId: input.productId ?? null,
+      createdAt: createdAtIso,
+    },
+  };
+}
+
+export async function resolveCommissionConfig(
   tx: Prisma.TransactionClient,
   input: {
     barbershopId: string;
@@ -146,7 +232,7 @@ async function resolveCommissionConfig(
     productId?: string | null;
     itemType: ComandaItemType;
   }
-) {
+): Promise<ResolvedCommissionRule | null> {
   if (input.itemType === ComandaItemType.SERVICE) {
     if (!input.serviceId) return null;
     const service = await tx.service.findFirst({
@@ -155,37 +241,230 @@ async function resolveCommissionConfig(
     });
     if (!service) return null;
 
-    const priority = [
-      buildCommissionScopeKey({ memberId: input.memberId, serviceId: input.serviceId }),
-      buildCommissionScopeKey({ memberId: input.memberId, categoryId: service.categoryId }),
-      buildCommissionScopeKey({ memberId: input.memberId }),
-      buildCommissionScopeKey({ serviceId: input.serviceId }),
-      buildCommissionScopeKey({ categoryId: service.categoryId }),
-      buildCommissionScopeKey({}),
+    const member = await tx.barbershopMember.findFirst({
+      where: { id: input.memberId, barbershopId: input.barbershopId },
+      select: { id: true, careerLevelId: true },
+    });
+    if (!member) return null;
+
+    const memberServiceKey = buildCommissionScopeKey({ memberId: input.memberId, serviceId: input.serviceId });
+    const memberCategoryKey = buildCommissionScopeKey({ memberId: input.memberId, categoryId: service.categoryId });
+    const memberDefaultKey = buildCommissionScopeKey({ memberId: input.memberId });
+    const serviceDefaultKey = buildCommissionScopeKey({ serviceId: input.serviceId });
+    const categoryDefaultKey = buildCommissionScopeKey({ categoryId: service.categoryId });
+    const barbershopDefaultKey = buildCommissionScopeKey({});
+
+    const configKeys = [
+      memberServiceKey,
+      memberCategoryKey,
+      memberDefaultKey,
+      serviceDefaultKey,
+      categoryDefaultKey,
+      barbershopDefaultKey,
     ];
 
     const configs = await tx.commissionConfig.findMany({
-      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priority } },
+      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: configKeys } },
     });
-    return priority.map((scopeKey) => configs.find((config) => config.scopeKey === scopeKey)).find(Boolean) ?? null;
+
+    const getConfigByScope = (key: string) => configs.find((c) => c.scopeKey === key) ?? null;
+
+    // 1. CommissionConfig membro + serviço
+    const memberServiceConfig = getConfigByScope(memberServiceKey);
+    if (memberServiceConfig) {
+      return buildResolvedRule({
+        id: memberServiceConfig.id,
+        configId: memberServiceConfig.id,
+        origin: "MEMBER_SERVICE",
+        type: memberServiceConfig.type,
+        value: memberServiceConfig.value,
+        scopeKey: memberServiceConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: memberServiceConfig.createdAt,
+      });
+    }
+
+    // 2. CommissionConfig membro + categoria
+    const memberCategoryConfig = getConfigByScope(memberCategoryKey);
+    if (memberCategoryConfig) {
+      return buildResolvedRule({
+        id: memberCategoryConfig.id,
+        configId: memberCategoryConfig.id,
+        origin: "MEMBER_CATEGORY",
+        type: memberCategoryConfig.type,
+        value: memberCategoryConfig.value,
+        scopeKey: memberCategoryConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: memberCategoryConfig.createdAt,
+      });
+    }
+
+    // 3. CommissionConfig membro default
+    const memberDefaultConfig = getConfigByScope(memberDefaultKey);
+    if (memberDefaultConfig) {
+      return buildResolvedRule({
+        id: memberDefaultConfig.id,
+        configId: memberDefaultConfig.id,
+        origin: "MEMBER_DEFAULT",
+        type: memberDefaultConfig.type,
+        value: memberDefaultConfig.value,
+        scopeKey: memberDefaultConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: memberDefaultConfig.createdAt,
+      });
+    }
+
+    // 4. ServiceCommissionRule (serviceId + careerLevelId)
+    if (member.careerLevelId) {
+      const careerLevel = await tx.careerLevel.findFirst({
+        where: { id: member.careerLevelId, barbershopId: input.barbershopId, active: true },
+      });
+      if (careerLevel) {
+        const matrixRule = await tx.serviceCommissionRule.findFirst({
+          where: {
+            barbershopId: input.barbershopId,
+            serviceId: input.serviceId,
+            careerLevelId: member.careerLevelId,
+            active: true,
+          },
+        });
+        if (matrixRule) {
+          return buildResolvedRule({
+            id: matrixRule.id,
+            configId: null,
+            serviceCommissionRuleId: matrixRule.id,
+            careerLevelId: member.careerLevelId,
+            origin: "SERVICE_CAREER_LEVEL",
+            type: matrixRule.type,
+            value: matrixRule.commissionRate,
+            memberId: input.memberId,
+            serviceId: input.serviceId,
+            createdAt: matrixRule.createdAt,
+          });
+        }
+      }
+    }
+
+    // 5. CommissionConfig serviço default
+    const serviceDefaultConfig = getConfigByScope(serviceDefaultKey);
+    if (serviceDefaultConfig) {
+      return buildResolvedRule({
+        id: serviceDefaultConfig.id,
+        configId: serviceDefaultConfig.id,
+        origin: "SERVICE_DEFAULT",
+        type: serviceDefaultConfig.type,
+        value: serviceDefaultConfig.value,
+        scopeKey: serviceDefaultConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: serviceDefaultConfig.createdAt,
+      });
+    }
+
+    // 6. CommissionConfig categoria default
+    const categoryDefaultConfig = getConfigByScope(categoryDefaultKey);
+    if (categoryDefaultConfig) {
+      return buildResolvedRule({
+        id: categoryDefaultConfig.id,
+        configId: categoryDefaultConfig.id,
+        origin: "CATEGORY_DEFAULT",
+        type: categoryDefaultConfig.type,
+        value: categoryDefaultConfig.value,
+        scopeKey: categoryDefaultConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: categoryDefaultConfig.createdAt,
+      });
+    }
+
+    // 8. CareerLevel.defaultCommissionRate
+    if (member.careerLevelId) {
+      const careerLevel = await tx.careerLevel.findFirst({
+        where: { id: member.careerLevelId, barbershopId: input.barbershopId, active: true },
+      });
+      if (careerLevel && careerLevel.defaultCommissionRate !== null) {
+        return buildResolvedRule({
+          id: careerLevel.id,
+          configId: null,
+          careerLevelId: careerLevel.id,
+          origin: "CAREER_LEVEL_DEFAULT",
+          type: "PERCENTAGE",
+          value: careerLevel.defaultCommissionRate,
+          memberId: input.memberId,
+          serviceId: input.serviceId,
+          createdAt: careerLevel.createdAt,
+        });
+      }
+    }
+
+    // 9. CommissionConfig barbershop default
+    const barbershopDefaultConfig = getConfigByScope(barbershopDefaultKey);
+    if (barbershopDefaultConfig) {
+      return buildResolvedRule({
+        id: barbershopDefaultConfig.id,
+        configId: barbershopDefaultConfig.id,
+        origin: "BARBERSHOP_DEFAULT",
+        type: barbershopDefaultConfig.type,
+        value: barbershopDefaultConfig.value,
+        scopeKey: barbershopDefaultConfig.scopeKey,
+        memberId: input.memberId,
+        serviceId: input.serviceId,
+        createdAt: barbershopDefaultConfig.createdAt,
+      });
+    }
+
+    return null;
   } else if (input.itemType === ComandaItemType.PRODUCT) {
-    const priority = [];
-    if (input.memberId && input.productId) {
-      priority.push(buildCommissionScopeKey({ memberId: input.memberId, productId: input.productId }));
-    }
-    if (input.memberId) {
-      priority.push(buildCommissionScopeKey({ memberId: input.memberId, isProductDefault: true }));
-    }
-    if (input.productId) {
-      priority.push(buildCommissionScopeKey({ productId: input.productId }));
-    }
-    priority.push(buildCommissionScopeKey({ isProductDefault: true }));
+    if (!input.productId) return null;
+    const memberProductKey = buildCommissionScopeKey({ memberId: input.memberId, productId: input.productId });
+    const memberProductDefaultKey = buildCommissionScopeKey({ memberId: input.memberId, isProductDefault: true });
+    const productKey = buildCommissionScopeKey({ productId: input.productId });
+    const productDefaultKey = buildCommissionScopeKey({ isProductDefault: true });
+    const barbershopDefaultKey = buildCommissionScopeKey({});
+
+    const priorityKeys = [
+      memberProductKey,
+      memberProductDefaultKey,
+      productKey,
+      productDefaultKey,
+      barbershopDefaultKey,
+    ];
 
     const configs = await tx.commissionConfig.findMany({
-      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priority } },
+      where: { barbershopId: input.barbershopId, active: true, scopeKey: { in: priorityKeys } },
     });
-    return priority.map((scopeKey) => configs.find((config) => config.scopeKey === scopeKey)).find(Boolean) ?? null;
+
+    const getConfigByScope = (key: string) => configs.find((c) => c.scopeKey === key) ?? null;
+
+    const originsMap: Record<string, CommissionOrigin> = {
+      [memberProductKey]: "MEMBER_PRODUCT",
+      [memberProductDefaultKey]: "MEMBER_PRODUCT_DEFAULT",
+      [productKey]: "PRODUCT",
+      [productDefaultKey]: "PRODUCT_DEFAULT",
+      [barbershopDefaultKey]: "BARBERSHOP_DEFAULT",
+    };
+
+    for (const key of priorityKeys) {
+      const config = getConfigByScope(key);
+      if (config) {
+        return buildResolvedRule({
+          id: config.id,
+          configId: config.id,
+          origin: originsMap[key] ?? "BARBERSHOP_DEFAULT",
+          type: config.type,
+          value: config.value,
+          scopeKey: config.scopeKey,
+          memberId: input.memberId,
+          productId: input.productId,
+          createdAt: config.createdAt,
+        });
+      }
+    }
   }
+
   return null;
 }
 
@@ -324,7 +603,7 @@ export async function generateCommissionsForComanda(
   const commissionableItems: {
     item: typeof comanda.items[0];
     executorId: string;
-    config: any;
+    config: ResolvedCommissionRule;
     basePriceCents: number;
     finalBaseAmountCents: number;
   }[] = [];
@@ -440,14 +719,8 @@ export async function generateCommissionsForComanda(
             where: { id: existing.id },
             data: {
               memberId: executorId,
-              configId: config.id,
-              configSnapshot: {
-                id: config.id,
-                scopeKey: config.scopeKey,
-                type: config.type,
-                value: config.value.toString(),
-                createdAt: config.createdAt.toISOString(),
-              },
+              configId: config.configId ?? null,
+              configSnapshot: config.configSnapshot as unknown as Prisma.InputJsonValue,
               baseAmount: fromCents(finalBaseAmountCents),
               generatedAmount,
               releasedAmount: 0,
@@ -468,6 +741,8 @@ export async function generateCommissionsForComanda(
         await tx.commissionEntry.update({
           where: { id: existing.id },
           data: {
+            configId: config.configId ?? null,
+            configSnapshot: config.configSnapshot as unknown as Prisma.InputJsonValue,
             baseAmount: fromCents(finalBaseAmountCents),
             generatedAmount,
             competence,
@@ -485,14 +760,8 @@ export async function generateCommissionsForComanda(
           barbershopId,
           comandaItemId: item.id,
           memberId: executorId,
-          configId: config.id,
-          configSnapshot: {
-            id: config.id,
-            scopeKey: config.scopeKey,
-            type: config.type,
-            value: config.value.toString(),
-            createdAt: config.createdAt.toISOString(),
-          },
+          configId: config.configId ?? null,
+          configSnapshot: config.configSnapshot as unknown as Prisma.InputJsonValue,
           baseAmount: fromCents(finalBaseAmountCents),
           generatedAmount,
           competence,
