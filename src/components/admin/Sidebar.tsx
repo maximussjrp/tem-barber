@@ -69,6 +69,7 @@ const Icons = {
 const navItems = [
   { label: "Dashboard",     href: "/admin/dashboard",    icon: Icons.dashboard, children: [], ownerOnly: false },
   { label: "Agendamentos",  href: "/admin/agendamentos", icon: Icons.calendar,  children: [], ownerOnly: false },
+  { label: "Fila Online",   href: "/admin/fila",         icon: Icons.calendar,  children: [], ownerOnly: false },
   { label: "Comandas",      href: "/admin/comandas",     icon: Icons.calendar,  children: [], ownerOnly: false },
   { label: "Clientes",      href: "/admin/clientes",     icon: Icons.clients,   children: [], ownerOnly: false },
   { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [], ownerOnly: false },
