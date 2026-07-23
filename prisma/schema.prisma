@@ -38,6 +38,8 @@ model User {
   whatsappConfirmations AppointmentWhatsappConfirmation[]
   customerBarbershopLinks CustomerBarbershopLink[]
   verifiedWhatsappCustomerLinks CustomerBarbershopLink[] @relation("WhatsappVerifiedBy")
+  createdWaitlistSessions OnlineWaitlistSession[]
+  onlineWaitlistEntries OnlineWaitlistEntry[]
 
   @@map("users")
 }
@@ -95,6 +97,9 @@ model Barbershop {
   clubSettlements            ClubSettlement[]
   whatsappConfirmations      AppointmentWhatsappConfirmation[]
   customerBarbershopLinks    CustomerBarbershopLink[]
+  onlineWaitlistSessions     OnlineWaitlistSession[]
+  onlineWaitlistEntries      OnlineWaitlistEntry[]
+  onlineWaitlistMemberConfigs OnlineWaitlistMemberConfig[]
 
   @@map("barbershops")
 }
@@ -148,6 +153,9 @@ model BarbershopMember {
   commissionAdjustments CommissionAdjustment[]
   clubPointEntries           ClubPointEntry[]
   clubSettlementMembers      ClubSettlementMember[]
+  preferredWaitlistEntries   OnlineWaitlistEntry[] @relation("WaitlistPreferredMember")
+  calledWaitlistEntries      OnlineWaitlistEntry[] @relation("WaitlistCalledByMember")
+  onlineWaitlistConfig       OnlineWaitlistMemberConfig?
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -198,6 +206,7 @@ model Service {
   serviceCommissionRules ServiceCommissionRule[]
   clubPlanBenefits           ClubPlanBenefit[]
   clubBenefitUsages          ClubBenefitUsage[]
+  onlineWaitlistEntries      OnlineWaitlistEntry[]
 
   @@map("services")
 }
@@ -306,6 +315,7 @@ model Appointment {
   review     Review?
   comandas   Comanda[]
   whatsappConfirmation AppointmentWhatsappConfirmation?
+  fitInWaitlistEntries OnlineWaitlistEntry[] @relation("WaitlistFitInAppointment")
 
   @@index([barbershopId, dateTime])
   @@index([memberId, dateTime])
@@ -1159,3 +1169,102 @@ model ClubSettlementMember {
   @@map("club_settlement_members")
 }
 
+// ----------------------------------------------------
+// 12. FILA DE ESPERA ONLINE (WAITLIST)
+// ----------------------------------------------------
+
+enum OnlineWaitlistSessionStatus {
+  OPEN
+  PAUSED
+  CLOSED
+}
+
+enum OnlineWaitlistEntryStatus {
+  WAITING
+  CALLED
+  FIT_IN_CREATED
+  IN_SERVICE
+  COMPLETED
+  SKIPPED
+  NO_SHOW
+  MOVED_TO_END
+  CANCELED_BY_CUSTOMER
+  CANCELED_BY_SHOP
+  EXPIRED
+}
+
+model OnlineWaitlistSession {
+  id                                    String                      @id @default(cuid())
+  barbershopId                          String                      @map("barbershop_id")
+  status                                OnlineWaitlistSessionStatus @default(OPEN)
+  openedAt                              DateTime                    @default(now()) @map("opened_at")
+  closedAt                              DateTime?                   @map("closed_at")
+  title                                 String?
+  notes                                 String?
+  defaultLockBeforeAppointmentMinutes Int                         @default(20) @map("default_lock_before_appointment_minutes")
+  createdById                           String?                     @map("created_by_id")
+  createdAt                             DateTime                    @default(now()) @map("created_at")
+  updatedAt                             DateTime                    @updatedAt @map("updated_at")
+
+  barbershop Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdBy  User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  entries    OnlineWaitlistEntry[]
+
+  @@index([barbershopId, status])
+  @@map("online_waitlist_sessions")
+}
+
+model OnlineWaitlistEntry {
+  id                  String                    @id @default(cuid())
+  sessionId           String                    @map("session_id")
+  barbershopId        String                    @map("barbershop_id")
+  customerId          String?                   @map("customer_id")
+  customerName        String                    @map("customer_name")
+  customerPhone       String                    @map("customer_phone")
+  serviceId           String                    @map("service_id")
+  preferredMemberId   String?                   @map("preferred_member_id")
+  queueNumber         Int                       @map("queue_number")
+  positionWeight      Int                       @map("position_weight")
+  status              OnlineWaitlistEntryStatus @default(WAITING)
+  skipCount           Int                       @default(0) @map("skip_count")
+  noShowCount         Int                       @default(0) @map("no_show_count")
+  publicTokenHash     String                    @map("public_token_hash")
+  publicTokenHint     String?                   @map("public_token_hint")
+  calledByMemberId    String?                   @map("called_by_member_id")
+  calledAt            DateTime?                 @map("called_at")
+  fitInAppointmentId  String?                   @map("fit_in_appointment_id")
+  canceledAt          DateTime?                 @map("canceled_at")
+  completedAt         DateTime?                 @map("completed_at")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+
+  session           OnlineWaitlistSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  barbershop        Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer          User?                 @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  service           Service               @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  preferredMember   BarbershopMember?     @relation("WaitlistPreferredMember", fields: [preferredMemberId], references: [id], onDelete: SetNull)
+  calledByMember    BarbershopMember?     @relation("WaitlistCalledByMember", fields: [calledByMemberId], references: [id], onDelete: SetNull)
+  fitInAppointment  Appointment?          @relation("WaitlistFitInAppointment", fields: [fitInAppointmentId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, status])
+  @@index([barbershopId, status])
+  @@index([publicTokenHash])
+  @@index([customerId])
+  @@map("online_waitlist_entries")
+}
+
+model OnlineWaitlistMemberConfig {
+  id                            String   @id @default(cuid())
+  barbershopId                  String   @map("barbershop_id")
+  memberId                      String   @unique @map("member_id")
+  enabled                       Boolean  @default(true)
+  lockBeforeAppointmentMinutes Int      @default(20) @map("lock_before_appointment_minutes")
+  createdAt                     DateTime @default(now()) @map("created_at")
+  updatedAt                     DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([barbershopId, memberId])
+  @@map("online_waitlist_member_configs")
+}
