@@ -11,6 +11,7 @@ const { pushMock, refreshMock, sessionMock } = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, refresh: refreshMock }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("next-auth/react", () => ({
