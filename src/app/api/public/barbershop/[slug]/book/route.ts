@@ -447,59 +447,132 @@ export async function POST(
         notes: notes?.trim() || null,
       });
 
-      const token = generateWhatsappConfirmationToken();
-      const tokenHint = getWhatsappConfirmationTokenHint(token);
-      const expiresAt = getWhatsappConfirmationExpiresAt();
-      const whatsapp = buildWhatsappConfirmationLink({
-        barbershopPhone: barbershopWhatsappPhone,
-        barbershopName: barbershop.name,
-        customerName: appointment.customer.name,
-        services: appointment.services.map((service) => service.service.name),
-        dateTime: appointment.dateTime,
-        token,
-      });
+      // Upsert vínculo do cliente com a barbearia
+      let isWhatsappVerified = false;
 
-      if (!whatsapp) {
-        return {
-          error: NextResponse.json(
-            {
-              error: "BARBERSHOP_WHATSAPP_NOT_CONFIGURED",
-              message: "Esta barbearia ainda nao possui WhatsApp valido para confirmar agendamentos online.",
+      if (tx.customerBarbershopLink) {
+        let link = await tx.customerBarbershopLink.findUnique({
+          where: {
+            barbershopId_customerId: {
+              barbershopId: barbershop.id,
+              customerId,
             },
-            { status: 422 }
-          ),
+          },
+        });
+
+        if (!link) {
+          link = await tx.customerBarbershopLink.create({
+            data: {
+              barbershopId: barbershop.id,
+              customerId,
+            },
+          });
+        }
+
+        isWhatsappVerified = Boolean(link.whatsappVerifiedAt);
+
+        if (!isWhatsappVerified) {
+          const legacyConfirmed = await tx.appointmentWhatsappConfirmation.findFirst({
+            where: {
+              barbershopId: barbershop.id,
+              appointment: { customerId },
+              status: "CONFIRMED",
+            },
+          });
+
+          if (legacyConfirmed) {
+            link = await tx.customerBarbershopLink.update({
+              where: { id: link.id },
+              data: {
+                whatsappVerifiedAt: legacyConfirmed.confirmedAt || new Date(),
+                whatsappVerifiedById: legacyConfirmed.confirmedById,
+                whatsappVerificationMethod: legacyConfirmed.confirmationMethod,
+              },
+            });
+            isWhatsappVerified = true;
+          }
+        }
+      }
+
+      let whatsappConfirmationInfo:
+        | {
+            token?: string;
+            tokenHint: string;
+            expiresAt: Date;
+            message?: string;
+            link?: string;
+          }
+        | undefined = undefined;
+
+      if (!isWhatsappVerified) {
+        const token = generateWhatsappConfirmationToken();
+        const tokenHint = getWhatsappConfirmationTokenHint(token);
+        const expiresAt = getWhatsappConfirmationExpiresAt();
+        const whatsapp = buildWhatsappConfirmationLink({
+          barbershopPhone: barbershopWhatsappPhone,
+          barbershopName: barbershop.name,
+          customerName: appointment.customer.name,
+          services: appointment.services.map((service) => service.service.name),
+          dateTime: appointment.dateTime,
+          token,
+        });
+
+        if (!whatsapp) {
+          return {
+            error: NextResponse.json(
+              {
+                error: "BARBERSHOP_WHATSAPP_NOT_CONFIGURED",
+                message: "Esta barbearia ainda nao possui WhatsApp valido para confirmar agendamentos online.",
+              },
+              { status: 422 }
+            ),
+          };
+        }
+
+        await tx.appointmentWhatsappConfirmation.create({
+          data: {
+            barbershopId: barbershop.id,
+            appointmentId: appointment.id,
+            customerPhone: normalizePhone(appointment.customer.phone),
+            status: WHATSAPP_CONFIRMATION_STATUS_PENDING,
+            tokenHash: hashWhatsappConfirmationToken(token),
+            tokenHint,
+            expiresAt,
+          },
+        });
+
+        whatsappConfirmationInfo = {
+          token,
+          tokenHint,
+          expiresAt,
+          message: whatsapp.message,
+          link: whatsapp.link,
         };
       }
 
-      await tx.appointmentWhatsappConfirmation.create({
-        data: {
-          barbershopId: barbershop.id,
-          appointmentId: appointment.id,
-          customerPhone: normalizePhone(appointment.customer.phone),
-          status: WHATSAPP_CONFIRMATION_STATUS_PENDING,
-          tokenHash: hashWhatsappConfirmationToken(token),
-          tokenHint,
-          expiresAt,
-        },
-      });
-
-      const result = buildAppointmentPayload(appointment, barbershop, slug, {
-        token,
-        tokenHint,
-        expiresAt,
-        message: whatsapp.message,
-        link: whatsapp.link,
-      });
-      const idempotencyResult = buildAppointmentPayload(appointment, barbershop, slug, {
-        tokenHint,
-        expiresAt,
-      });
+      const result = buildAppointmentPayload(
+        appointment,
+        barbershop,
+        slug,
+        whatsappConfirmationInfo
+      );
+      const idempotencyResult = buildAppointmentPayload(
+        appointment,
+        barbershop,
+        slug,
+        whatsappConfirmationInfo
+          ? {
+              tokenHint: whatsappConfirmationInfo.tokenHint,
+              expiresAt: whatsappConfirmationInfo.expiresAt,
+            }
+          : undefined
+      );
       await tx.idempotencyKey.update({
         where: { barbershopId_key: { barbershopId: barbershop.id, key: idempotencyKey } },
         data: { result: idempotencyResult },
       });
 
-        return { replay: false, result };
+      return { replay: false, result };
       }
     );
 

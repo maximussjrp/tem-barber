@@ -3,23 +3,33 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
+import { phoneLookupVariants } from "@/lib/customers";
+
 type SessionUser = {
   id?: string;
   authLevel?: string;
 };
+
+function hasClientAccess(sessionUser: SessionUser | undefined) {
+  return (
+    sessionUser?.authLevel === "phone_lookup" ||
+    sessionUser?.authLevel === "verified_link" ||
+    sessionUser?.authLevel === "verified_otp"
+  );
+}
 
 function hasStrongClientAccess(sessionUser: SessionUser | undefined) {
   return sessionUser?.authLevel === "verified_link" || sessionUser?.authLevel === "verified_otp";
 }
 
 // GET /api/client/appointments — list current user's appointments (all time)
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   }
 
-  if (!hasStrongClientAccess(session.user as SessionUser)) {
+  if (!hasClientAccess(session.user as SessionUser)) {
     return NextResponse.json(
       { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
       { status: 403 }
@@ -27,9 +37,29 @@ export async function GET() {
   }
 
   const userId = (session.user as SessionUser).id as string;
+  const { searchParams } = new URL(request.url);
+  const barbershopFilter = searchParams.get("barbershop") || searchParams.get("barbershopId");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { phone: true },
+  });
+  const phoneVariants = user?.phone ? phoneLookupVariants(user.phone) : [];
 
   const appointments = await prisma.appointment.findMany({
-    where: { customerId: userId },
+    where: {
+      OR: [
+        { customerId: userId },
+        ...(phoneVariants.length > 0 ? [{ customer: { phone: { in: phoneVariants } } }] : []),
+      ],
+      ...(barbershopFilter
+        ? {
+            barbershop: {
+              OR: [{ id: barbershopFilter }, { slug: barbershopFilter }],
+            },
+          }
+        : {}),
+    },
     include: {
       barbershop: {
         select: { id: true, name: true, slug: true, logoUrl: true, city: true, state: true },

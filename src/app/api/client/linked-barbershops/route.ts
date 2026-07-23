@@ -2,14 +2,19 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { phoneLookupVariants } from "@/lib/customers";
 
 type SessionUserWithId = {
   id?: string;
   authLevel?: string;
 };
 
-function hasStrongClientAccess(sessionUser: SessionUserWithId | undefined) {
-  return sessionUser?.authLevel === "verified_link" || sessionUser?.authLevel === "verified_otp";
+function hasClientAccess(sessionUser: SessionUserWithId | undefined) {
+  return (
+    sessionUser?.authLevel === "phone_lookup" ||
+    sessionUser?.authLevel === "verified_link" ||
+    sessionUser?.authLevel === "verified_otp"
+  );
 }
 
 export async function GET() {
@@ -19,7 +24,7 @@ export async function GET() {
       return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
     }
 
-    if (!hasStrongClientAccess(session.user as SessionUserWithId)) {
+    if (!hasClientAccess(session.user as SessionUserWithId)) {
       return NextResponse.json(
         { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
         { status: 403 }
@@ -31,21 +36,41 @@ export async function GET() {
       return NextResponse.json({ error: "Nao autenticado." }, { status: 401 });
     }
 
-    // A regra correta de vínculo é verificar se o cliente interagiu com a barbearia
-    // seja por Agendamento ou por Comanda (ex: cliente walk-in).
-    const [appointments, comandas] = await Promise.all([
-      prisma.appointment.findMany({
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+
+    const phoneVariants = user?.phone ? phoneLookupVariants(user.phone) : [];
+
+    const [links, appointments, comandas] = await Promise.all([
+      prisma.customerBarbershopLink.findMany({
         where: { customerId: userId },
         select: { barbershopId: true },
       }),
+      prisma.appointment.findMany({
+        where: {
+          OR: [
+            { customerId: userId },
+            ...(phoneVariants.length > 0 ? [{ customer: { phone: { in: phoneVariants } } }] : []),
+          ],
+        },
+        select: { barbershopId: true },
+      }),
       prisma.comanda.findMany({
-        where: { customerId: userId },
+        where: {
+          OR: [
+            { customerId: userId },
+            ...(phoneVariants.length > 0 ? [{ customer: { phone: { in: phoneVariants } } }] : []),
+          ],
+        },
         select: { barbershopId: true },
       }),
     ]);
 
     const linkedBarbershopIds = Array.from(
       new Set([
+        ...links.map((l) => l.barbershopId),
         ...appointments.map((a) => a.barbershopId),
         ...comandas.map((c) => c.barbershopId),
       ])

@@ -36,6 +36,8 @@ model User {
   clubSubscriptions CustomerClubSubscription[]
   clubSubscriptionPayments ClubSubscriptionPayment[]
   whatsappConfirmations AppointmentWhatsappConfirmation[]
+  customerBarbershopLinks CustomerBarbershopLink[]
+  verifiedWhatsappCustomerLinks CustomerBarbershopLink[] @relation("WhatsappVerifiedBy")
 
   @@map("users")
 }
@@ -92,6 +94,7 @@ model Barbershop {
   clubPointEntries           ClubPointEntry[]
   clubSettlements            ClubSettlement[]
   whatsappConfirmations      AppointmentWhatsappConfirmation[]
+  customerBarbershopLinks    CustomerBarbershopLink[]
 
   @@map("barbershops")
 }
@@ -333,6 +336,26 @@ model AppointmentWhatsappConfirmation {
   @@index([barbershopId, status])
   @@index([barbershopId, expiresAt])
   @@map("appointment_whatsapp_confirmations")
+}
+
+// Vínculo entre Cliente e Barbearia + Status de verificação WhatsApp por barbearia
+model CustomerBarbershopLink {
+  id                        String                                 @id @default(uuid())
+  barbershopId              String                                 @map("barbershop_id")
+  customerId                String                                 @map("customer_id")
+  whatsappVerifiedAt        DateTime?                              @map("whatsapp_verified_at")
+  whatsappVerifiedById      String?                                @map("whatsapp_verified_by_id")
+  whatsappVerificationMethod AppointmentWhatsappConfirmationMethod? @map("whatsapp_verification_method")
+  createdAt                 DateTime                               @default(now()) @map("created_at")
+  updatedAt                 DateTime                               @updatedAt @map("updated_at")
+
+  barbershop         Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer           User       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  whatsappVerifiedBy User?      @relation("WhatsappVerifiedBy", fields: [whatsappVerifiedById], references: [id], onDelete: SetNull)
+
+  @@unique([barbershopId, customerId])
+  @@index([barbershopId, customerId])
+  @@map("customer_barbershop_links")
 }
 
 // Serviços atrelados ao agendamento (suporta múltiplos serviços no mesmo slot)
