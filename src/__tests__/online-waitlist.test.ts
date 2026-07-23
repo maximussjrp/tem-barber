@@ -160,6 +160,49 @@ describe("PR #19 — Fila de Espera Online (Schema & APIs)", () => {
       expect(data.error).toBe("ALREADY_OPEN");
     });
 
+    it("2.1. retoma fila pausada sem criar nova sessao", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
+      });
+
+      prismaMock.onlineWaitlistSession.findFirst.mockResolvedValue({
+        id: "paused-session",
+        barbershopId: "shop-1",
+        status: "PAUSED",
+        title: "Fila pausada",
+        notes: null,
+        defaultLockBeforeAppointmentMinutes: 20,
+      });
+
+      prismaMock.onlineWaitlistSession.update.mockResolvedValue({
+        id: "paused-session",
+        barbershopId: "shop-1",
+        status: "OPEN",
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/waitlist/open", {
+        method: "POST",
+      });
+
+      const res = await openAdminWaitlist(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.session.status).toBe("OPEN");
+      expect(prismaMock.onlineWaitlistSession.update).toHaveBeenCalledWith({
+        where: { id: "paused-session" },
+        data: {
+          status: "OPEN",
+          closedAt: null,
+          title: "Fila pausada",
+          notes: null,
+          defaultLockBeforeAppointmentMinutes: 20,
+        },
+      });
+      expect(prismaMock.onlineWaitlistSession.create).not.toHaveBeenCalled();
+    });
+
     it("3. lista fila sem vazar outro tenant", async () => {
       getAdminSessionMock.mockResolvedValue({
         error: null,

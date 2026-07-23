@@ -1,0 +1,259 @@
+import React from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import AdminWaitlistPage from "@/app/admin/fila/page";
+
+const emptyResponse = {
+  barbershop: { id: "shop-1", name: "Dom Brio", slug: "don-brio" },
+  publicUrl: "https://app.tembarber.com.br/don-brio/fila",
+  session: null,
+  summary: {
+    total: 0,
+    waiting: 0,
+    called: 0,
+    inService: 0,
+    completed: 0,
+    canceled: 0,
+    expired: 0,
+  },
+};
+
+const openResponse = {
+  ...emptyResponse,
+  session: {
+    id: "session-1",
+    status: "OPEN",
+    openedAt: "2026-07-23T12:00:00.000Z",
+    closedAt: null,
+    title: null,
+    entries: [
+      {
+        id: "entry-1",
+        customerName: "Rafael Souza",
+        maskedPhone: "****-7766",
+        customerPhone: "5517998887766",
+        serviceName: "Corte Tradicional",
+        preferredMemberName: "João Barbeiro",
+        queueNumber: 12,
+        currentPosition: 1,
+        status: "WAITING",
+        joinedAt: "2026-07-23T13:00:00.000Z",
+        skipCount: 1,
+        noShowCount: 2,
+        publicTokenHash: "secret-hash",
+      },
+    ],
+  },
+  summary: {
+    total: 1,
+    waiting: 1,
+    called: 0,
+    inService: 0,
+    completed: 0,
+    canceled: 0,
+    expired: 0,
+  },
+};
+
+const pausedResponse = {
+  ...openResponse,
+  session: {
+    ...openResponse.session,
+    status: "PAUSED",
+  },
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as Response);
+}
+
+function mockFetchWithData(responseBody: unknown, status = 200) {
+  global.fetch = vi.fn().mockImplementation(() => jsonResponse(responseBody, status));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal("confirm", vi.fn(() => true));
+  Object.assign(navigator, {
+    clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("PR #21 - Painel Admin da Fila Online", () => {
+  it("renderiza estado sem fila aberta", async () => {
+    mockFetchWithData(emptyResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Sem fila aberta")).toBeInTheDocument();
+    expect(screen.getByText("Nenhum cliente na fila")).toBeInTheDocument();
+  });
+
+  it("mostra botão Abrir fila quando não existe sessão ativa", async () => {
+    mockFetchWithData(emptyResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByRole("button", { name: "Abrir fila" })).toBeInTheDocument();
+  });
+
+  it("abre fila e recarrega os dados", async () => {
+    let isOpen = false;
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/admin/waitlist/open" && init?.method === "POST") {
+        isOpen = true;
+        return jsonResponse({ session: openResponse.session }, 201);
+      }
+      return jsonResponse(isOpen ? openResponse : emptyResponse);
+    });
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir fila" }));
+
+    expect(await screen.findByText("Aberta")).toBeInTheDocument();
+    expect(screen.getByText("Rafael Souza")).toBeInTheDocument();
+  });
+
+  it("mostra fila aberta", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Aberta")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pausar fila" })).toBeInTheDocument();
+  });
+
+  it("mostra link público /[slug]/fila", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("https://app.tembarber.com.br/don-brio/fila")).toBeInTheDocument();
+  });
+
+  it("copia link público quando clipboard está disponível", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copiar link" }));
+
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://app.tembarber.com.br/don-brio/fila");
+    });
+  });
+
+  it("mostra clientes aguardando", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Rafael Souza")).toBeInTheDocument();
+    expect(screen.getByText("#12")).toBeInTheDocument();
+    expect(screen.getByText("Posição 1")).toBeInTheDocument();
+    expect(screen.getByText("Passes 1 / no-shows 2")).toBeInTheDocument();
+  });
+
+  it("mostra serviço e barbeiro preferido", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Corte Tradicional")).toBeInTheDocument();
+    expect(screen.getByText("João Barbeiro")).toBeInTheDocument();
+  });
+
+  it("mostra telefone mascarado", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("****-7766")).toBeInTheDocument();
+    expect(screen.queryByText("5517998887766")).not.toBeInTheDocument();
+  });
+
+  it("não renderiza publicTokenHash", async () => {
+    mockFetchWithData(openResponse);
+
+    const { container } = render(<AdminWaitlistPage />);
+
+    await screen.findByText("Rafael Souza");
+    expect(container.textContent).not.toContain("secret-hash");
+    expect(container.textContent).not.toContain("publicTokenHash");
+  });
+
+  it("pausa fila", async () => {
+    let paused = false;
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/admin/waitlist/pause" && init?.method === "POST") {
+        paused = true;
+        return jsonResponse({ session: pausedResponse.session });
+      }
+      return jsonResponse(paused ? pausedResponse : openResponse);
+    });
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pausar fila" }));
+
+    expect(await screen.findByText("Pausada")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retomar fila" })).toBeInTheDocument();
+  });
+
+  it("fecha fila com confirmação", async () => {
+    let closed = false;
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/admin/waitlist/close" && init?.method === "POST") {
+        closed = true;
+        return jsonResponse({ session: { id: "session-1", status: "CLOSED" } });
+      }
+      return jsonResponse(closed ? emptyResponse : openResponse);
+    });
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fechar fila" }));
+
+    await waitFor(() => expect(window.confirm).toHaveBeenCalled());
+    expect(await screen.findByText("Sem fila aberta")).toBeInTheDocument();
+  });
+
+  it("erro de API mostra opção de tentar novamente", async () => {
+    mockFetchWithData({ error: "Falha temporária" }, 500);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falha temporária");
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
+  });
+
+  it("403 mostra acesso negado", async () => {
+    mockFetchWithData({ error: "FORBIDDEN" }, 403);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Acesso negado")).toBeInTheDocument();
+    expect(screen.getByText(/Apenas OWNER e MANAGER/)).toBeInTheDocument();
+  });
+
+  it("renderiza estrutura básica em viewport mobile", async () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Painel da fila")).toBeInTheDocument();
+    expect(screen.getByText("Clientes na fila")).toBeInTheDocument();
+    expect(screen.getByText("Rafael Souza")).toBeInTheDocument();
+  });
+});
