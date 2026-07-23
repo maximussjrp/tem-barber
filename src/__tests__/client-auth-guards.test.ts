@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     appointment: { findMany: vi.fn() },
     comanda: { findMany: vi.fn() },
+    customerBarbershopLink: { findMany: vi.fn() },
+    user: { findUnique: vi.fn() },
   },
   getServerSessionMock: vi.fn(),
 }));
@@ -18,32 +21,44 @@ beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.appointment.findMany.mockResolvedValue([]);
   prismaMock.comanda.findMany.mockResolvedValue([]);
+  prismaMock.customerBarbershopLink.findMany.mockResolvedValue([]);
+  prismaMock.user.findUnique.mockResolvedValue({ phone: "5517981275471" });
 });
 
 describe("client auth guards", () => {
-  it("bloqueia GET /api/client/appointments para sessao phone_lookup", async () => {
-    getServerSessionMock.mockResolvedValue({
-      user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
-    });
+  it("bloqueia GET /api/client/appointments para usuario nao autenticado", async () => {
+    getServerSessionMock.mockResolvedValue(null);
 
-    const response = await getClientAppointments();
-    const data = await response.json();
+    const req = new NextRequest("http://localhost/api/client/appointments");
+    const response = await getClientAppointments(req);
 
-    expect(response.status).toBe(403);
-    expect(data.error).toContain("Acesso restrito");
-    expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
+    expect(response.status).toBe(401);
   });
 
-  it("bloqueia GET /api/client/linked-barbershops para sessao phone_lookup", async () => {
+  it("permite GET /api/client/appointments para sessao phone_lookup", async () => {
     getServerSessionMock.mockResolvedValue({
       user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
     });
 
-    const response = await getLinkedBarbershops();
+    const req = new NextRequest("http://localhost/api/client/appointments");
+    const response = await getClientAppointments(req);
 
-    expect(response.status).toBe(403);
-    expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
-    expect(prismaMock.comanda.findMany).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(prismaMock.appointment.findMany).toHaveBeenCalled();
+  });
+
+  it("permite GET /api/client/linked-barbershops para sessao phone_lookup", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
+    });
+
+    prismaMock.customerBarbershopLink.findMany.mockResolvedValue([{ barbershopId: "shop-a" }]);
+
+    const response = await getLinkedBarbershops();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.linkedBarbershopIds).toEqual(["shop-a"]);
   });
 
   it("permite GET /api/client/linked-barbershops para sessao forte", async () => {

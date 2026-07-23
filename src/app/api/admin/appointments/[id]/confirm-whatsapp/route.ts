@@ -110,6 +110,7 @@ export async function POST(
     select: {
       id: true,
       barbershopId: true,
+      customerId: true,
       whatsappConfirmation: {
         select: {
           id: true,
@@ -143,6 +144,29 @@ export async function POST(
   }
 
   if (confirmation.status === WHATSAPP_CONFIRMATION_STATUS_CONFIRMED) {
+    if (prisma.customerBarbershopLink) {
+      await prisma.customerBarbershopLink.upsert({
+        where: {
+          barbershopId_customerId: {
+            barbershopId: appointment.barbershopId,
+            customerId: appointment.customerId,
+          },
+        },
+        create: {
+          barbershopId: appointment.barbershopId,
+          customerId: appointment.customerId,
+          whatsappVerifiedAt: confirmation.confirmedAt || new Date(),
+          whatsappVerifiedById: confirmation.confirmedById,
+          whatsappVerificationMethod: confirmation.confirmationMethod,
+        },
+        update: {
+          whatsappVerifiedAt: confirmation.confirmedAt || new Date(),
+          whatsappVerifiedById: confirmation.confirmedById,
+          whatsappVerificationMethod: confirmation.confirmationMethod,
+        },
+      });
+    }
+
     return NextResponse.json({
       whatsappConfirmation: sanitizeWhatsappConfirmation(confirmation),
     });
@@ -182,17 +206,41 @@ export async function POST(
     );
   }
 
+  const now = new Date();
   const updated = await prisma.appointmentWhatsappConfirmation.update({
     where: { appointmentId: appointment.id },
     data: {
       status: WHATSAPP_CONFIRMATION_STATUS_CONFIRMED,
-      confirmedAt: new Date(),
+      confirmedAt: now,
       confirmedById: data.userId,
       confirmationMethod: mode,
       manualConfirmationReason: mode === "MANUAL_OVERRIDE" ? reason : null,
     },
     select: safeWhatsappConfirmationSelect,
   });
+
+  if (prisma.customerBarbershopLink) {
+    await prisma.customerBarbershopLink.upsert({
+      where: {
+        barbershopId_customerId: {
+          barbershopId: appointment.barbershopId,
+          customerId: appointment.customerId,
+        },
+      },
+      create: {
+        barbershopId: appointment.barbershopId,
+        customerId: appointment.customerId,
+        whatsappVerifiedAt: now,
+        whatsappVerifiedById: data.userId,
+        whatsappVerificationMethod: mode,
+      },
+      update: {
+        whatsappVerifiedAt: now,
+        whatsappVerifiedById: data.userId,
+        whatsappVerificationMethod: mode,
+      },
+    });
+  }
 
   return NextResponse.json({
     whatsappConfirmation: sanitizeWhatsappConfirmation(updated),

@@ -430,17 +430,20 @@ function BookingWizard() {
             </div>
           </div>
 
-          {confirmed.whatsappConfirmation && (
+          {confirmed.whatsappConfirmation ? (
             <div className="bg-emerald-950/30 border border-emerald-800/60 rounded-2xl p-5 text-left space-y-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                  Confirmacao WhatsApp
+                  Confirmação WhatsApp
                 </p>
                 <p className="text-sm text-[var(--text-secondary)] mt-1">
-                  Codigo:{" "}
+                  Código:{" "}
                   <span className="font-mono text-lg font-bold text-[var(--text-primary)]">
                     {confirmed.whatsappConfirmation.token}
                   </span>
+                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-2">
+                  Envie esta mensagem para a barbearia confirmar que este número é seu.
                 </p>
               </div>
               <a
@@ -449,8 +452,15 @@ function BookingWizard() {
                 rel="noreferrer"
                 className="block w-full text-center rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold py-3.5 transition-colors text-sm"
               >
-                Abrir WhatsApp
+                Enviar código para a barbearia
               </a>
+            </div>
+          ) : (
+            <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-2xl p-4 text-center space-y-1">
+              <p className="text-sm font-semibold text-emerald-400">✓ WhatsApp já verificado</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                Você pode acompanhar seus agendamentos em Meus agendamentos.
+              </p>
             </div>
           )}
 
@@ -476,7 +486,7 @@ function BookingWizard() {
               Voltar
             </button>
             <button
-              onClick={() => router.push("/minha-conta")}
+              onClick={() => router.push(`/minha-conta?barbershop=${slug}`)}
               className="btn-gold flex-1"
             >
               Meus agendamentos

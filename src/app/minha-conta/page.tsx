@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
@@ -61,8 +61,29 @@ function isClientAuthLevel(authLevel: string | undefined) {
 }
 
 export default function MinhaContaPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[var(--bg)] p-6 max-w-xl mx-auto">
+          <div className="h-8 w-44 rounded-xl bg-[var(--surface-2)] animate-pulse mb-8" />
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-44 rounded-2xl bg-[var(--surface-1)] animate-pulse" />
+            ))}
+          </div>
+        </div>
+      }
+    >
+      <MinhaContaContent />
+    </Suspense>
+  );
+}
+
+function MinhaContaContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const barbershopParam = searchParams.get("barbershop");
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [linkedBarbershops, setLinkedBarbershops] = useState<string[]>([]);
@@ -81,8 +102,12 @@ export default function MinhaContaPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
+      const appointmentsUrl = barbershopParam
+        ? `/api/client/appointments?barbershop=${encodeURIComponent(barbershopParam)}`
+        : "/api/client/appointments";
+
       Promise.all([
-        fetch("/api/client/appointments"),
+        fetch(appointmentsUrl),
         fetch("/api/client/linked-barbershops"),
       ])
         .then(async ([appointmentsRes, linkedRes]) => {
@@ -114,7 +139,7 @@ export default function MinhaContaPage() {
         })
         .finally(() => setLoading(false));
     }
-  }, [status]);
+  }, [status, barbershopParam]);
 
   const handleCancel = async (id: string) => {
     setCancelling(id);

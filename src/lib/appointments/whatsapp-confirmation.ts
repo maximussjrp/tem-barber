@@ -69,13 +69,16 @@ export function buildWhatsappConfirmationMessage(input: WhatsappConfirmationMess
     minute: "2-digit",
     timeZone: "UTC",
   });
-  const services = input.services.join(", ");
 
   return [
-    `Olá, ${input.customerName}!`,
-    `Para confirmar seu agendamento na ${input.barbershopName}, envie este código: ${input.token}.`,
-    `Data: ${date} às ${time}.`,
-    `Serviço(s): ${services}.`,
+    `Olá, sou ${input.customerName}.`,
+    ``,
+    `Meu código de verificação do WhatsApp é: ${input.token}`,
+    ``,
+    `Fiz um agendamento na ${input.barbershopName} e estou confirmando que este número é meu.`,
+    ``,
+    `Data: ${date}`,
+    `Horário: ${time}`,
   ].join("\n");
 }
 
