@@ -139,6 +139,20 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     render(<AdminWaitlistPage />);
 
     expect(await screen.findByText("https://app.tembarber.com.br/don-brio/fila")).toBeInTheDocument();
+    expect(screen.queryByText(/localhost/i)).not.toBeInTheDocument();
+  });
+
+  it("utiliza fallback https://app.tembarber.com.br/{slug}/fila e não localhost quando publicUrl é nulo", async () => {
+    const responseWithNullPublicUrl = {
+      ...openResponse,
+      publicUrl: null,
+    };
+    mockFetchWithData(responseWithNullPublicUrl);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("https://app.tembarber.com.br/don-brio/fila")).toBeInTheDocument();
+    expect(screen.queryByText(/localhost/i)).not.toBeInTheDocument();
   });
 
   it("copia link público quando clipboard está disponível", async () => {
