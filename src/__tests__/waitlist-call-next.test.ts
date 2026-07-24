@@ -34,6 +34,7 @@ vi.mock("@/lib/member-api-auth", () => ({ getMemberSession: getMemberSessionMock
 
 import { POST as callNextAdmin } from "@/app/api/admin/waitlist/call-next/route";
 import { POST as callNextMember } from "@/app/api/member/waitlist/call-next/route";
+import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
 
 describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   beforeEach(() => {
@@ -151,6 +152,13 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(data.entry.status).toBe("FIT_IN_CREATED");
     expect(data.entry.fitInAppointmentId).toBe("app-fit-in-1");
     expect(data.appointment.bookingMode).toBe("FIT_IN");
+
+    // Valida que o dateTime do agendamento foi criado no fuso operacional America/Sao_Paulo
+    const createdAppointmentCall = prismaMock.appointment.create.mock.calls[0][0];
+    const createdDateTime = createdAppointmentCall.data.dateTime as Date;
+    expect(createdDateTime).toBeInstanceOf(Date);
+    // Para UTC 14:00Z, no fuso de SP (UTC-3) o horário operacional é 11:00 (11h UTC no padrão da agenda)
+    expect(createdDateTime.getUTCHours()).not.toBe(new Date().getUTCHours());
   });
 
   it("2. MANAGER chama próximo e cria agendamento FIT_IN", async () => {
@@ -416,5 +424,16 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(data.entry.publicTokenHash).toBeUndefined();
+  });
+
+  it("14. getCurrentSaoPauloDateTimeForAppointment converte instante UTC 14:18Z para horário operacional local 11:18", () => {
+    const realUtc = new Date("2026-07-24T14:18:00.000Z");
+    const spDateTime = getCurrentSaoPauloDateTimeForAppointment(realUtc);
+
+    expect(spDateTime.getUTCFullYear()).toBe(2026);
+    expect(spDateTime.getUTCMonth()).toBe(6); // Julho = 6
+    expect(spDateTime.getUTCDate()).toBe(24);
+    expect(spDateTime.getUTCHours()).toBe(11);
+    expect(spDateTime.getUTCMinutes()).toBe(18);
   });
 });

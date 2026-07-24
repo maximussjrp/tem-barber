@@ -155,3 +155,38 @@ export function formatAppointmentDateTimeForMessage(
 
   return { date, time };
 }
+
+/**
+ * Retorna uma Date onde os componentes UTC (.getUTCHours(), .getUTCMinutes(), etc.)
+ * refletem a hora e data locais em America/Sao_Paulo.
+ * Usado para salvar `Appointment.dateTime` na mesma convenção da agenda.
+ */
+export function getCurrentSaoPauloDateTimeForAppointment(nowInput?: Date): Date {
+  const now = nowInput ?? new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(now);
+  const getPart = (type: string) => {
+    const p = parts.find((p) => p.type === type);
+    return p ? parseInt(p.value, 10) : 0;
+  };
+
+  const year = getPart("year");
+  const month = getPart("month");
+  const day = getPart("day");
+  let hour = getPart("hour");
+  if (hour === 24) hour = 0;
+  const minute = getPart("minute");
+  const second = getPart("second");
+
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
+}
