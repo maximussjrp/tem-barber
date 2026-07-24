@@ -6,6 +6,7 @@ import { GET as getAdminWaitlist } from "@/app/api/admin/waitlist/route";
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findFirst: vi.fn() },
+    barbershopMember: { findMany: vi.fn() },
     onlineWaitlistSession: { findFirst: vi.fn() },
   },
   getAdminSessionMock: vi.fn(),
@@ -18,6 +19,7 @@ describe("public-url helper & waitlist public URL", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    prismaMock.barbershopMember.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {

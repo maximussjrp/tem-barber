@@ -6,6 +6,10 @@ import AdminWaitlistPage from "@/app/admin/fila/page";
 const emptyResponse = {
   barbershop: { id: "shop-1", name: "Dom Brio", slug: "don-brio" },
   publicUrl: "https://app.tembarber.com.br/don-brio/fila",
+  members: [
+    { id: "member-1", name: "João Barbeiro" },
+    { id: "member-2", name: "Pedro Barbeiro" },
+  ],
   session: null,
   summary: {
     total: 0,
@@ -167,6 +171,62 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     });
   });
 
+  it("mostra botão Chamar próximo e seletor de profissional quando a fila está aberta", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByRole("button", { name: "Chamar próximo" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Selecione o profissional" })).toBeInTheDocument();
+  });
+
+  it("chama próximo cliente com o barbeiro selecionado", async () => {
+    let called = false;
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/admin/waitlist/call-next" && init?.method === "POST") {
+        called = true;
+        return jsonResponse({
+          entry: { id: "entry-1", status: "FIT_IN_CREATED" },
+          appointment: { id: "app-1", barber: { user: { name: "João Barbeiro" } } },
+        });
+      }
+      return jsonResponse(called ? { ...openResponse, session: { ...openResponse.session, entries: [] } } : openResponse);
+    });
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Chamar próximo" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Cliente chamado com sucesso! Encaixe criado/i)).toBeInTheDocument();
+    });
+  });
+
+  it("exibe modal de preferência divergente quando a API retorna HTTP 409", async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/admin/waitlist/call-next" && init?.method === "POST") {
+        return jsonResponse(
+          {
+            error: "PREFERRED_MEMBER_MISMATCH",
+            message: "Este cliente indicou preferência por outro profissional.",
+            preferredMemberMismatch: true,
+            preferredMember: { id: "member-2", name: "Pedro Barbeiro" },
+          },
+          409
+        );
+      }
+      return jsonResponse(openResponse);
+    });
+
+    render(<AdminWaitlistPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Chamar próximo" }));
+
+    expect(await screen.findByText("Preferência divergente")).toBeInTheDocument();
+    expect(screen.getAllByText(/Pedro Barbeiro/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Confirmar e chamar" })).toBeInTheDocument();
+  });
+
   it("mostra clientes aguardando", async () => {
     mockFetchWithData(openResponse);
 
@@ -184,7 +244,7 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     render(<AdminWaitlistPage />);
 
     expect(await screen.findByText("Corte Tradicional")).toBeInTheDocument();
-    expect(screen.getByText("João Barbeiro")).toBeInTheDocument();
+    expect(screen.getAllByText("João Barbeiro").length).toBeGreaterThan(0);
   });
 
   it("mostra telefone mascarado", async () => {
