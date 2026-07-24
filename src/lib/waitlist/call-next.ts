@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/create-fit-in-appointment";
+import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
 
 export interface CallNextWaitlistEntryInput {
   barbershopId: string;
@@ -193,14 +194,15 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
             }
           }
 
-          // 8. Create FIT_IN appointment
+          // 8. Create FIT_IN appointment with local operational date/time (America/Sao_Paulo)
           const servicePrice = parseNumber(entry.service.price, 0);
+          const appointmentDateTime = getCurrentSaoPauloDateTimeForAppointment(now);
 
           const { appointment } = await createFitInAppointmentWithScheduleLock(tx, {
             barbershopId: input.barbershopId,
             memberId: member.id,
             customerId: customerId,
-            dateTime: now,
+            dateTime: appointmentDateTime,
             totalPrice: servicePrice,
             durationMin: entry.service.durationMin,
             services: [
