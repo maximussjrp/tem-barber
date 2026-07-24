@@ -54,6 +54,7 @@ export async function GET() {
       cycle: true,
       status: true,
       nextDueDate: true,
+      billingType: true,
       externalReference: true,
       createdAt: true,
     },
@@ -84,6 +85,7 @@ export async function GET() {
           value: subscription.value.toString(),
           cycle: subscription.cycle,
           status: subscription.status,
+          billingType: subscription.billingType,
           nextDueDate: subscription.nextDueDate ? subscription.nextDueDate.toISOString() : null,
           externalReference: subscription.externalReference,
         }
