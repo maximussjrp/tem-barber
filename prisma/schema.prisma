@@ -100,6 +100,10 @@ model Barbershop {
   onlineWaitlistSessions     OnlineWaitlistSession[]
   onlineWaitlistEntries      OnlineWaitlistEntry[]
   onlineWaitlistMemberConfigs OnlineWaitlistMemberConfig[]
+  asaasBillingCustomers      AsaasBillingCustomer[]
+  asaasBillingSubscriptions  AsaasBillingSubscription[]
+  asaasBillingPayments       AsaasBillingPayment[]
+  asaasWebhookEvents         AsaasWebhookEvent[]
 
   @@map("barbershops")
 }
@@ -1267,4 +1271,139 @@ model OnlineWaitlistMemberConfig {
 
   @@unique([barbershopId, memberId])
   @@map("online_waitlist_member_configs")
+}
+
+// ----------------------------------------------------
+// 12. ASAAS BILLING FOUNDATION (SAAS TENANT SUBSCRIPTIONS)
+// ----------------------------------------------------
+
+enum AsaasBillingEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+enum AsaasSubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  OVERDUE
+  CANCELED
+  UNKNOWN
+}
+
+enum AsaasPaymentStatus {
+  PENDING
+  RECEIVED
+  CONFIRMED
+  OVERDUE
+  REFUNDED
+  CANCELED
+  CHARGEBACK
+  UNKNOWN
+}
+
+enum AsaasWebhookProcessingStatus {
+  PENDING
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+model AsaasBillingCustomer {
+  id                String   @id @default(uuid())
+  barbershopId      String   @map("barbershop_id")
+  asaasCustomerId   String   @unique @map("asaas_customer_id")
+  name              String
+  email             String?
+  cpfCnpj           String?  @map("cpf_cnpj")
+  phone             String?
+  externalReference String   @map("external_reference")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@index([barbershopId])
+  @@index([externalReference])
+  @@map("asaas_billing_customers")
+}
+
+model AsaasBillingSubscription {
+  id                  String                  @id @default(uuid())
+  barbershopId        String                  @map("barbershop_id")
+  asaasSubscriptionId String                  @unique @map("asaas_subscription_id")
+  asaasCustomerId     String                  @map("asaas_customer_id")
+  planCode            String                  @map("plan_code")
+  planName            String                  @map("plan_name")
+  value               Decimal                 @db.Decimal(10, 2)
+  cycle               String                  @default("MONTHLY")
+  status              AsaasSubscriptionStatus @default(UNKNOWN)
+  nextDueDate         DateTime?               @map("next_due_date")
+  billingType         String?                 @map("billing_type")
+  externalReference   String                  @map("external_reference")
+  canceledAt          DateTime?               @map("canceled_at")
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@index([barbershopId])
+  @@index([asaasCustomerId])
+  @@index([externalReference])
+  @@index([status])
+  @@map("asaas_billing_subscriptions")
+}
+
+model AsaasBillingPayment {
+  id                  String             @id @default(uuid())
+  barbershopId        String             @map("barbershop_id")
+  asaasPaymentId      String             @unique @map("asaas_payment_id")
+  asaasSubscriptionId String?            @map("asaas_subscription_id")
+  asaasCustomerId     String?            @map("asaas_customer_id")
+  status              AsaasPaymentStatus @default(UNKNOWN)
+  billingType         String?            @map("billing_type")
+  value               Decimal            @db.Decimal(10, 2)
+  netValue            Decimal?           @map("net_value") @db.Decimal(10, 2)
+  dueDate             DateTime?          @map("due_date")
+  paymentDate         DateTime?          @map("payment_date")
+  invoiceUrl          String?            @map("invoice_url")
+  bankSlipUrl         String?            @map("bank_slip_url")
+  externalReference   String?            @map("external_reference")
+  rawPayload          Json?              @map("raw_payload")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@index([barbershopId])
+  @@index([asaasSubscriptionId])
+  @@index([asaasCustomerId])
+  @@index([externalReference])
+  @@index([status])
+  @@map("asaas_billing_payments")
+}
+
+model AsaasWebhookEvent {
+  id                String                       @id @default(uuid())
+  event             String
+  asaasEventId      String?                      @map("asaas_event_id")
+  paymentId         String?                      @map("payment_id")
+  subscriptionId    String?                      @map("subscription_id")
+  customerId        String?                      @map("customer_id")
+  barbershopId      String?                      @map("barbershop_id")
+  externalReference String?                      @map("external_reference")
+  payload           Json
+  processedAt       DateTime?                    @map("processed_at")
+  processingStatus  AsaasWebhookProcessingStatus @default(PENDING) @map("processing_status")
+  processingError   String?                      @map("processing_error")
+  receivedAt        DateTime                     @default(now()) @map("received_at")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+
+  barbershop Barbershop? @relation(fields: [barbershopId], references: [id], onDelete: SetNull)
+
+  @@index([event])
+  @@index([processingStatus])
+  @@index([barbershopId])
+  @@index([externalReference])
+  @@map("asaas_webhook_events")
 }
