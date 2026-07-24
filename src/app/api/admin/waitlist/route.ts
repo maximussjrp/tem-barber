@@ -42,6 +42,17 @@ export async function GET(request: NextRequest) {
     select: { id: true, name: true, slug: true },
   });
 
+  const teamMembers = await prisma.barbershopMember.findMany({
+    where: { barbershopId, isActive: true },
+    select: { id: true, user: { select: { id: true, name: true } } },
+    orderBy: { user: { name: "asc" } },
+  });
+
+  const members = teamMembers.map((m) => ({
+    id: m.id,
+    name: m.user.name || "Profissional",
+  }));
+
   const session = await prisma.onlineWaitlistSession.findFirst({
     where: { barbershopId },
     orderBy: [
@@ -69,6 +80,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       barbershop,
       publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
+      members,
       session: null,
       summary: {
         total: 0,
@@ -142,6 +154,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     barbershop,
     publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
+    members,
     session: sanitizedSession,
     summary,
   });

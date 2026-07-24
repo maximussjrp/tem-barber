@@ -50,8 +50,33 @@ Configuração de trava e disponibilidade por barbeiro.
 
 ## Faseamento de Implementação
 
-- **PR #19 (Atual)**: Modelagem Prisma, migration SQL, helpers de domínio e APIs essenciais (admin e públicas).
+- **PR #19**: Modelagem Prisma, migration SQL, helpers de domínio e APIs essenciais (admin e públicas).
 - **PR #20**: Interface pública `/[slug]/fila` para cliente entrar, ver posição e sair.
 - **PR #21**: Painel visual administrativo e do barbeiro para gerenciar a fila.
-- **PR #22**: Ação de chamar próximo cliente criando encaixe automático na agenda.
-- **PR #23**: Comunicação em tempo real via SSE (Server-Sent Events).
+- **PR #22**: Correção do link público da fila (canônico em produção sem localhost).
+- **PR #23**: Ação de chamar próximo cliente criando agendamento de encaixe (`FIT_IN`) na agenda, pré-confirmação para preferência divergente (HTTP 409) e trava de proximidade de agendamento.
+- **PR #24**: Passar a vez, no-show e tolerância.
+- **PR #25**: Comunicação em tempo real via SSE (Server-Sent Events).
+
+---
+
+## PR #23 — Chamar Próximo como Encaixe (`FIT_IN`)
+
+### 1. Funcionalidade
+A ação de **Chamar próximo** seleciona a primeira entrada `WAITING` da fila e cria automaticamente um agendamento do tipo **Encaixe (`FIT_IN`)** na agenda do barbeiro acionado.
+
+### 2. Endpoints da API
+- `POST /api/admin/waitlist/call-next`: Exclusivo para **OWNER** e **MANAGER**. Exige `memberId` no corpo da requisição. Retorna HTTP 403 para `BARBER`.
+- `POST /api/member/waitlist/call-next`: Exclusivo para **BARBER** (ou membro agindo como profissional). O `memberId` é forçado para o membro autenticado e qualquer `memberId` informado no body é ignorado.
+
+### 3. Regras e Validações
+1. **Status da Entrada**: A entrada passa de `WAITING` para `FIT_IN_CREATED`, registrando `calledByMemberId`, `calledAt` e `fitInAppointmentId`.
+2. **Sem Comanda Automática**: Nenhuma `Comanda` ou `ComandaItem` é criada no ato da chamada. A comanda só é aberta posteriormente quando o profissional clica em **Abrir Atendimento**.
+3. **Trava de Agendamento Próximo**: Se o barbeiro tiver um agendamento confirmado/em andamento nos próximos `lockBeforeAppointmentMinutes` minutos, a chamada é bloqueada com o erro `MEMBER_LOCKED_BY_UPCOMING_APPOINTMENT` (HTTP 400).
+4. **Pré-Confirmação de Preferência (HTTP 409)**: Se o cliente indicou preferência por outro barbeiro (`entry.preferredMemberId !== memberId`), a chamada sem o parâmetro `confirmPreferredMismatch: true` retorna **HTTP 409 PREFERRED_MEMBER_MISMATCH** sem criar agendamento nem alterar a fila, permitindo que a interface exiba um modal de confirmação prévia.
+5. **Capacidade do Profissional**: O barbeiro precisa ter registro ativo em `BarberService` para o serviço da entrada. Caso contrário, retorna `MEMBER_CANNOT_EXECUTE_SERVICE`.
+6. **Proteção Contra Concorrência**: Transação com `isolationLevel: Serializable` e atualização condicional da entrada com `status === "WAITING"`, garantindo idempotência e evitando duplicidade em chamadas simultâneas.
+
+### 4. Interface do Usuário
+- **Painel Admin (`/admin/fila`)**: Exibe seletor de barbeiro e botão **Chamar próximo**, com modal de confirmação para preferência divergente.
+- **Painel do Membro (`/member/fila`)**: Rota dedicada para barbeiros com visualização simplificada e botão de chamada individual sem seleção de outros barbeiros.

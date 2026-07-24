@@ -53,9 +53,15 @@ interface WaitlistSummary {
   expired: number;
 }
 
+interface WaitlistMember {
+  id: string;
+  name: string;
+}
+
 interface WaitlistResponse {
   barbershop: { id: string; name: string; slug: string } | null;
   publicUrl: string | null;
+  members?: WaitlistMember[];
   session: WaitlistSession | null;
   summary: WaitlistSummary;
 }
@@ -112,6 +118,7 @@ function buildEmptyResponse(): WaitlistResponse {
   return {
     barbershop: null,
     publicUrl: null,
+    members: [],
     session: null,
     summary: initialSummary,
   };
@@ -122,8 +129,14 @@ export default function AdminWaitlistPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [callNextSuccess, setCallNextSuccess] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState<string>("");
+  const [mismatchModal, setMismatchModal] = useState<{
+    memberId: string;
+    preferredMemberName: string;
+  } | null>(null);
 
   const loadWaitlist = useCallback(async () => {
     try {
@@ -143,7 +156,12 @@ export default function AdminWaitlistPage() {
 
       setError(null);
       setAccessDenied(false);
-      setData(payload as WaitlistResponse);
+      const resData = payload as WaitlistResponse;
+      setData(resData);
+
+      if (resData.members && resData.members.length > 0) {
+        setSelectedMemberId((prev) => (prev ? prev : resData.members![0].id));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível carregar a fila.");
     } finally {
@@ -167,6 +185,7 @@ export default function AdminWaitlistPage() {
     const endpoint = `/api/admin/waitlist/${action}`;
     setActionLoading(action);
     setError(null);
+    setCallNextSuccess(null);
 
     try {
       const response = await fetch(endpoint, { method: "POST" });
@@ -179,6 +198,52 @@ export default function AdminWaitlistPage() {
       await loadWaitlist();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível atualizar a fila.");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleCallNext(memberIdToCall: string, confirmPreferredMismatch = false) {
+    if (!memberIdToCall) {
+      setError("Selecione um profissional para chamar o próximo cliente.");
+      return;
+    }
+
+    setActionLoading("call-next");
+    setError(null);
+    setCallNextSuccess(null);
+
+    try {
+      const response = await fetch("/api/admin/waitlist/call-next", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: memberIdToCall,
+          confirmPreferredMismatch,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (response.status === 409 && payload?.error === "PREFERRED_MEMBER_MISMATCH") {
+        setMismatchModal({
+          memberId: memberIdToCall,
+          preferredMemberName: payload.preferredMember?.name ?? "outro profissional",
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, "Não foi possível chamar o próximo cliente."));
+      }
+
+      setMismatchModal(null);
+      setCallNextSuccess(
+        `Cliente chamado com sucesso! Encaixe criado para ${payload.appointment?.barber?.user?.name || "o profissional"}.`
+      );
+      window.setTimeout(() => setCallNextSuccess(null), 5000);
+      await loadWaitlist();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível chamar o próximo cliente.");
     } finally {
       setActionLoading(null);
     }
@@ -316,6 +381,12 @@ export default function AdminWaitlistPage() {
           </div>
         ) : null}
 
+        {callNextSuccess ? (
+          <div role="status" className="rounded-lg border border-emerald-800 bg-emerald-950/50 p-4 text-sm font-medium text-emerald-200">
+            {callNextSuccess}
+          </div>
+        ) : null}
+
         <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-lg border border-stone-800 bg-stone-900/70 p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -374,14 +445,43 @@ export default function AdminWaitlistPage() {
         </section>
 
         <section className="rounded-lg border border-stone-800 bg-stone-900/70">
-          <div className="flex flex-col gap-2 border-b border-stone-800 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-4 border-b border-stone-800 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Clientes na fila</h2>
-              <p className="text-sm text-stone-400">Visualização operacional. Chamar próximo fica para o PR #22.</p>
+              <p className="text-sm text-stone-400">Ao chamar, um agendamento de encaixe (FIT_IN) é criado automaticamente.</p>
             </div>
-            <span className="rounded-full bg-stone-950 px-3 py-1 text-xs font-semibold text-stone-300 ring-1 ring-stone-800">
-              {waitingEntries.length} aguardando
-            </span>
+
+            {isOpen && waitingEntries.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {data.members && data.members.length > 0 ? (
+                  <select
+                    aria-label="Selecione o profissional"
+                    value={selectedMemberId}
+                    onChange={(e) => setSelectedMemberId(e.target.value)}
+                    className="rounded-md border border-stone-700 bg-stone-950 px-3 py-2 text-sm font-medium text-stone-100 focus:border-amber-400 focus:outline-none"
+                  >
+                    {data.members.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => void handleCallNext(selectedMemberId)}
+                  disabled={actionLoading !== null || !selectedMemberId}
+                  className="rounded-md bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {actionLoading === "call-next" ? "Chamando..." : "Chamar próximo"}
+                </button>
+              </div>
+            ) : (
+              <span className="w-fit rounded-full bg-stone-950 px-3 py-1 text-xs font-semibold text-stone-300 ring-1 ring-stone-800">
+                {waitingEntries.length} aguardando
+              </span>
+            )}
           </div>
 
           {entries.length === 0 ? (
@@ -435,6 +535,33 @@ export default function AdminWaitlistPage() {
           )}
         </section>
       </div>
+
+      {mismatchModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-xl border border-stone-800 bg-stone-900 p-6 text-stone-100 shadow-xl">
+            <h3 className="text-lg font-semibold text-amber-300">Preferência divergente</h3>
+            <p className="mt-3 text-sm text-stone-300">
+              Este cliente indicou preferência por <strong className="text-white">{mismatchModal.preferredMemberName}</strong>. Deseja chamar com o profissional selecionado mesmo assim?
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setMismatchModal(null)}
+                className="rounded-md border border-stone-700 px-4 py-2 text-sm font-medium text-stone-300 hover:bg-stone-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCallNext(mismatchModal.memberId, true)}
+                className="rounded-md bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-300"
+              >
+                Confirmar e chamar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
