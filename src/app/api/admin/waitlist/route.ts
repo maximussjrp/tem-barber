@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
 import { canManageWaitlist } from "@/lib/waitlist/permissions";
+import { getWaitlistPublicUrl } from "@/lib/public-url";
 
 interface EntryWithMemberRelations {
   preferredMember?: { user?: { name?: string | null } | null } | null;
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
   if (!session) {
     return NextResponse.json({
       barbershop,
-      publicUrl: barbershop ? `${request.nextUrl.origin}/${barbershop.slug}/fila` : null,
+      publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
       session: null,
       summary: {
         total: 0,
@@ -140,7 +141,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     barbershop,
-    publicUrl: barbershop ? `${request.nextUrl.origin}/${barbershop.slug}/fila` : null,
+    publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
     session: sanitizedSession,
     summary,
   });

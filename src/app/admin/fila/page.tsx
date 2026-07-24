@@ -184,11 +184,19 @@ export default function AdminWaitlistPage() {
     }
   }
 
+  const publicUrl = useMemo(() => {
+    if (data.publicUrl) return data.publicUrl;
+    if (data.barbershop?.slug) {
+      return `https://app.tembarber.com.br/${data.barbershop.slug}/fila`;
+    }
+    return null;
+  }, [data.publicUrl, data.barbershop?.slug]);
+
   async function copyPublicUrl() {
-    if (!data.publicUrl) return;
+    if (!publicUrl) return;
 
     try {
-      await navigator.clipboard?.writeText(data.publicUrl);
+      await navigator.clipboard?.writeText(publicUrl);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2500);
     } catch {
@@ -338,10 +346,10 @@ export default function AdminWaitlistPage() {
 
           <div className="rounded-lg border border-stone-800 bg-stone-900/70 p-5">
             <p className="text-sm font-semibold text-white">Link público</p>
-            {data.publicUrl ? (
+            {publicUrl ? (
               <>
                 <p className="mt-2 break-all rounded-md bg-stone-950 p-3 text-sm text-stone-200 ring-1 ring-stone-800">
-                  {data.publicUrl}
+                  {publicUrl}
                 </p>
                 <button
                   type="button"
