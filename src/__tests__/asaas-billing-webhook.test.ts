@@ -99,6 +99,44 @@ describe("PR #27 — Webhook Asaas Billing", () => {
   // 3. IDEMPOTÊNCIA
   // =============================================
   describe("3. Idempotência", () => {
+    it("processa primeiro TEST_WEBHOOK como ignored e grava um registro", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-test-1" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-test-1" });
+
+      const req = makeWebhookRequest({
+        id: "evt_test_ignored_1",
+        event: "TEST_WEBHOOK",
+        dateCreated: "2026-07-25T15:00:00.000Z",
+      });
+
+      const res = await postWebhook(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.ok).toBe(true);
+      expect(data.ignored).toBe(true);
+      expect(prismaMock.asaasWebhookEvent.create).toHaveBeenCalledOnce();
+      expect(prismaMock.asaasWebhookEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            asaasEventId: "evt_test_ignored_1",
+            event: "TEST_WEBHOOK",
+            processingStatus: "PENDING",
+          }),
+        })
+      );
+      expect(prismaMock.asaasWebhookEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "wh-test-1" },
+          data: expect.objectContaining({
+            processingStatus: "IGNORED",
+            processedAt: expect.any(Date),
+          }),
+        })
+      );
+    });
+
     it("retorna 200 duplicate: true se evento com asaasEventId já foi processado", async () => {
       prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue({
         id: "evt-db-1",
@@ -118,6 +156,112 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       expect(res.status).toBe(200);
       expect(data.duplicate).toBe(true);
       expect(prismaMock.asaasWebhookEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("retorna 200 duplicate: true se evento com asaasEventId já foi ignorado", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue({
+        id: "evt-db-ignored",
+        asaasEventId: "evt_test_ignored_1",
+        processingStatus: "IGNORED",
+      });
+
+      const req = makeWebhookRequest({
+        id: "evt_test_ignored_1",
+        event: "TEST_WEBHOOK",
+      });
+
+      const res = await postWebhook(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({ ok: true, duplicate: true, eventId: "evt_test_ignored_1" });
+      expect(prismaMock.asaasWebhookEvent.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasWebhookEvent.update).not.toHaveBeenCalled();
+    });
+
+    it("retorna duplicate: true para evento PENDING e evita processamento paralelo duplicado", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue({
+        id: "evt-db-pending",
+        asaasEventId: "evt_pending_1",
+        processingStatus: "PENDING",
+      });
+
+      const req = makeWebhookRequest({
+        id: "evt_pending_1",
+        event: "TEST_WEBHOOK",
+      });
+
+      const res = await postWebhook(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({ ok: true, duplicate: true, eventId: "evt_pending_1" });
+      expect(prismaMock.asaasWebhookEvent.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasWebhookEvent.update).not.toHaveBeenCalled();
+    });
+
+    it("reutiliza evento FAILED para retentativa controlada sem criar duplicação ilimitada", async () => {
+      prismaMock.asaasWebhookEvent.findFirst
+        .mockResolvedValueOnce({
+          id: "evt-db-failed",
+          asaasEventId: "evt_failed_1",
+          processingStatus: "FAILED",
+        })
+        .mockResolvedValueOnce({ id: "evt-db-failed" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "evt-db-failed" });
+
+      const req = makeWebhookRequest({
+        id: "evt_failed_1",
+        event: "TEST_WEBHOOK",
+      });
+
+      const res = await postWebhook(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.ok).toBe(true);
+      expect(data.ignored).toBe(true);
+      expect(prismaMock.asaasWebhookEvent.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasWebhookEvent.update).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: { id: "evt-db-failed" },
+          data: expect.objectContaining({
+            processingStatus: "PENDING",
+            processingError: null,
+            processedAt: null,
+          }),
+        })
+      );
+      expect(prismaMock.asaasWebhookEvent.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { id: "evt-db-failed" },
+          data: expect.objectContaining({
+            processingStatus: "IGNORED",
+            processedAt: expect.any(Date),
+          }),
+        })
+      );
+    });
+
+    it("processa evento sem asaasEventId sem afirmar idempotência impossível", async () => {
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-no-id" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-no-id" });
+
+      const req = makeWebhookRequest({
+        event: "TEST_WEBHOOK",
+        dateCreated: "2026-07-25T15:00:00.000Z",
+      });
+
+      const res = await postWebhook(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.ok).toBe(true);
+      expect(data.ignored).toBe(true);
+      expect(data.duplicate).toBeUndefined();
+      expect(prismaMock.asaasWebhookEvent.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.asaasWebhookEvent.create).toHaveBeenCalledOnce();
     });
   });
 

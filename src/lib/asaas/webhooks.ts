@@ -123,16 +123,23 @@ export async function processAsaasWebhookPayload(
   const externalReference =
     paymentObj?.externalReference || subscriptionObj?.externalReference || null;
 
-  // 1. Checar Idempotência: se asaasEventId já foi processado com sucesso
+  // 1. Checar idempotência por evento Asaas.
+  // Eventos em estado final ou em processamento não devem gerar novo registro.
+  // FAILED pode ser reprocessado, mas reutilizando o mesmo registro para evitar duplicação ilimitada.
+  let webhookRecord: { id: string };
   if (asaasEventId) {
     const existingEvent = await prisma.asaasWebhookEvent.findFirst({
       where: {
         asaasEventId,
-        processingStatus: "PROCESSED",
       },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, processingStatus: true },
     });
 
-    if (existingEvent) {
+    if (
+      existingEvent &&
+      ["PROCESSED", "IGNORED", "PENDING"].includes(existingEvent.processingStatus)
+    ) {
       return { ok: true, duplicate: true, eventId: asaasEventId };
     }
   }
@@ -142,20 +149,65 @@ export async function processAsaasWebhookPayload(
 
   const sanitizedPayload = sanitizeAsaasPayloadForLog(payload);
 
-  // 3. Registrar o evento no banco local
-  const webhookRecord = await prisma.asaasWebhookEvent.create({
-    data: {
-      event: eventName,
-      asaasEventId,
-      paymentId,
-      subscriptionId,
-      customerId,
-      externalReference,
-      barbershopId,
-      payload: sanitizedPayload as object,
-      processingStatus: "PENDING",
-    },
-  });
+  if (asaasEventId) {
+    const failedEvent = await prisma.asaasWebhookEvent.findFirst({
+      where: {
+        asaasEventId,
+        processingStatus: "FAILED",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (failedEvent) {
+      webhookRecord = await prisma.asaasWebhookEvent.update({
+        where: { id: failedEvent.id },
+        data: {
+          event: eventName,
+          paymentId,
+          subscriptionId,
+          customerId,
+          externalReference,
+          barbershopId,
+          payload: sanitizedPayload as object,
+          processingStatus: "PENDING",
+          processingError: null,
+          processedAt: null,
+        },
+        select: { id: true },
+      });
+    } else {
+      webhookRecord = await prisma.asaasWebhookEvent.create({
+        data: {
+          event: eventName,
+          asaasEventId,
+          paymentId,
+          subscriptionId,
+          customerId,
+          externalReference,
+          barbershopId,
+          payload: sanitizedPayload as object,
+          processingStatus: "PENDING",
+        },
+        select: { id: true },
+      });
+    }
+  } else {
+    webhookRecord = await prisma.asaasWebhookEvent.create({
+      data: {
+        event: eventName,
+        asaasEventId,
+        paymentId,
+        subscriptionId,
+        customerId,
+        externalReference,
+        barbershopId,
+        payload: sanitizedPayload as object,
+        processingStatus: "PENDING",
+      },
+      select: { id: true },
+    });
+  }
 
   try {
     // 4. Tratar eventos PAYMENT_*
