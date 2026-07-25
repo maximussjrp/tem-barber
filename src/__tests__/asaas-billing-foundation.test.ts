@@ -8,6 +8,7 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn() },
   },
   getAdminSessionMock: vi.fn(),
 }));
@@ -214,6 +215,7 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         createdAt: new Date(),
       });
       prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue(null);
 
       const res = await getBillingStatus();
       const data = await res.json();
@@ -251,6 +253,7 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue(null);
       prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
       prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue(null);
 
       const res = await getBillingStatus();
       const data = await res.json();

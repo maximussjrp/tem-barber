@@ -55,6 +55,122 @@ export interface ProcessWebhookResult {
 }
 
 /**
+ * Adiciona meses de forma calendário preservando finais de mês.
+ * Ex:
+ * 25/07/2026 -> 25/08/2026
+ * 31/01/2026 -> 28/02/2026
+ * 31/01/2028 -> 29/02/2028
+ */
+export function addCalendarMonths(date: Date, months: number): Date {
+  const result = new Date(date.getTime());
+  const originalDay = result.getDate();
+  const targetMonth = result.getMonth() + months;
+  result.setMonth(targetMonth);
+  if (result.getDate() !== originalDay) {
+    result.setDate(0);
+  }
+  return result;
+}
+
+export async function syncTenantSubscriptionAccessOnPayment(
+  barbershopId: string,
+  paymentObj: {
+    id?: string;
+    asaasPaymentId?: string;
+    billingType?: string;
+    value?: number;
+    dueDate?: string | Date | null;
+    paymentDate?: string | Date | null;
+    clientPaymentDate?: string | Date | null;
+  }
+): Promise<void> {
+  const asaasPaymentId = paymentObj.id || paymentObj.asaasPaymentId;
+  if (!asaasPaymentId || !barbershopId) return;
+
+  const now = new Date();
+
+  // Resolver data âncora: dueDate -> paymentDate/clientPaymentDate -> now
+  let anchorDate: Date;
+  if (paymentObj.dueDate) {
+    anchorDate = new Date(paymentObj.dueDate);
+  } else if (paymentObj.paymentDate || paymentObj.clientPaymentDate) {
+    anchorDate = new Date(paymentObj.paymentDate || paymentObj.clientPaymentDate!);
+  } else {
+    anchorDate = now;
+  }
+
+  if (isNaN(anchorDate.getTime())) {
+    anchorDate = now;
+  }
+
+  const periodStart = anchorDate;
+  const periodEnd = addCalendarMonths(anchorDate, 1);
+
+  await prisma.$transaction(async (tx) => {
+    const updateResult = await tx.asaasBillingPayment.updateMany({
+      where: {
+        asaasPaymentId,
+        barbershopId,
+        accessAppliedAt: null,
+      },
+      data: {
+        accessAppliedAt: now,
+      },
+    });
+
+    if (updateResult.count === 0) {
+      return;
+    }
+
+    const plan = await tx.plan.findFirst({
+      where: { isActive: true },
+    });
+
+    if (!plan) {
+      throw new Error("PLANO_ATIVO_NAO_ENCONTRADO");
+    }
+
+    const existingSub = await tx.tenantSubscription.findFirst({
+      where: { barbershopId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingSub) {
+      await tx.tenantSubscription.update({
+        where: { id: existingSub.id },
+        data: {
+          status: "ACTIVE",
+          planName: "Plano Tem Barber",
+          monthlyPrice: paymentObj.value ?? 49.9,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+          gracePeriodEndsAt: null,
+          paymentMethod: paymentObj.billingType || existingSub.paymentMethod,
+          lastPaymentAt: now,
+          lastAccessPaymentId: asaasPaymentId,
+        },
+      });
+    } else {
+      await tx.tenantSubscription.create({
+        data: {
+          barbershopId,
+          planId: plan.id,
+          status: "ACTIVE",
+          planName: "Plano Tem Barber",
+          monthlyPrice: paymentObj.value ?? 49.9,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+          gracePeriodEndsAt: null,
+          paymentMethod: paymentObj.billingType || "PIX",
+          lastPaymentAt: now,
+          lastAccessPaymentId: asaasPaymentId,
+        },
+      });
+    }
+  });
+}
+
+/**
  * Tenta localizar a barbearia associada ao evento do webhook.
  */
 export async function locateBarbershopForWebhook(
@@ -62,7 +178,6 @@ export async function locateBarbershopForWebhook(
 ): Promise<string | null> {
   const { payment, subscription } = payload;
 
-  // 1. Tentar externalReference no payment, subscription ou raiz
   const extRef =
     payment?.externalReference ||
     subscription?.externalReference ||
@@ -77,7 +192,6 @@ export async function locateBarbershopForWebhook(
     if (exists) return exists.id;
   }
 
-  // 2. Tentar por asaasSubscriptionId
   const subId = payment?.subscription || subscription?.id;
   if (subId) {
     const subRecord = await prisma.asaasBillingSubscription.findUnique({
@@ -87,7 +201,6 @@ export async function locateBarbershopForWebhook(
     if (subRecord) return subRecord.barbershopId;
   }
 
-  // 3. Tentar por asaasCustomerId
   const custId = payment?.customer || subscription?.customer;
   if (custId) {
     const custRecord = await prisma.asaasBillingCustomer.findUnique({
@@ -123,9 +236,6 @@ export async function processAsaasWebhookPayload(
   const externalReference =
     paymentObj?.externalReference || subscriptionObj?.externalReference || null;
 
-  // 1. Checar idempotência por evento Asaas.
-  // Eventos em estado final ou em processamento não devem gerar novo registro.
-  // FAILED pode ser reprocessado, mas reutilizando o mesmo registro para evitar duplicação ilimitada.
   let webhookRecord: { id: string };
   if (asaasEventId) {
     const existingEvent = await prisma.asaasWebhookEvent.findFirst({
@@ -144,9 +254,7 @@ export async function processAsaasWebhookPayload(
     }
   }
 
-  // 2. Localizar barbearia se possível
   const barbershopId = await locateBarbershopForWebhook(payload);
-
   const sanitizedPayload = sanitizeAsaasPayloadForLog(payload);
 
   if (asaasEventId) {
@@ -248,7 +356,6 @@ export async function processAsaasWebhookPayload(
           },
         });
 
-        // Se houver subscription associada, atualizar status informativo
         if (paymentObj.subscription) {
           const subRecord = await prisma.asaasBillingSubscription.findUnique({
             where: { asaasSubscriptionId: paymentObj.subscription },
@@ -270,6 +377,10 @@ export async function processAsaasWebhookPayload(
               },
             });
           }
+        }
+
+        if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
+          await syncTenantSubscriptionAccessOnPayment(barbershopId, paymentObj);
         }
       }
 
@@ -323,7 +434,6 @@ export async function processAsaasWebhookPayload(
       return { ok: true };
     }
 
-    // 6. Evento Desconhecido ou não mapeado
     await prisma.asaasWebhookEvent.update({
       where: { id: webhookRecord.id },
       data: {
@@ -345,7 +455,6 @@ export async function processAsaasWebhookPayload(
       },
     });
 
-    // Retorna ok: true tolerante para não travar a fila do webhook do Asaas
     return { ok: true, error: errorMsg };
   }
 }

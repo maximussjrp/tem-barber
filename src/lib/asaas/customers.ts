@@ -38,6 +38,62 @@ export class BillingProfileIncompleteError extends Error {
   }
 }
 
+export interface AsaasNotificationRule {
+  id: string;
+  customer?: string;
+  enabled?: boolean;
+  emailEnabledForCustomer?: boolean;
+  smsEnabledForCustomer?: boolean;
+  whatsappEnabledForCustomer?: boolean;
+  phoneCallEnabledForCustomer?: boolean;
+  emailEnabledForProvider?: boolean;
+  smsEnabledForProvider?: boolean;
+  scheduleOffset?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Configura as notificações do customer no Asaas para usar apenas e-mail.
+ * Desabilita SMS, WhatsApp, ligação e notificações para o provedor.
+ * Consulta via GET, edita via PUT individual por notificationId e verifica o resultado final via GET.
+ */
+export async function configureAsaasCustomerEmailNotifications(
+  asaasCustomerId: string
+): Promise<AsaasNotificationRule[]> {
+  try {
+    const listRes = await asaasFetch<{ data?: AsaasNotificationRule[] }>(
+      `/customers/${asaasCustomerId}/notifications`
+    );
+    const notifications = listRes?.data ?? [];
+
+    for (const notif of notifications) {
+      if (notif.id) {
+        await asaasFetch(`/notifications/${notif.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            enabled: notif.enabled ?? true,
+            scheduleOffset: notif.scheduleOffset ?? 0,
+            emailEnabledForCustomer: true,
+            smsEnabledForCustomer: false,
+            whatsappEnabledForCustomer: false,
+            phoneCallEnabledForCustomer: false,
+            emailEnabledForProvider: false,
+            smsEnabledForProvider: false,
+          }),
+        });
+      }
+    }
+
+    const verifyRes = await asaasFetch<{ data?: AsaasNotificationRule[] }>(
+      `/customers/${asaasCustomerId}/notifications`
+    );
+    return verifyRes?.data ?? [];
+  } catch {
+    console.error("[asaas/customers] Falha ao configurar regras de notificação por e-mail.");
+    return [];
+  }
+}
+
 /**
  * Garante que existe um cliente Asaas vinculado a barbearia.
  * O BarbershopBillingProfile e a fonte oficial de dados fiscais.
@@ -60,7 +116,7 @@ export async function ensureAsaasCustomerForBarbershop(
     email: profile.billingEmail,
     ...(profile.billingPhone ? { mobilePhone: profile.billingPhone } : {}),
     externalReference,
-    notificationDisabled: true,
+    notificationDisabled: false,
   };
 
   const existing = await prisma.asaasBillingCustomer.findFirst({
@@ -72,6 +128,8 @@ export async function ensureAsaasCustomerForBarbershop(
       method: "PUT",
       body: JSON.stringify(customerPayload),
     });
+
+    await configureAsaasCustomerEmailNotifications(existing.asaasCustomerId);
 
     const updated = await prisma.asaasBillingCustomer.update({
       where: { id: existing.id },
@@ -100,6 +158,10 @@ export async function ensureAsaasCustomerForBarbershop(
     method: "POST",
     body: JSON.stringify(customerPayload),
   });
+
+  if (asaasResponse.id) {
+    await configureAsaasCustomerEmailNotifications(asaasResponse.id);
+  }
 
   const saved = await prisma.asaasBillingCustomer.create({
     data: {

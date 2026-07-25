@@ -6,9 +6,12 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
     barbershopBillingProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
-    asaasBillingPayment: { findMany: vi.fn() },
+    asaasBillingPayment: { findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    plan: { findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
+    $transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock)),
   },
   getAdminSessionMock: vi.fn(),
   fetchMock: vi.fn(),
@@ -36,11 +39,13 @@ const BILLING_PROFILE = {
 import { POST as postSubscription } from "@/app/api/admin/billing/asaas/subscription/route";
 import { GET as getStatus } from "@/app/api/admin/billing/asaas/status/route";
 import { GET as getProfile, PUT as putProfile } from "@/app/api/admin/billing/profile/route";
-import { ensureAsaasCustomerForBarbershop } from "@/lib/asaas/customers";
+import { GET as getCurrentPayment, sanitizeBillingUrl } from "@/app/api/admin/billing/asaas/current-payment/route";
+import { GET as getPixQrCode } from "@/app/api/admin/billing/asaas/current-payment/pix/route";
+import { syncTenantSubscriptionAccessOnPayment, addCalendarMonths } from "@/lib/asaas/webhooks";
+import { ensureAsaasCustomerForBarbershop, configureAsaasCustomerEmailNotifications } from "@/lib/asaas/customers";
 import { createAsaasSubscriptionForBarbershop, SubscriptionValidationError } from "@/lib/asaas/subscriptions";
 import { getBillingPlanByCode, getActiveBillingPlans, isAllowedBillingType } from "@/lib/billing/plans";
 import { isValidCpf, isValidCnpj, maskCpfCnpj, normalizeCpfCnpj } from "@/lib/billing/documents";
-
 describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -50,6 +55,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     globalThis.fetch = fetchMock;
     prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+    prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.tenantSubscription.update.mockResolvedValue({});
     prismaMock.asaasBillingCustomer.update.mockResolvedValue({
       id: "cust-db-1",
       barbershopId: "shop-1",
@@ -301,7 +308,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         email: BILLING_PROFILE.billingEmail,
         mobilePhone: BILLING_PROFILE.billingPhone,
         externalReference: "tb_barbershop_shop-1",
-        notificationDisabled: true,
+        notificationDisabled: false,
       });
       expect(prismaMock.asaasBillingCustomer.create).not.toHaveBeenCalled();
       expect(prismaMock.asaasBillingCustomer.update).toHaveBeenCalledOnce();
@@ -321,6 +328,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
             email: BILLING_PROFILE.billingEmail,
             cpfCnpj: VALID_CPF,
             externalReference: "tb_barbershop_shop-1",
+            data: [],
           }),
       });
 
@@ -339,7 +347,6 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       expect(result.created).toBe(true);
       expect(result.asaasCustomerId).toBe("cus_new_456");
-      expect(fetchMock).toHaveBeenCalledOnce();
 
       const [url, opts] = fetchMock.mock.calls[0];
       expect(url).toContain("sandbox.asaas.com/api/v3/customers");
@@ -348,7 +355,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(body.name).toBe(BILLING_PROFILE.legalName);
       expect(body.cpfCnpj).toBe(VALID_CPF);
       expect(body.email).toBe(BILLING_PROFILE.billingEmail);
-      expect(body.notificationDisabled).toBe(true);
+      expect(body.notificationDisabled).toBe(false);
       expect(body.externalReference).toBe("tb_barbershop_shop-1");
     });
 
@@ -851,6 +858,615 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(prismaMock.asaasBillingCustomer.findFirst).toHaveBeenCalled();
       expect(prismaMock.asaasBillingSubscription.findFirst).toHaveBeenCalled();
       expect(prismaMock.asaasBillingSubscription.create).toHaveBeenCalled();
+    });
+  });
+
+  // =============================================
+  // ÁREA DE PAGAMENTO E QR CODE PIX
+  // =============================================
+  describe("7. Área de Pagamento e Pix QR Code", () => {
+    it("sanitiza URLs permitindo apenas HTTPS", () => {
+      expect(sanitizeBillingUrl("https://www.asaas.com/i/12345")).toBe("https://www.asaas.com/i/12345");
+      expect(sanitizeBillingUrl("http://insecure.com")).toBeNull();
+      expect(sanitizeBillingUrl("javascript:alert(1)")).toBeNull();
+      expect(sanitizeBillingUrl("data:text/html,bad")).toBeNull();
+    });
+
+    it("GET /current-payment retorna cobrança atual tenant-scoped para OWNER/MANAGER", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue({
+        id: "p1",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        status: "PENDING",
+        billingType: "PIX",
+        value: { toString: () => "49.90" },
+        dueDate: new Date("2026-07-26"),
+        paymentDate: null,
+        invoiceUrl: "https://www.asaas.com/i/pay_123",
+        bankSlipUrl: null,
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(true);
+      expect(data.status).toBe("PENDING");
+      expect(data.canPay).toBe(true);
+      expect(data.invoiceUrl).toBe("https://www.asaas.com/i/pay_123");
+    });
+
+    it("GET /current-payment nega acesso para BARBER", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "barber-1", barbershopId: "shop-1", role: "BARBER", memberId: "m-1" },
+      });
+
+      const res = await getCurrentPayment();
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /current-payment/pix busca QR Code no Asaas server-side", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue({
+        id: "p1",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        status: "PENDING",
+        billingType: "PIX",
+      });
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            encodedImage: "iVBORw0KGgo...",
+            payload: "00020126580014BR.GOV.BCB.PIX...",
+            expirationDate: "2027-07-26 23:59:59",
+          }),
+      });
+
+      const res = await getPixQrCode();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.encodedImage).toBe("iVBORw0KGgo...");
+      expect(data.payload).toBe("00020126580014BR.GOV.BCB.PIX...");
+    });
+
+    it("GET /current-payment/pix nega acesso para BARBER", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "barber-1", barbershopId: "shop-1", role: "BARBER", memberId: "m-1" },
+      });
+
+      const res = await getPixQrCode();
+      expect(res.status).toBe(403);
+    });
+
+    it("syncTenantSubscriptionAccessOnPayment ativa TenantSubscription de forma idempotente", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Bronze" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+        id: "sub-tenant-1",
+        barbershopId: "shop-1",
+        lastAccessPaymentId: null,
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        billingType: "PIX",
+        value: 49.9,
+        paymentDate: "2026-07-25",
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "sub-tenant-1" },
+          data: expect.objectContaining({
+            status: "ACTIVE",
+            planName: "Plano Tem Barber",
+            lastAccessPaymentId: "pay_123",
+          }),
+        })
+      );
+    });
+  });
+
+  // =============================================
+  // AUDITORIAS E COMPROVAÇÕES FINAIS (TASKS 1-4)
+  // =============================================
+  describe("8. Auditorias e Comprovações de Segurança e Idempotência", () => {
+    it("Task 1: configureAsaasCustomerEmailNotifications gerencia regras de notificação via PUT individual e re-consulta", async () => {
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              data: [
+                { id: "not_1", enabled: true, scheduleOffset: 0 },
+                { id: "not_2", enabled: false, scheduleOffset: 5 },
+              ],
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: "not_1" }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: "not_2" }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              data: [
+                { id: "not_1", emailEnabledForCustomer: true, smsEnabledForCustomer: false },
+                { id: "not_2", emailEnabledForCustomer: true, smsEnabledForCustomer: false },
+              ],
+            }),
+        });
+
+      const res = await configureAsaasCustomerEmailNotifications("cus_test_99");
+
+      expect(res).toHaveLength(2);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+
+      // 1ª chamada: GET /v3/customers/cus_test_99/notifications sem body
+      expect(fetchMock.mock.calls[0][0]).toContain("/customers/cus_test_99/notifications");
+      expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
+
+      // 2ª e 3ª chamadas: PUT /v3/notifications/not_...
+      expect(fetchMock.mock.calls[1][0]).toContain("/notifications/not_1");
+      expect(fetchMock.mock.calls[1][1]?.method).toBe("PUT");
+      const body1 = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+      expect(body1).toEqual({
+        enabled: true,
+        scheduleOffset: 0,
+        emailEnabledForCustomer: true,
+        smsEnabledForCustomer: false,
+        whatsappEnabledForCustomer: false,
+        phoneCallEnabledForCustomer: false,
+        emailEnabledForProvider: false,
+        smsEnabledForProvider: false,
+      });
+
+      expect(fetchMock.mock.calls[2][0]).toContain("/notifications/not_2");
+      expect(fetchMock.mock.calls[2][1]?.method).toBe("PUT");
+      const body2 = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+      expect(body2).toEqual({
+        enabled: false,
+        scheduleOffset: 5,
+        emailEnabledForCustomer: true,
+        smsEnabledForCustomer: false,
+        whatsappEnabledForCustomer: false,
+        phoneCallEnabledForCustomer: false,
+        emailEnabledForProvider: false,
+        smsEnabledForProvider: false,
+      });
+
+      // 4ª chamada: GET de verificação
+      expect(fetchMock.mock.calls[3][0]).toContain("/customers/cus_test_99/notifications");
+    });
+
+    it("Task 2: GET /current-payment executa fallback de conciliação remoto sem criar cobrança nova", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      // Não há cobrança local
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValueOnce(null);
+
+      // Existe assinatura e cliente locais
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+        id: "sub-db-1",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_remote_100",
+      });
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-db-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_remote_200",
+      });
+
+      // Simular chamada remota ao Asaas GET /subscriptions/sub_remote_100/payments (sem body)
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_remote_777",
+                customer: "cus_remote_200",
+                subscription: "sub_remote_100",
+                status: "PENDING",
+                billingType: "PIX",
+                value: 49.9,
+                dueDate: "2026-08-10",
+                invoiceUrl: "https://www.asaas.com/i/pay_remote_777",
+              },
+              {
+                id: "pay_other_customer",
+                customer: "cus_OTHER_CUSTOMER",
+                subscription: "sub_remote_100",
+                status: "PENDING",
+                value: 999,
+              },
+            ],
+          }),
+      });
+
+      prismaMock.asaasBillingPayment.upsert.mockResolvedValue({
+        id: "payment-db-reconciled",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_remote_777",
+        status: "PENDING",
+        billingType: "PIX",
+        value: { toString: () => "49.90" },
+        dueDate: new Date("2026-08-10"),
+        paymentDate: null,
+        invoiceUrl: "https://www.asaas.com/i/pay_remote_777",
+        bankSlipUrl: null,
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(true);
+      expect(data.status).toBe("PENDING");
+      expect(data.invoiceUrl).toBe("https://www.asaas.com/i/pay_remote_777");
+
+      // Comprovar chamada remota via GET sem body
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/subscriptions/sub_remote_100/payments"),
+        expect.objectContaining({ headers: expect.any(Object) })
+      );
+      expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
+
+      // Comprovar upsert local da cobrança reconciliada
+      expect(prismaMock.asaasBillingPayment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { asaasPaymentId: "pay_remote_777" },
+        })
+      );
+    });
+
+    it("Task 2: GET /current-payment retorna exists false se lista remota for vazia", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValueOnce(null);
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+        id: "sub-db-1",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_remote_100",
+      });
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-db-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_remote_200",
+      });
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: [] }),
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(false);
+    });
+
+    it("Task 3: GET /status exige currentPeriodEnd / trialEndsAt no futuro para validar ACTIVE / TRIAL", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER" },
+      });
+
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue(null);
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+
+      // 1. ACTIVE com currentPeriodEnd no futuro
+      const futureDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+        id: "sub-1",
+        barbershopId: "shop-1",
+        status: "ACTIVE",
+        currentPeriodEnd: futureDate,
+        trialEndsAt: null,
+        gracePeriodEndsAt: null,
+      });
+
+      const resActive = await getStatus();
+      const dataActive = await resActive.json();
+      expect(dataActive.accessStatus).toBe("ACTIVE");
+      expect(dataActive.remainingDays).toBeGreaterThan(0);
+
+      // 2. ACTIVE com currentPeriodEnd vencido -> resulta em EXPIRED
+      const pastDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+        id: "sub-1",
+        barbershopId: "shop-1",
+        status: "ACTIVE",
+        currentPeriodEnd: pastDate,
+        trialEndsAt: null,
+        gracePeriodEndsAt: null,
+      });
+
+      const resExpired = await getStatus();
+      const dataExpired = await resExpired.json();
+      expect(dataExpired.accessStatus).toBe("EXPIRED");
+      expect(dataExpired.remainingDays).toBe(0);
+
+      // 3. TRIAL ativo com trialEndsAt no futuro
+      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+        id: "sub-1",
+        barbershopId: "shop-1",
+        status: "TRIAL",
+        currentPeriodEnd: pastDate,
+        trialEndsAt: futureDate,
+        gracePeriodEndsAt: null,
+      });
+
+      const resTrial = await getStatus();
+      const dataTrial = await resTrial.json();
+      expect(dataTrial.accessStatus).toBe("TRIAL");
+      expect(dataTrial.remainingDays).toBeGreaterThan(0);
+
+      // 4. GRACE_PERIOD ativo
+      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+        id: "sub-1",
+        barbershopId: "shop-1",
+        status: "PAST_DUE",
+        currentPeriodEnd: pastDate,
+        trialEndsAt: null,
+        gracePeriodEndsAt: futureDate,
+      });
+
+      const resGrace = await getStatus();
+      const dataGrace = await resGrace.json();
+      expect(dataGrace.accessStatus).toBe("GRACE_PERIOD");
+      expect(dataGrace.remainingDays).toBeGreaterThan(0);
+    });
+
+    it("addCalendarMonths preserva corretamente finais de mês e anos bissextos", () => {
+      // 25/07/2026 -> 25/08/2026
+      const d1 = new Date("2026-07-25T12:00:00.000Z");
+      const r1 = addCalendarMonths(d1, 1);
+      expect(r1.getMonth()).toBe(7); // Agosto (0-indexed 7)
+      expect(r1.getDate()).toBe(25);
+
+      // 31/01/2026 -> 28/02/2026
+      const d2 = new Date("2026-01-31T12:00:00.000Z");
+      const r2 = addCalendarMonths(d2, 1);
+      expect(r2.getMonth()).toBe(1); // Fevereiro
+      expect(r2.getDate()).toBe(28);
+
+      // 31/01/2028 -> 29/02/2028 (ano bissexto)
+      const d3 = new Date("2028-01-31T12:00:00.000Z");
+      const r3 = addCalendarMonths(d3, 1);
+      expect(r3.getMonth()).toBe(1); // Fevereiro
+      expect(r3.getDate()).toBe(29);
+    });
+
+    it("Task 4.1: PAYMENT_RECEIVED pay_123 com updateMany (count=1) concede acesso atômico", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+        id: "sub-t1",
+        barbershopId: "shop-1",
+        lastAccessPaymentId: null,
+      });
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+        billingType: "PIX",
+        value: 49.9,
+      });
+
+      expect(prismaMock.asaasBillingPayment.updateMany).toHaveBeenCalledWith({
+        where: {
+          asaasPaymentId: "pay_123",
+          barbershopId: "shop-1",
+          accessAppliedAt: null,
+        },
+        data: {
+          accessAppliedAt: expect.any(Date),
+        },
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "sub-t1" },
+          data: expect.objectContaining({
+            status: "ACTIVE",
+            lastAccessPaymentId: "pay_123",
+            currentPeriodStart: new Date("2026-07-25T00:00:00.000Z"),
+            currentPeriodEnd: new Date("2026-08-25T00:00:00.000Z"),
+          }),
+        })
+      );
+    });
+
+    it("Task 4.2: PAYMENT_CONFIRMED pay_123 já com accessAppliedAt (count=0) não concede acesso novamente", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.tenantSubscription.update.mockClear();
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+        billingType: "PIX",
+        value: 49.9,
+      });
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("Task 4.3: Dois processamentos simultâneos de pay_123 resultam em apenas 1 extensão", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+        id: "sub-t1",
+        barbershopId: "shop-1",
+      });
+
+      // Worker 1 consegue a trava (count = 1), Worker 2 não consegue (count = 0)
+      prismaMock.asaasBillingPayment.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      prismaMock.tenantSubscription.update.mockClear();
+
+      const p1 = syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+      });
+      const p2 = syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+      });
+
+      await Promise.all([p1, p2]);
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("Task 4.4: Evento duplicado de outro asaasEventId não estende pois updateMany retorna count=0", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.tenantSubscription.update.mockClear();
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+      });
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("Task 4.5: pay_456 no mês seguinte com updateMany count=1 concede nova extensão", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+        id: "sub-t1",
+        barbershopId: "shop-1",
+      });
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+      prismaMock.tenantSubscription.update.mockClear();
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_456",
+        dueDate: "2026-08-25",
+        billingType: "PIX",
+        value: 49.9,
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "sub-t1" },
+          data: expect.objectContaining({
+            lastAccessPaymentId: "pay_456",
+            currentPeriodStart: new Date("2026-08-25T00:00:00.000Z"),
+            currentPeriodEnd: new Date("2026-09-25T00:00:00.000Z"),
+          }),
+        })
+      );
+    });
+
+    it("Task 4.6: Evento atrasado de pay_123 depois de pay_456 não estende pois pay_123 tem count=0", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.tenantSubscription.update.mockClear();
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_123",
+        dueDate: "2026-07-25",
+      });
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("Task 4.7: Falha ao atualizar TenantSubscription faz $transaction abortar", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.tenantSubscription.update.mockRejectedValue(new Error("DB_LOCK_ERROR"));
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-1", { id: "pay_err_999", dueDate: "2026-07-25" })
+      ).rejects.toThrow("DB_LOCK_ERROR");
+    });
+
+    it("Task 4.8: accessAppliedAt e updateMany pertencem ao payment e tenant corretos", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-100", {
+        id: "pay_tenant_specific",
+      });
+
+      expect(prismaMock.asaasBillingPayment.updateMany).toHaveBeenCalledWith({
+        where: {
+          asaasPaymentId: "pay_tenant_specific",
+          barbershopId: "shop-100",
+          accessAppliedAt: null,
+        },
+        data: {
+          accessAppliedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it("Task 4.9: Payment de outro tenant (shop-OTHER) não ativa acesso", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.tenantSubscription.update.mockClear();
+
+      await syncTenantSubscriptionAccessOnPayment("shop-OTHER", {
+        id: "pay_123",
+      });
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("Task 4.10: Vencimento em 31/01 é tratado corretamente para 28/02", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-1", {
+        id: "pay_jan31",
+        dueDate: "2026-01-31T12:00:00.000Z",
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            currentPeriodStart: new Date("2026-01-31T12:00:00.000Z"),
+            currentPeriodEnd: new Date("2026-02-28T12:00:00.000Z"),
+          }),
+        })
+      );
     });
   });
 });

@@ -2,6 +2,23 @@ import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { routerMock } = vi.hoisted(() => ({
+  routerMock: {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  },
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => routerMock,
+  usePathname: () => "/admin/configuracoes/plano-cobranca",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 import PlanoCobrancaPage from "@/app/admin/configuracoes/plano-cobranca/page";
 
 const EMPTY_PROFILE = {
@@ -25,6 +42,8 @@ const COMPLETE_PROFILE = {
 };
 
 const OWNER_STATUS = {
+  hasSubscription: false,
+  accessStatus: "TRIAL",
   permissions: { canEditProfile: true, canSubscribe: true },
 };
 
@@ -43,6 +62,10 @@ function mockFetch(handler?: (url: string, init?: RequestInit) => Response | Pro
       return Response.json(OWNER_STATUS);
     }
 
+    if (url.includes("/api/admin/billing/asaas/current-payment")) {
+      return Response.json({ exists: false });
+    }
+
     return Response.json({});
   }) as unknown as typeof fetch;
 }
@@ -56,9 +79,9 @@ describe("Plano e cobranca Asaas", () => {
   it("apresenta somente o Plano Tem Barber sem comparacao de planos", async () => {
     render(<PlanoCobrancaPage />);
 
-    expect(await screen.findByText("Plano Tem Barber")).toBeInTheDocument();
-    expect(screen.getByText("R$ 49,90")).toBeInTheDocument();
-    expect(screen.getByText("Gestao completa para sua barbearia.")).toBeInTheDocument();
+    expect((await screen.findAllByText("Plano Tem Barber")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("R$ 49,90").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Tudo o que sua barbearia precisa em um único plano/i)).toBeInTheDocument();
     expect(screen.queryByText("Plano Pro")).not.toBeInTheDocument();
     expect(screen.queryByText("Plano Premium")).not.toBeInTheDocument();
     expect(screen.queryByText(/upgrade/i)).not.toBeInTheDocument();
@@ -84,14 +107,14 @@ describe("Plano e cobranca Asaas", () => {
 
     render(<PlanoCobrancaPage />);
 
-    await user.type(await screen.findByLabelText("Nome completo ou razao social"), "Barbearia Teste Ltda");
+    await user.type(await screen.findByLabelText(/Nome completo ou razão social/i), "Barbearia Teste Ltda");
     await user.type(screen.getByLabelText("CPF"), "52998224725");
-    await user.type(screen.getByLabelText("E-mail financeiro"), "financeiro@example.com");
-    await user.type(screen.getByLabelText("Telefone financeiro"), "11999999999");
-    await user.click(screen.getByRole("button", { name: "Salvar dados de faturamento" }));
+    await user.type(screen.getByLabelText(/E-mail financeiro/i), "financeiro@example.com");
+    await user.type(screen.getByLabelText(/Telefone financeiro/i), "11999999999");
+    await user.click(screen.getByRole("button", { name: /Salvar dados de faturamento/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("Dados de faturamento salvos.")).toBeInTheDocument();
+      expect(screen.getByText(/Dados de faturamento salvos/i)).toBeInTheDocument();
     });
 
     expect(calls.some((call) => call.url.includes("/api/admin/billing/asaas/subscription"))).toBe(false);
@@ -117,8 +140,8 @@ describe("Plano e cobranca Asaas", () => {
 
     render(<PlanoCobrancaPage />);
 
-    await user.click(await screen.findByRole("button", { name: "Ativar plano por R$ 49,90/mes" }));
-    expect(screen.getByText("R$ 49,90 por mes")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Assinar plano por R\$ 49,90/i }));
+    expect(screen.getByText(/R\$ 49,90 por mês/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Voltar" }));
 
     expect(subscriptionCalls).toHaveLength(0);
@@ -143,11 +166,11 @@ describe("Plano e cobranca Asaas", () => {
     render(<PlanoCobrancaPage />);
 
     await user.click(await screen.findByLabelText("Boleto"));
-    await user.click(screen.getByRole("button", { name: "Ativar plano por R$ 49,90/mes" }));
+    await user.click(screen.getByRole("button", { name: /Assinar plano por R\$ 49,90/i }));
 
-    expect(screen.getByText("R$ 49,90 por mes")).toBeInTheDocument();
-    expect(screen.getByText("Forma de pagamento escolhida: Boleto")).toBeInTheDocument();
-    expect(screen.getByText("Cobranca mensal recorrente")).toBeInTheDocument();
+    expect(screen.getByText(/R\$ 49,90 por mês/i)).toBeInTheDocument();
+    expect(screen.getByText(/Forma de pagamento escolhida: Boleto/i)).toBeInTheDocument();
+    expect(screen.getByText(/Cobrança mensal recorrente/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Confirmar assinatura" }));
 
