@@ -12,28 +12,11 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log("Iniciando semeadura do banco de dados...");
 
-  // 1. Criar Planos de Assinatura do SaaS (Match Barber)
   const plans = [
     {
-      name: "Plano Bronze",
-      description: "Ideal para barbearias pequenas e profissionais individuais.",
+      name: "Plano Tem Barber",
+      description: "Plano completo de gestao para sua barbearia.",
       price: 49.90,
-      period: "MONTHLY" as const,
-      maxMembers: 3,
-      isActive: true,
-    },
-    {
-      name: "Plano Prata",
-      description: "Para barbearias em crescimento com equipes médias.",
-      price: 89.90,
-      period: "MONTHLY" as const,
-      maxMembers: 7,
-      isActive: true,
-    },
-    {
-      name: "Plano Ouro",
-      description: "Plano completo para grandes barbearias com múltiplos profissionais.",
-      price: 149.90,
       period: "MONTHLY" as const,
       maxMembers: 20,
       isActive: true,
@@ -51,11 +34,11 @@ async function main() {
       });
       console.log(`Plano cadastrado com sucesso: ${plan.name} (R$ ${plan.price})`);
     } else {
-      console.log(`Plano já existente: ${planData.name}`);
+      console.log(`Plano ja existente: ${planData.name}`);
     }
   }
 
-  console.log("Semeadura concluída com sucesso!");
+  console.log("Semeadura concluida com sucesso!");
 }
 
 main()

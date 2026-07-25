@@ -77,6 +77,21 @@ describe("Sidebar Logo Fallback", () => {
 
     expect(screen.getAllByText("Smoke Premium").length).toBeGreaterThan(0);
   });
+
+  it("oculta o submenu de plano e cobranca para BARBER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Barbeiro"
+        userRole="BARBER"
+      />
+    );
+
+    expect(screen.getAllByText("Configurações").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Plano e cobranca")).toBeNull();
+  });
 });
 
 describe("MemberNav Logo Fallback", () => {

@@ -3,9 +3,10 @@ import { AsaasPaymentStatus, AsaasSubscriptionStatus } from "@prisma/client";
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
+    barbershopBillingProfile: { findUnique: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn() },
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
-    asaasBillingPayment: { findFirst: vi.fn(), create: vi.fn() },
+    asaasBillingPayment: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn() },
   },
   getAdminSessionMock: vi.fn(),
@@ -176,6 +177,18 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
       });
 
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue({
+        id: "profile-1",
+        barbershopId: "shop-1",
+        personType: "COMPANY",
+        legalName: "Dom Brio Ltda",
+        cpfCnpj: "11222333000181",
+        billingEmail: "financeiro@test.com",
+        billingPhone: "11999999999",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
         id: "cust-db-1",
         barbershopId: "shop-1",
@@ -192,30 +205,38 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         barbershopId: "shop-1",
         asaasSubscriptionId: "sub_asaas_999",
         planCode: "PRO",
-        planName: "Plano Pro",
-        value: { toString: () => "149.90" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.90" },
         cycle: "MONTHLY",
         status: AsaasSubscriptionStatus.ACTIVE,
         nextDueDate: new Date("2026-08-01T00:00:00.000Z"),
         externalReference: "tb_sub_shop-1_PRO",
         createdAt: new Date(),
       });
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
 
       const res = await getBillingStatus();
       const data = await res.json();
+      const serialized = JSON.stringify(data);
 
       expect(res.status).toBe(200);
       expect(data.integrationConfigured).toBe(true);
       expect(data.environment).toBe("sandbox");
       expect(data.webhookTokenConfigured).toBe(true);
-      expect(data.hasCustomer).toBe(true);
-      expect(data.customer.asaasCustomerId).toBe("cus_asaas_123");
+      expect(data.profileCompleted).toBe(true);
+      expect(data.documentConfigured).toBe(true);
+      expect(data.cpfCnpjMasked).toBe("**.***.***/****-81");
+      expect(data.customerConfigured).toBe(true);
       expect(data.hasSubscription).toBe(true);
       expect(data.subscription.status).toBe("ACTIVE");
+      expect(data.plan.value).toBe("49.90");
 
       // Garante que NENHUMA chave sensível vaza no payload
-      expect(JSON.stringify(data)).not.toContain("secret_key_123");
-      expect(JSON.stringify(data)).not.toContain("wh_token_abc");
+      expect(serialized).not.toContain("secret_key_123");
+      expect(serialized).not.toContain("wh_token_abc");
+      expect(serialized).not.toContain("11222333000181");
+      expect(serialized).not.toContain("cus_asaas_123");
+      expect(serialized).not.toContain("sub_asaas_999");
     });
 
     it("retorna integrationConfigured false quando ASAAS_API_KEY está ausente", async () => {
@@ -226,15 +247,18 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
       });
 
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(null);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue(null);
       prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
 
       const res = await getBillingStatus();
       const data = await res.json();
 
       expect(res.status).toBe(200);
       expect(data.integrationConfigured).toBe(false);
-      expect(data.hasCustomer).toBe(false);
+      expect(data.customerConfigured).toBe(false);
+      expect(data.profileCompleted).toBe(false);
       expect(data.hasSubscription).toBe(false);
     });
 

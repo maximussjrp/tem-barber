@@ -1,57 +1,44 @@
 /**
- * Catálogo interno de planos do Tem Barber para cobrança via Asaas.
- * Centraliza códigos, nomes e valores — nunca espalhar preços em rotas/UI.
+ * Catalogo interno de planos do Tem Barber para cobranca via Asaas.
+ * Centraliza codigos, nomes e valores; nunca espalhar precos em rotas/UI.
  */
 
 export interface BillingPlan {
   code: string;
   name: string;
-  value: number; // em BRL, ex: 149.90
+  value: number;
   cycle: "MONTHLY";
   description: string;
   features: string[];
   active: boolean;
 }
 
+export const ACTIVE_BILLING_PLAN_CODE = "pro_monthly";
+
 export const BILLING_PLANS: BillingPlan[] = [
   {
     code: "pro_monthly",
-    name: "Plano Pro",
-    value: 149.9,
+    name: "Plano Tem Barber",
+    value: 49.9,
     cycle: "MONTHLY",
-    description: "Plano completo para barbearias com até 5 profissionais.",
+    description: "Plano completo de gestao para sua barbearia.",
     features: [
-      "Até 5 profissionais",
       "Agenda online",
       "Fila online",
       "Comandas",
-      "Comissões",
-      "Financeiro",
-    ],
-    active: true,
-  },
-  {
-    code: "premium_monthly",
-    name: "Plano Premium",
-    value: 249.9,
-    cycle: "MONTHLY",
-    description: "Plano avançado para barbearias com profissionais ilimitados.",
-    features: [
-      "Profissionais ilimitados",
-      "Agenda online",
-      "Fila online",
-      "Comandas",
-      "Comissões",
-      "Financeiro",
+      "Gestao de clientes",
+      "Produtos e estoque",
+      "Caixa e financeiro",
+      "Comissoes",
       "Clube de assinaturas",
-      "Relatórios avançados",
+      "Relatorios",
     ],
     active: true,
   },
 ];
 
 /**
- * Busca um plano ativo pelo código.
+ * Busca um plano ativo pelo codigo.
  */
 export function getBillingPlanByCode(code: string): BillingPlan | null {
   return BILLING_PLANS.find((p) => p.code === code && p.active) ?? null;
@@ -64,8 +51,16 @@ export function getActiveBillingPlans(): BillingPlan[] {
   return BILLING_PLANS.filter((p) => p.active);
 }
 
+export function getActiveBillingPlan(): BillingPlan {
+  const plan = getBillingPlanByCode(ACTIVE_BILLING_PLAN_CODE);
+  if (!plan) {
+    throw new Error("Plano ativo de faturamento nao configurado.");
+  }
+  return plan;
+}
+
 /**
- * Tipos de cobrança permitidos no MVP.
+ * Tipos de cobranca permitidos no MVP.
  */
 export const ALLOWED_BILLING_TYPES = ["PIX", "BOLETO"] as const;
 export type AllowedBillingType = (typeof ALLOWED_BILLING_TYPES)[number];

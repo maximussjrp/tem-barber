@@ -10,7 +10,11 @@ import {
   mapAsaasSubscriptionStatus,
 } from "@/lib/asaas/mappers";
 import { ensureAsaasCustomerForBarbershop } from "@/lib/asaas/customers";
-import { getBillingPlanByCode, isAllowedBillingType } from "@/lib/billing/plans";
+import {
+  ACTIVE_BILLING_PLAN_CODE,
+  getBillingPlanByCode,
+  isAllowedBillingType,
+} from "@/lib/billing/plans";
 import type { AllowedBillingType } from "@/lib/billing/plans";
 
 interface AsaasSubscriptionResponse {
@@ -62,6 +66,13 @@ export async function createAsaasSubscriptionForBarbershop(
   const { barbershopId, planCode, billingType } = input;
 
   // 1. Validar plano
+  if (planCode !== ACTIVE_BILLING_PLAN_CODE) {
+    throw new SubscriptionValidationError(
+      "INVALID_PLAN",
+      `Plano "${planCode}" nao esta disponivel para contratacao.`
+    );
+  }
+
   const plan = getBillingPlanByCode(planCode);
   if (!plan) {
     throw new SubscriptionValidationError("INVALID_PLAN", `Plano "${planCode}" não encontrado ou inativo.`);

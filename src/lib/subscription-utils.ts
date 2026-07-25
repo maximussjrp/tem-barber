@@ -16,7 +16,7 @@ export function isSubscriptionActive(subscription: {
 }): boolean {
   const now = new Date();
 
-  const toDate = (val: any) => {
+  const toDate = (val: Date | string | null | undefined) => {
     if (!val) return null;
     return val instanceof Date ? val : new Date(val);
   };
@@ -64,10 +64,10 @@ export async function getOrCreateSubscription(barbershopId: string) {
   if (!plan) {
     plan = await prisma.plan.create({
       data: {
-        name: "Plano Bronze",
-        description: "Ideal para barbearias pequenas e profissionais individuais.",
+        name: "Plano Tem Barber",
+        description: "Plano completo de gestao para sua barbearia.",
         price: 49.90,
-        maxMembers: 3,
+        maxMembers: 20,
         isActive: true,
       },
     });

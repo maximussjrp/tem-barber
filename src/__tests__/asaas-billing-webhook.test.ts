@@ -282,7 +282,7 @@ describe("PR #27 — Webhook Asaas Billing", () => {
         payment: {
           id: "pay_created_100",
           customer: "cus_1",
-          value: 149.9,
+          value: 49.9,
           status: "PENDING",
           billingType: "PIX",
           externalReference: "tb_barbershop_shop-1",
@@ -317,7 +317,7 @@ describe("PR #27 — Webhook Asaas Billing", () => {
           id: "pay_rec_200",
           customer: "cus_1",
           subscription: "sub_asaas_1",
-          value: 149.9,
+          value: 49.9,
           netValue: 145.0,
           status: "RECEIVED",
           billingType: "PIX",

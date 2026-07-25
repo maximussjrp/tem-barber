@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
   prismaMock: {
-    asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn() },
+    barbershopBillingProfile: { findUnique: vi.fn(), upsert: vi.fn() },
+    asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
+    asaasBillingPayment: { findMany: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
   },
@@ -17,12 +19,27 @@ vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
 
 // Mock global fetch for Asaas API calls
 const originalFetch = globalThis.fetch;
+const VALID_CPF = "52998224725";
+const VALID_CNPJ = "11222333000181";
+const BILLING_PROFILE = {
+  id: "billing-profile-1",
+  barbershopId: "shop-1",
+  personType: "INDIVIDUAL",
+  legalName: "Barbearia Teste Ltda",
+  cpfCnpj: VALID_CPF,
+  billingEmail: "financeiro@example.com",
+  billingPhone: "11999999999",
+  createdAt: new Date("2026-07-25T00:00:00.000Z"),
+  updatedAt: new Date("2026-07-25T00:00:00.000Z"),
+};
 
 import { POST as postSubscription } from "@/app/api/admin/billing/asaas/subscription/route";
 import { GET as getStatus } from "@/app/api/admin/billing/asaas/status/route";
+import { GET as getProfile, PUT as putProfile } from "@/app/api/admin/billing/profile/route";
 import { ensureAsaasCustomerForBarbershop } from "@/lib/asaas/customers";
 import { createAsaasSubscriptionForBarbershop, SubscriptionValidationError } from "@/lib/asaas/subscriptions";
 import { getBillingPlanByCode, getActiveBillingPlans, isAllowedBillingType } from "@/lib/billing/plans";
+import { isValidCpf, isValidCnpj, maskCpfCnpj, normalizeCpfCnpj } from "@/lib/billing/documents";
 
 describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
   beforeEach(() => {
@@ -31,6 +48,18 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     vi.stubEnv("ASAAS_API_KEY", "test_api_key_secret");
     vi.stubEnv("ASAAS_ENV", "sandbox");
     globalThis.fetch = fetchMock;
+    prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
+    prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+    prismaMock.asaasBillingCustomer.update.mockResolvedValue({
+      id: "cust-db-1",
+      barbershopId: "shop-1",
+      asaasCustomerId: "cus_existing",
+      name: BILLING_PROFILE.legalName,
+      email: BILLING_PROFILE.billingEmail,
+      cpfCnpj: VALID_CPF,
+      phone: BILLING_PROFILE.billingPhone,
+      externalReference: "tb_barbershop_shop-1",
+    });
   });
 
   afterEach(() => {
@@ -46,8 +75,13 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       const plan = getBillingPlanByCode("pro_monthly");
       expect(plan).not.toBeNull();
       expect(plan!.code).toBe("pro_monthly");
-      expect(plan!.value).toBe(149.9);
+      expect(plan!.name).toBe("Plano Tem Barber");
+      expect(plan!.value).toBe(49.9);
       expect(plan!.cycle).toBe("MONTHLY");
+    });
+
+    it("nao permite contratar premium_monthly", () => {
+      expect(getBillingPlanByCode("premium_monthly")).toBeNull();
     });
 
     it("retorna null para plano inexistente", () => {
@@ -56,8 +90,13 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("lista planos ativos", () => {
       const plans = getActiveBillingPlans();
-      expect(plans.length).toBeGreaterThanOrEqual(2);
+      expect(plans).toHaveLength(1);
       expect(plans.every((p) => p.active)).toBe(true);
+      expect(plans[0]).toMatchObject({
+        code: "pro_monthly",
+        value: 49.9,
+        cycle: "MONTHLY",
+      });
     });
 
     it("valida billingType permitido", () => {
@@ -68,11 +107,160 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
   });
 
+  describe("1.1 Documentos e Perfil de Faturamento", () => {
+    function makeProfileRequest(body: Record<string, unknown>) {
+      return new NextRequest("http://localhost/api/admin/billing/profile", {
+        method: "PUT",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    it("normaliza, valida e mascara CPF/CNPJ", () => {
+      expect(normalizeCpfCnpj("529.982.247-25")).toBe(VALID_CPF);
+      expect(isValidCpf(VALID_CPF)).toBe(true);
+      expect(isValidCpf("11111111111")).toBe(false);
+      expect(isValidCpf("52998224724")).toBe(false);
+      expect(isValidCnpj(VALID_CNPJ)).toBe(true);
+      expect(isValidCnpj("11.111.111/1111-11")).toBe(false);
+      expect(isValidCnpj("11222333000180")).toBe(false);
+      expect(maskCpfCnpj(VALID_CPF)).toBe("***.***.***-25");
+      expect(maskCpfCnpj(VALID_CNPJ)).toBe("**.***.***/****-81");
+    });
+
+    it("OWNER e MANAGER leem perfil sem documento integral", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
+
+      const ownerRes = await getProfile();
+      const ownerData = await ownerRes.json();
+
+      expect(ownerRes.status).toBe(200);
+      expect(ownerData.completed).toBe(true);
+      expect(ownerData.cpfCnpjMasked).toBe("***.***.***-25");
+      expect(JSON.stringify(ownerData)).not.toContain(VALID_CPF);
+
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "manager-1", barbershopId: "shop-1", role: "MANAGER", memberId: "m-2" },
+      });
+
+      const managerRes = await getProfile();
+      expect(managerRes.status).toBe(200);
+    });
+
+    it("BARBER nao le perfil", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
+        data: null,
+      });
+
+      const res = await getProfile();
+      expect(res.status).toBe(403);
+    });
+
+    it("OWNER salva perfil tenant-scoped por upsert", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(null);
+      prismaMock.barbershopBillingProfile.upsert.mockResolvedValue(BILLING_PROFILE);
+
+      const res = await putProfile(
+        makeProfileRequest({
+          personType: "INDIVIDUAL",
+          legalName: "Barbearia Teste Ltda",
+          cpfCnpj: "529.982.247-25",
+          billingEmail: "Financeiro@Example.com",
+          billingPhone: "(11) 99999-9999",
+          barbershopId: "other-tenant",
+        })
+      );
+      const data = await res.json();
+      const upsertArgs = prismaMock.barbershopBillingProfile.upsert.mock.calls[0][0];
+
+      expect(res.status).toBe(200);
+      expect(upsertArgs.where).toEqual({ barbershopId: "shop-1" });
+      expect(upsertArgs.create.barbershopId).toBe("shop-1");
+      expect(upsertArgs.create.cpfCnpj).toBe(VALID_CPF);
+      expect(upsertArgs.create.billingEmail).toBe("financeiro@example.com");
+      expect(upsertArgs.create.billingPhone).toBe("11999999999");
+      expect(JSON.stringify(data)).not.toContain(VALID_CPF);
+    });
+
+    it("MANAGER nao salva perfil", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "manager-1", barbershopId: "shop-1", role: "MANAGER", memberId: "m-2" },
+      });
+
+      const res = await putProfile(
+        makeProfileRequest({
+          personType: "INDIVIDUAL",
+          legalName: "Barbearia Teste Ltda",
+          cpfCnpj: VALID_CPF,
+          billingEmail: "financeiro@example.com",
+        })
+      );
+
+      expect(res.status).toBe(403);
+      expect(prismaMock.barbershopBillingProfile.upsert).not.toHaveBeenCalled();
+    });
+
+    it("COMPANY exige CNPJ valido", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(null);
+
+      const invalid = await putProfile(
+        makeProfileRequest({
+          personType: "COMPANY",
+          legalName: "Barbearia Teste Ltda",
+          cpfCnpj: VALID_CPF,
+          billingEmail: "financeiro@example.com",
+        })
+      );
+      expect(invalid.status).toBe(400);
+
+      prismaMock.barbershopBillingProfile.upsert.mockResolvedValue({
+        ...BILLING_PROFILE,
+        personType: "COMPANY",
+        cpfCnpj: VALID_CNPJ,
+      });
+      const valid = await putProfile(
+        makeProfileRequest({
+          personType: "COMPANY",
+          legalName: "Barbearia Teste Ltda",
+          cpfCnpj: VALID_CNPJ,
+          billingEmail: "financeiro@example.com",
+        })
+      );
+      expect(valid.status).toBe(200);
+    });
+  });
+
   // =============================================
   // CUSTOMER ASAAS
   // =============================================
   describe("2. Customer Asaas (ensureAsaasCustomerForBarbershop)", () => {
-    it("reutiliza customer local quando já existe", async () => {
+    it("bloqueia customer sem perfil de faturamento completo", async () => {
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(null);
+
+      await expect(ensureAsaasCustomerForBarbershop("shop-1")).rejects.toMatchObject({
+        code: "BILLING_PROFILE_INCOMPLETE",
+      });
+      expect(prismaMock.asaasBillingCustomer.create).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("atualiza customer local/remoto existente usando dados do perfil", async () => {
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
         id: "cust-db-1",
         barbershopId: "shop-1",
@@ -83,24 +271,45 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         phone: "11999999999",
         externalReference: "tb_barbershop_shop-1",
       });
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: "cus_existing_123" }),
+      });
+      prismaMock.asaasBillingCustomer.update.mockResolvedValue({
+        id: "cust-db-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_existing_123",
+        name: BILLING_PROFILE.legalName,
+        email: BILLING_PROFILE.billingEmail,
+        cpfCnpj: VALID_CPF,
+        phone: BILLING_PROFILE.billingPhone,
+        externalReference: "tb_barbershop_shop-1",
+      });
 
       const result = await ensureAsaasCustomerForBarbershop("shop-1");
+      const [url, opts] = fetchMock.mock.calls[0];
+      const body = JSON.parse(opts.body);
 
       expect(result.created).toBe(false);
       expect(result.asaasCustomerId).toBe("cus_existing_123");
-      expect(fetchMock).not.toHaveBeenCalled(); // Não chamou Asaas
+      expect(url).toContain("sandbox.asaas.com/api/v3/customers/cus_existing_123");
+      expect(opts.method).toBe("PUT");
+      expect(body).toMatchObject({
+        name: BILLING_PROFILE.legalName,
+        cpfCnpj: VALID_CPF,
+        email: BILLING_PROFILE.billingEmail,
+        mobilePhone: BILLING_PROFILE.billingPhone,
+        externalReference: "tb_barbershop_shop-1",
+        notificationDisabled: true,
+      });
+      expect(prismaMock.asaasBillingCustomer.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingCustomer.update).toHaveBeenCalledOnce();
     });
 
-    it("cria customer no Asaas quando não existe localmente", async () => {
+    it("cria customer no Asaas quando nao existe localmente", async () => {
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue(null);
-      prismaMock.barbershop.findUniqueOrThrow.mockResolvedValue({
-        id: "shop-1",
-        name: "Barbearia Teste",
-        phone: "11888888888",
-      });
-      prismaMock.barbershopMember.findFirst.mockResolvedValue({
-        user: { name: "João Owner", email: "joao@test.com", cpf: "12345678901", phone: "11999999999" },
-      });
 
       fetchMock.mockResolvedValue({
         ok: true,
@@ -108,9 +317,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         json: () =>
           Promise.resolve({
             id: "cus_new_456",
-            name: "Barbearia Teste",
-            email: "joao@test.com",
-            cpfCnpj: "12345678901",
+            name: BILLING_PROFILE.legalName,
+            email: BILLING_PROFILE.billingEmail,
+            cpfCnpj: VALID_CPF,
             externalReference: "tb_barbershop_shop-1",
           }),
       });
@@ -119,10 +328,10 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         id: "cust-db-2",
         barbershopId: "shop-1",
         asaasCustomerId: "cus_new_456",
-        name: "Barbearia Teste",
-        email: "joao@test.com",
-        cpfCnpj: "12345678901",
-        phone: "11999999999",
+        name: BILLING_PROFILE.legalName,
+        email: BILLING_PROFILE.billingEmail,
+        cpfCnpj: VALID_CPF,
+        phone: BILLING_PROFILE.billingPhone,
         externalReference: "tb_barbershop_shop-1",
       });
 
@@ -132,38 +341,35 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(result.asaasCustomerId).toBe("cus_new_456");
       expect(fetchMock).toHaveBeenCalledOnce();
 
-      // Verifica que access_token foi enviado mas ASAAS_API_KEY não aparece no body
       const [url, opts] = fetchMock.mock.calls[0];
       expect(url).toContain("sandbox.asaas.com/api/v3/customers");
       expect(opts.headers.access_token).toBe("test_api_key_secret");
       const body = JSON.parse(opts.body);
-      expect(body.name).toBe("Barbearia Teste");
+      expect(body.name).toBe(BILLING_PROFILE.legalName);
+      expect(body.cpfCnpj).toBe(VALID_CPF);
+      expect(body.email).toBe(BILLING_PROFILE.billingEmail);
+      expect(body.notificationDisabled).toBe(true);
       expect(body.externalReference).toBe("tb_barbershop_shop-1");
     });
 
-    it("não expõe ASAAS_API_KEY no body da requisição de criação de customer", async () => {
+    it("nao expoe ASAAS_API_KEY no body da requisicao de criacao de customer", async () => {
+      prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue(null);
-      prismaMock.barbershop.findUniqueOrThrow.mockResolvedValue({
-        id: "shop-1",
-        name: "Teste",
-        phone: "11888888888",
-      });
-      prismaMock.barbershopMember.findFirst.mockResolvedValue(null);
 
       fetchMock.mockResolvedValue({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({ id: "cus_x", name: "Teste" }),
+        json: () => Promise.resolve({ id: "cus_x", name: BILLING_PROFILE.legalName }),
       });
 
       prismaMock.asaasBillingCustomer.create.mockResolvedValue({
         id: "db-x",
         barbershopId: "shop-1",
         asaasCustomerId: "cus_x",
-        name: "Teste",
-        email: null,
-        cpfCnpj: null,
-        phone: "11888888888",
+        name: BILLING_PROFILE.legalName,
+        email: BILLING_PROFILE.billingEmail,
+        cpfCnpj: VALID_CPF,
+        phone: BILLING_PROFILE.billingPhone,
         externalReference: "tb_barbershop_shop-1",
       });
 
@@ -175,9 +381,6 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
   });
 
-  // =============================================
-  // SUBSCRIPTION ASAAS
-  // =============================================
   describe("3. Subscription Asaas (createAsaasSubscriptionForBarbershop)", () => {
     it("cria subscription com customer correto", async () => {
       // Customer já existe
@@ -203,7 +406,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
             id: "sub_asaas_789",
             customer: "cus_existing",
             billingType: "PIX",
-            value: 149.9,
+            value: 49.9,
             nextDueDate: "2026-07-26",
             cycle: "MONTHLY",
             status: "ACTIVE",
@@ -217,8 +420,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         asaasSubscriptionId: "sub_asaas_789",
         asaasCustomerId: "cus_existing",
         planCode: "pro_monthly",
-        planName: "Plano Pro",
-        value: { toString: () => "149.9" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
         cycle: "MONTHLY",
         status: "ACTIVE",
         billingType: "PIX",
@@ -235,7 +438,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(result.alreadyExisted).toBe(false);
       expect(result.subscription.asaasSubscriptionId).toBe("sub_asaas_789");
       expect(result.subscription.planCode).toBe("pro_monthly");
-      expect(result.subscription.value).toBe("149.9");
+      expect(result.subscription.value).toBe("49.9");
       expect(result.subscription.billingType).toBe("PIX");
       expect(result.customer.asaasCustomerId).toBe("cus_existing");
     });
@@ -258,8 +461,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         asaasSubscriptionId: "sub_asaas_existing",
         asaasCustomerId: "cus_existing",
         planCode: "pro_monthly",
-        planName: "Plano Pro",
-        value: { toString: () => "149.9" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
         cycle: "MONTHLY",
         status: "ACTIVE",
         billingType: "PIX",
@@ -274,7 +477,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       });
 
       expect(result.alreadyExisted).toBe(true);
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingSubscription.create).not.toHaveBeenCalled();
     });
 
     it("lança erro para planCode inválido", async () => {
@@ -339,7 +542,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
             id: "sub_asaas_new",
             customer: "cus_123",
             billingType: "BOLETO",
-            value: 149.9,
+            value: 49.9,
             nextDueDate: "2026-07-26",
             cycle: "MONTHLY",
             status: "ACTIVE",
@@ -352,8 +555,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         asaasSubscriptionId: "sub_asaas_new",
         asaasCustomerId: "cus_123",
         planCode: "pro_monthly",
-        planName: "Plano Pro",
-        value: { toString: () => "149.9" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
         cycle: "MONTHLY",
         status: "ACTIVE",
         billingType: "BOLETO",
@@ -368,6 +571,67 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(data.subscription.planCode).toBe("pro_monthly");
       expect(data.alreadyExisted).toBe(false);
       expect(JSON.stringify(data)).not.toContain("test_api_key_secret");
+    });
+
+    it("ignora value indevido enviado pelo navegador e usa valor oficial", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_123",
+        name: "Shop",
+        email: null,
+        cpfCnpj: null,
+        phone: null,
+        externalReference: "tb_barbershop_shop-1",
+      });
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            id: "sub_asaas_new",
+            customer: "cus_123",
+            billingType: "PIX",
+            value: 49.9,
+            nextDueDate: "2026-07-26",
+            cycle: "MONTHLY",
+            status: "ACTIVE",
+          }),
+      });
+
+      prismaMock.asaasBillingSubscription.create.mockResolvedValue({
+        id: "sub-db-new",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_asaas_new",
+        asaasCustomerId: "cus_123",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
+        cycle: "MONTHLY",
+        status: "ACTIVE",
+        billingType: "PIX",
+        nextDueDate: new Date("2026-07-26"),
+        externalReference: "tb_sub_shop-1_pro_monthly",
+      });
+
+      const res = await postSubscription(
+        makeRequest({ planCode: "pro_monthly", billingType: "PIX", value: 1, cycle: "YEARLY" })
+      );
+      const [, options] = fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("/subscriptions")
+      )!;
+      const asaasBody = JSON.parse(options.body);
+
+      expect(res.status).toBe(201);
+      expect(asaasBody.value).toBe(49.9);
+      expect(asaasBody.cycle).toBe("MONTHLY");
     });
 
     it("BARBER é bloqueado com 403", async () => {
@@ -401,6 +665,20 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       expect(res.status).toBe(400);
       expect(data.error).toBe("INVALID_PLAN");
+    });
+
+    it("premium_monthly retorna 400", async () => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
+      });
+
+      const res = await postSubscription(makeRequest({ planCode: "premium_monthly", billingType: "PIX" }));
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("INVALID_PLAN");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("billingType inválido retorna 400", async () => {
@@ -479,8 +757,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         id: "sub-1",
         asaasSubscriptionId: "sub_123",
         planCode: "pro_monthly",
-        planName: "Plano Pro",
-        value: { toString: () => "149.9" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
         cycle: "MONTHLY",
         status: "ACTIVE",
         billingType: "PIX",
@@ -491,11 +769,26 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       const res = await getStatus();
       const data = await res.json();
+      const serialized = JSON.stringify(data);
 
       expect(res.status).toBe(200);
+      expect(data.profileCompleted).toBe(true);
+      expect(data.documentConfigured).toBe(true);
+      expect(data.cpfCnpjMasked).toBe("***.***.***-25");
+      expect(data.customerConfigured).toBe(true);
+      expect(data.plan).toMatchObject({
+        code: "pro_monthly",
+        name: "Plano Tem Barber",
+        value: "49.90",
+        cycle: "MONTHLY",
+      });
+      expect(data.billingTypes).toEqual(["PIX", "BOLETO"]);
       expect(data.subscription.billingType).toBe("PIX");
       expect(data.subscription.planCode).toBe("pro_monthly");
-      expect(JSON.stringify(data)).not.toContain("secret_key");
+      expect(serialized).not.toContain("secret_key");
+      expect(serialized).not.toContain(VALID_CPF);
+      expect(serialized).not.toContain("cus_123");
+      expect(serialized).not.toContain("sub_123");
     });
   });
 
@@ -526,7 +819,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
             id: "sub_1",
             customer: "cus_1",
             billingType: "PIX",
-            value: 149.9,
+            value: 49.9,
             nextDueDate: "2026-07-26",
             cycle: "MONTHLY",
             status: "ACTIVE",
@@ -539,8 +832,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         asaasSubscriptionId: "sub_1",
         asaasCustomerId: "cus_1",
         planCode: "pro_monthly",
-        planName: "Plano Pro",
-        value: { toString: () => "149.9" },
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
         cycle: "MONTHLY",
         status: "ACTIVE",
         billingType: "PIX",

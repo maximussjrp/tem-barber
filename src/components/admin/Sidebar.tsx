@@ -116,6 +116,11 @@ const navItems = [
     ownerOnly: false,
     children: [
       { label: "Geral",     href: "/admin/configuracoes" },
+      {
+        label: "Plano e cobranca",
+        href: "/admin/configuracoes/plano-cobranca",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
       { label: "Horários",  href: "/admin/configuracoes/horarios" },
       { label: "Equipe",    href: "/admin/equipe" },
     ],
@@ -220,7 +225,12 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
                 </button>
                 {isOpen && (
                   <div className="ml-9 space-y-0.5 mb-1 mt-0.5">
-                    {item.children.map((child) => (
+                    {item.children
+                      .filter((child) => {
+                        const roles = "roles" in child ? child.roles : undefined;
+                        return !roles || roles.includes(userRole ?? "");
+                      })
+                      .map((child) => (
                       <Link
                         key={child.href}
                         href={child.href}

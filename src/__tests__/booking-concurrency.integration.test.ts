@@ -67,9 +67,9 @@ async function seedTenant(label: string) {
   if (!plan) {
     plan = await prisma.plan.create({
       data: {
-        name: "Plano Bronze",
+        name: "Plano Tem Barber",
         price: 49.90,
-        maxMembers: 3,
+        maxMembers: 20,
         isActive: true,
       },
     });

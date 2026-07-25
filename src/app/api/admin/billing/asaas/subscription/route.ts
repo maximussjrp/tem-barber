@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
 import { createAsaasSubscriptionForBarbershop, SubscriptionValidationError } from "@/lib/asaas/subscriptions";
 import { AsaasApiError } from "@/lib/asaas/client";
+import { BillingProfileIncompleteError } from "@/lib/asaas/customers";
 
 export async function POST(request: NextRequest) {
   const session = await getAdminSession();
@@ -63,6 +64,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, { status: result.alreadyExisted ? 200 : 201 });
   } catch (err: unknown) {
     if (err instanceof SubscriptionValidationError) {
+      return NextResponse.json(
+        { error: err.code, message: err.message },
+        { status: 400 }
+      );
+    }
+
+    if (err instanceof BillingProfileIncompleteError) {
       return NextResponse.json(
         { error: err.code, message: err.message },
         { status: 400 }
