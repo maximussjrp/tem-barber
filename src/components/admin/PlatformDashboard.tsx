@@ -3,36 +3,70 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface Plan {
+export interface Plan {
   id: string;
   name: string;
-  price: number | any;
+  price: number | string;
 }
 
-interface TenantSubscription {
+export interface TenantSubscription {
   id: string;
   status: string;
   planId: string;
   planName: string | null;
-  monthlyPrice: any | null;
+  monthlyPrice: number | string | null;
   trialEndsAt: string | null;
-  currentPeriodStart: string;
-  currentPeriodEnd: string;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
   gracePeriodEndsAt: string | null;
   paymentMethod: string | null;
   lastPaymentAt: string | null;
   internalNotes: string | null;
   updatedBy: string | null;
   updatedAt: string;
-  plan: Plan;
+  plan?: Plan | null;
 }
 
-interface Barbershop {
+export interface DerivedAccess {
+  rawStatus: string | null;
+  effectiveStatus:
+    | "TRIAL"
+    | "ACTIVE"
+    | "GRACE_PERIOD"
+    | "PAST_DUE"
+    | "SUSPENDED"
+    | "CANCELED"
+    | "EXPIRED"
+    | "NO_SUBSCRIPTION";
+  accessAllowed: boolean;
+  accessType: "TRIAL" | "PAID" | "GRACE" | "NONE";
+  validUntil: string | null;
+  remainingDays: number;
+  remainingLabel: string;
+  isTrial: boolean;
+  isPaid: boolean;
+  isGracePeriod: boolean;
+  isExpired: boolean;
+  synchronizationWarnings: string[];
+}
+
+export interface DerivedBilling {
+  billingStatus: "NONE" | "PENDING" | "PAID" | "OVERDUE" | "CANCELED" | "REFUNDED";
+  billingDueDate: string | null;
+  billingPaymentDate: string | null;
+  billingValue: number | string | null;
+  canPay: boolean;
+  billingLabel: string;
+  warnings: string[];
+}
+
+export interface BarbershopItem {
   id: string;
   name: string;
   slug: string;
   createdAt: string;
-  subscriptions: TenantSubscription[];
+  subscription: TenantSubscription | null;
+  subscriptionCount: number;
   members: {
     role: string;
     user: {
@@ -40,10 +74,17 @@ interface Barbershop {
       email: string | null;
     };
   }[];
+  access: DerivedAccess;
+  billing: DerivedBilling;
+  isMrrConfirmed: boolean;
+  confirmedRevenue: number;
+  synchronizationWarnings: string[];
+  formattedValidUntil: string | null;
+  formattedLastPaymentAt: string | null;
 }
 
 interface Props {
-  initialBarbershops: Barbershop[];
+  initialBarbershops: BarbershopItem[];
   plans: Plan[];
 }
 
@@ -70,17 +111,18 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
-  const handleEditClick = (barbershop: Barbershop) => {
-    const sub = barbershop.subscriptions[0] || null;
+  const handleEditClick = (item: BarbershopItem) => {
+    const sub = item.subscription;
     setEditingSub({
-      barbershopId: barbershop.id,
-      barbershopName: barbershop.name,
+      barbershopId: item.id,
+      barbershopName: item.name,
       subscription: sub,
     });
 
-    const formatDateInput = (dateStr: string | null) => {
+    const formatDateInput = (dateStr: string | null | undefined) => {
       if (!dateStr) return "";
       const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "";
       return d.toISOString().slice(0, 10);
     };
 
@@ -130,90 +172,154 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
 
       setEditingSub(null);
       router.refresh();
-    } catch (err: any) {
-      setFormError(err.message || "Erro desconhecido.");
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : "Erro desconhecido.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Get active stats
-  const items = initialBarbershops.map((shop) => {
-    const sub = shop.subscriptions[0];
-    const owner = shop.members[0]?.user;
-    
-    // Calculate remaining days
-    let remainingDays = 0;
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-
-    if (sub) {
-      const expirationDate = sub.status === "TRIAL"
-        ? (sub.trialEndsAt ? new Date(sub.trialEndsAt) : null)
-        : (sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null);
-        
-      if (expirationDate) {
-        expirationDate.setHours(0, 0, 0, 0);
-        const diffTime = expirationDate.getTime() - now.getTime();
-        remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      }
-    }
-
-    return {
-      ...shop,
-      sub,
-      owner,
-      remainingDays,
-    };
-  });
-
+  // KPI Calculations using server-derived properties
   const kpis = {
-    total: items.length,
-    active: items.filter(i => i.sub?.status === "ACTIVE").length,
-    trial: items.filter(i => i.sub?.status === "TRIAL").length,
-    pastDue: items.filter(i => i.sub?.status === "PAST_DUE").length,
-    suspended: items.filter(i => i.sub?.status === "SUSPENDED").length,
-    canceled: items.filter(i => i.sub?.status === "CANCELED").length,
-    mrr: items
-      .filter(i => i.sub?.status === "ACTIVE")
-      .reduce((sum, i) => sum + Number(i.sub?.monthlyPrice || 0), 0),
+    total: initialBarbershops.length,
+    active: initialBarbershops.filter((i) => i.access.effectiveStatus === "ACTIVE").length,
+    trial: initialBarbershops.filter((i) => i.access.effectiveStatus === "TRIAL").length,
+    grace: initialBarbershops.filter((i) => i.access.effectiveStatus === "GRACE_PERIOD").length,
+    blocked: initialBarbershops.filter(
+      (i) => i.access.effectiveStatus === "PAST_DUE" || i.access.effectiveStatus === "SUSPENDED"
+    ).length,
+    expired: initialBarbershops.filter((i) => i.access.effectiveStatus === "EXPIRED").length,
+    noSub: initialBarbershops.filter((i) => i.access.effectiveStatus === "NO_SUBSCRIPTION").length,
+    pendingPayments: initialBarbershops.filter((i) => i.billing.billingStatus === "PENDING").length,
+    overduePayments: initialBarbershops.filter((i) => i.billing.billingStatus === "OVERDUE").length,
+    mrrConfirmed: initialBarbershops.reduce((sum, i) => sum + i.confirmedRevenue, 0),
+    pendingRevenue: initialBarbershops
+      .filter((i) => i.billing.billingStatus === "PENDING" || i.billing.billingStatus === "OVERDUE")
+      .reduce((sum, i) => sum + Number(i.subscription?.monthlyPrice || 0), 0),
   };
 
-  const filteredItems = items.filter((item) => {
+  const filteredItems = initialBarbershops.filter((item) => {
     // Status Filter
-    if (filter === "TRIAL" && item.sub?.status !== "TRIAL") return false;
-    if (filter === "ACTIVE" && item.sub?.status !== "ACTIVE") return false;
-    if (filter === "PAST_DUE" && item.sub?.status !== "PAST_DUE") return false;
-    if (filter === "SUSPENDED" && item.sub?.status !== "SUSPENDED") return false;
-    if (filter === "CANCELED" && item.sub?.status !== "CANCELED") return false;
+    if (filter === "TRIAL" && item.access.effectiveStatus !== "TRIAL") return false;
+    if (filter === "ACTIVE" && item.access.effectiveStatus !== "ACTIVE") return false;
+    if (filter === "GRACE_PERIOD" && item.access.effectiveStatus !== "GRACE_PERIOD") return false;
+    if (
+      filter === "PAST_DUE" &&
+      item.access.effectiveStatus !== "PAST_DUE" &&
+      item.access.effectiveStatus !== "SUSPENDED"
+    )
+      return false;
+    if (filter === "EXPIRED" && item.access.effectiveStatus !== "EXPIRED") return false;
+    if (filter === "NO_SUBSCRIPTION" && item.access.effectiveStatus !== "NO_SUBSCRIPTION") return false;
+    if (filter === "WARNINGS" && item.synchronizationWarnings.length === 0) return false;
 
     // Search Filter
     if (search.trim() !== "") {
       const s = search.toLowerCase();
       const shopNameMatches = item.name.toLowerCase().includes(s);
       const slugMatches = item.slug.toLowerCase().includes(s);
-      const ownerNameMatches = item.owner?.name.toLowerCase().includes(s) || false;
-      const ownerEmailMatches = item.owner?.email?.toLowerCase().includes(s) || false;
+      const owner = item.members.find((m) => m.role === "OWNER")?.user;
+      const ownerNameMatches = owner?.name.toLowerCase().includes(s) || false;
+      const ownerEmailMatches = owner?.email?.toLowerCase().includes(s) || false;
       return shopNameMatches || slugMatches || ownerNameMatches || ownerEmailMatches;
     }
 
     return true;
   });
 
-  const getStatusBadge = (status: string) => {
+  const getAccessBadge = (status: DerivedAccess["effectiveStatus"]) => {
     switch (status) {
       case "TRIAL":
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Em Teste</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            Em Teste
+          </span>
+        );
       case "ACTIVE":
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Ativo</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            Ativo
+          </span>
+        );
+      case "GRACE_PERIOD":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            Tolerância
+          </span>
+        );
       case "PAST_DUE":
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Vencido</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+            Bloqueado por atraso
+          </span>
+        );
       case "SUSPENDED":
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">Suspenso</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+            Suspenso
+          </span>
+        );
       case "CANCELED":
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-500/10 text-stone-400 border border-stone-500/20">Cancelado</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-500/10 text-stone-400 border border-stone-500/20">
+            Cancelado
+          </span>
+        );
+      case "EXPIRED":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
+            Expirado
+          </span>
+        );
+      case "NO_SUBSCRIPTION":
       default:
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-700 text-stone-300">Expirado</span>;
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-800 text-stone-400 border border-stone-700">
+            Sem Assinatura
+          </span>
+        );
+    }
+  };
+
+  const getBillingBadge = (status: DerivedBilling["billingStatus"]) => {
+    switch (status) {
+      case "PAID":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+            Pago
+          </span>
+        );
+      case "PENDING":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
+            Pendente
+          </span>
+        );
+      case "OVERDUE":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/20">
+            Vencida
+          </span>
+        );
+      case "REFUNDED":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20">
+            Estornada
+          </span>
+        );
+      case "CANCELED":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-500/10 text-stone-400 border border-stone-500/20">
+            Cancelada
+          </span>
+        );
+      case "NONE":
+      default:
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-stone-800 text-stone-400 border border-stone-700">
+            Sem Cobrança
+          </span>
+        );
     }
   };
 
@@ -222,36 +328,52 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
       {/* Title */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white font-serif">Controle de Assinaturas</h1>
-          <p className="text-stone-400 text-sm mt-1">Painel interno do Administrador Tem Barber</p>
+          <h1 className="text-3xl font-extrabold tracking-tight text-white font-serif">
+            Controle de Assinaturas
+          </h1>
+          <p className="text-stone-400 text-sm mt-1">
+            Painel interno da Plataforma Tem Barber — Leitura Server-Side Única
+          </p>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {[
           { label: "Total", value: kpis.total, desc: "Tenants cadastrados" },
-          { label: "Ativos", value: kpis.active, desc: "Assinantes pagantes" },
-          { label: "Testes", value: kpis.trial, desc: "Período de trial" },
-          { label: "Vencidos", value: kpis.pastDue, desc: "Tolerância de atraso" },
-          { label: "Suspensos", value: kpis.suspended, desc: "Acesso bloqueado" },
-          { label: "Cancelados", value: kpis.canceled, desc: "Sem renovação" },
+          { label: "Ativos", value: kpis.active, desc: "Acessos pagos vigentes" },
+          { label: "Testes", value: kpis.trial, desc: "Trials em andamento" },
+          { label: "Tolerância", value: kpis.grace, desc: "Atraso com tolerância" },
+          { label: "Bloqueados", value: kpis.blocked, desc: "Atrasados / Suspensos" },
+          { label: "Sem Assinatura", value: kpis.noSub, desc: "Apenas cadastro" },
           {
-            label: "MRR Estimado",
-            value: kpis.mrr.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
-            desc: "Receita Recorrente (Active)",
-            span: "col-span-2 md:col-span-4 lg:col-span-1"
+            label: "MRR Confirmado",
+            value: kpis.mrrConfirmed.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+            desc: "Receita confirmada com pagamento",
+            span: "col-span-2 md:col-span-3 lg:col-span-3 bg-emerald-950/20 border-emerald-800/40",
+          },
+          {
+            label: "Receita Pendente",
+            value: kpis.pendingRevenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+            desc: "Cobranças pendentes / vencidas",
+            span: "col-span-2 md:col-span-3 lg:col-span-3 bg-amber-950/20 border-amber-800/40",
           },
         ].map((kpi, idx) => (
           <div
             key={idx}
-            className={`bg-stone-900/40 border border-stone-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg backdrop-blur-md ${kpi.span || ""}`}
+            className={`bg-stone-900/40 border border-stone-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg backdrop-blur-md ${
+              kpi.span || ""
+            }`}
           >
-            <span className="text-stone-400 text-xs font-medium uppercase tracking-wider">{kpi.label}</span>
+            <span className="text-stone-400 text-xs font-medium uppercase tracking-wider">
+              {kpi.label}
+            </span>
             <div className="my-2">
               <span className="text-2xl font-bold text-white tracking-tight">{kpi.value}</span>
             </div>
-            <span className="text-[10px] text-stone-500 font-normal leading-normal">{kpi.desc}</span>
+            <span className="text-[10px] text-stone-500 font-normal leading-normal">
+              {kpi.desc}
+            </span>
           </div>
         ))}
       </div>
@@ -268,8 +390,19 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
             className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:border-amber-500 transition-colors"
           />
           <div className="absolute left-3.5 top-3.5 text-stone-500">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+              />
             </svg>
           </div>
         </div>
@@ -280,9 +413,11 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
             { id: "ALL", label: "Todos" },
             { id: "TRIAL", label: "Trial" },
             { id: "ACTIVE", label: "Ativos" },
-            { id: "PAST_DUE", label: "Vencidos" },
-            { id: "SUSPENDED", label: "Suspensos" },
-            { id: "CANCELED", label: "Cancelados" },
+            { id: "GRACE_PERIOD", label: "Tolerância" },
+            { id: "PAST_DUE", label: "Bloqueados" },
+            { id: "EXPIRED", label: "Expirados" },
+            { id: "NO_SUBSCRIPTION", label: "Sem Assinatura" },
+            { id: "WARNINGS", label: "Inconsistências" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -308,85 +443,107 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
                 <th className="py-4 px-6">Barbearia</th>
                 <th className="py-4 px-6">Dono / Contato</th>
                 <th className="py-4 px-6">Plano / Preço</th>
-                <th className="py-4 px-6 text-center">Status</th>
-                <th className="py-4 px-6">Próximo Vencimento</th>
+                <th className="py-4 px-6 text-center">Acesso</th>
+                <th className="py-4 px-6 text-center">Cobrança</th>
+                <th className="py-4 px-6">Validade</th>
                 <th className="py-4 px-6 text-center">Dias Restantes</th>
+                <th className="py-4 px-6">Último Pagamento</th>
+                <th className="py-4 px-6 text-center">Sincronização</th>
                 <th className="py-4 px-6 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-850">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-stone-500 font-medium">
+                  <td colSpan={10} className="py-12 text-center text-stone-500 font-medium">
                     Nenhuma barbearia encontrada.
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((item) => (
-                  <tr key={item.id} className="hover:bg-stone-900/10 transition-colors">
-                    <td className="py-4 px-6">
-                      <div className="font-semibold text-stone-100">{item.name}</div>
-                      <div className="text-xs text-stone-500 mt-0.5">slug: {item.slug}</div>
-                    </td>
-                    <td className="py-4 px-6">
-                      {item.owner ? (
-                        <>
-                          <div className="text-stone-300 font-medium">{item.owner.name}</div>
-                          <div className="text-xs text-stone-500 mt-0.5">{item.owner.email}</div>
-                        </>
-                      ) : (
-                        <span className="text-stone-600 text-xs font-normal">Sem owner cadastrado</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-6">
-                      {item.sub ? (
-                        <>
-                          <div className="text-stone-300 font-medium">{item.sub.planName || "Plan personalizado"}</div>
-                          <div className="text-xs text-amber-500 font-semibold mt-0.5">
-                            {Number(item.sub.monthlyPrice || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                          </div>
-                        </>
-                      ) : (
-                        <span className="text-stone-600 text-xs">Nenhum</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-6 text-center">
-                      {getStatusBadge(item.sub?.status || "EXPIRED")}
-                    </td>
-                    <td className="py-4 px-6 text-stone-300">
-                      {item.sub ? (
-                        item.sub.status === "TRIAL" ? (
-                          item.sub.trialEndsAt ? new Date(item.sub.trialEndsAt).toLocaleDateString("pt-BR") : "N/A"
+                filteredItems.map((item) => {
+                  const owner = item.members.find((m) => m.role === "OWNER")?.user;
+
+                  return (
+                    <tr key={item.id} className="hover:bg-stone-900/10 transition-colors">
+                      <td className="py-4 px-6">
+                        <div className="font-semibold text-stone-100">{item.name}</div>
+                        <div className="text-xs text-stone-500 mt-0.5">slug: {item.slug}</div>
+                      </td>
+                      <td className="py-4 px-6">
+                        {owner ? (
+                          <>
+                            <div className="text-stone-300 font-medium">{owner.name}</div>
+                            <div className="text-xs text-stone-500 mt-0.5">{owner.email}</div>
+                          </>
                         ) : (
-                          item.sub.currentPeriodEnd ? new Date(item.sub.currentPeriodEnd).toLocaleDateString("pt-BR") : "N/A"
-                        )
-                      ) : (
-                        "N/A"
-                      )}
-                    </td>
-                    <td className="py-4 px-6 text-center">
-                      {item.sub ? (
-                        item.remainingDays > 0 ? (
-                          <span className="text-emerald-400 font-medium">{item.remainingDays} dias</span>
-                        ) : item.remainingDays === 0 ? (
-                          <span className="text-amber-400 font-medium">Vence hoje</span>
+                          <span className="text-stone-600 text-xs font-normal">
+                            Sem owner cadastrado
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6">
+                        {item.subscription ? (
+                          <>
+                            <div className="text-stone-300 font-medium">
+                              {item.subscription.planName || "Plano Tem Barber"}
+                            </div>
+                            <div className="text-xs text-amber-500 font-semibold mt-0.5">
+                              {Number(item.subscription.monthlyPrice || 0).toLocaleString(
+                                "pt-BR",
+                                { style: "currency", currency: "BRL" }
+                              )}
+                            </div>
+                          </>
                         ) : (
-                          <span className="text-stone-500 font-normal">Expirado ({Math.abs(item.remainingDays)}d)</span>
-                        )
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="py-4 px-6 text-right">
-                      <button
-                        onClick={() => handleEditClick(item)}
-                        className="px-3 py-1.5 text-xs font-bold rounded-lg border border-stone-700 bg-stone-800 text-stone-200 hover:bg-stone-700 hover:text-white transition-colors"
-                      >
-                        Editar
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                          <span className="text-stone-600 text-xs">Sem plano</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        {getAccessBadge(item.access.effectiveStatus)}
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        {getBillingBadge(item.billing.billingStatus)}
+                      </td>
+                      <td className="py-4 px-6 text-stone-300 text-xs">
+                        {item.formattedValidUntil || "—"}
+                      </td>
+                      <td className="py-4 px-6 text-center text-xs font-medium">
+                        {item.access.accessAllowed ? (
+                          item.access.remainingDays === 1 ? (
+                            <span className="text-amber-400">Termina/Renova hoje</span>
+                          ) : (
+                            <span className="text-emerald-400">{item.access.remainingDays} dias</span>
+                          )
+                        ) : (
+                          <span className="text-stone-500">Sem acesso</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 text-stone-400 text-xs">
+                        {item.formattedLastPaymentAt || "—"}
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        {item.synchronizationWarnings.length > 0 ? (
+                          <span
+                            title={item.synchronizationWarnings.join("\n")}
+                            className="cursor-help px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          >
+                            Revisar sincronização ({item.synchronizationWarnings.length})
+                          </span>
+                        ) : (
+                          <span className="text-emerald-500 text-xs font-semibold">OK</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <button
+                          onClick={() => handleEditClick(item)}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-stone-700 bg-stone-800 text-stone-200 hover:bg-stone-700 hover:text-white transition-colors"
+                        >
+                          Editar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -400,6 +557,10 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
             <div>
               <h2 className="text-xl font-bold text-white font-serif">Editar Assinatura</h2>
               <p className="text-xs text-stone-400 mt-1">Tenant: {editingSub.barbershopName}</p>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs rounded-xl leading-relaxed">
+              Esta alteração modifica manualmente o acesso da barbearia e não altera a cobrança no Asaas.
             </div>
 
             {formError && (
@@ -439,6 +600,7 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
                     <option value="PAST_DUE">PAST_DUE (Vencido)</option>
                     <option value="SUSPENDED">SUSPENDED (Suspenso)</option>
                     <option value="CANCELED">CANCELED (Cancelado)</option>
+                    <option value="EXPIRED">EXPIRED (Expirado)</option>
                   </select>
                 </div>
               </div>
@@ -446,42 +608,53 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
               {formStatus === "TRIAL" ? (
                 /* Trial Ends */
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">Fim do Teste (trialEndsAt)</label>
+                  <label className="text-xs font-semibold text-stone-300">
+                    Fim do Teste (trialEndsAt) *
+                  </label>
                   <input
                     type="date"
+                    required
                     value={formTrialEndsAt}
                     onChange={(e) => setFormTrialEndsAt(e.target.value)}
                     className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                   />
                 </div>
-              ) : (
+              ) : formStatus === "ACTIVE" ? (
                 /* Period dates */
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-stone-300">Início Período</label>
+                    <label className="text-xs font-semibold text-stone-300">
+                      Início Período *
+                    </label>
                     <input
                       type="date"
+                      required
                       value={formPeriodStart}
                       onChange={(e) => setFormPeriodStart(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-stone-300">Fim Período (Vencimento)</label>
+                    <label className="text-xs font-semibold text-stone-300">
+                      Fim Período (Vencimento) *
+                    </label>
                     <input
                       type="date"
+                      required
                       value={formPeriodEnd}
                       onChange={(e) => setFormPeriodEnd(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                     />
                   </div>
                 </div>
-              )}
+              ) : null}
 
               <div className="grid grid-cols-2 gap-4">
                 {/* Grace period */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">Tolerância (gracePeriodEndsAt)</label>
+                  <label className="text-xs font-semibold text-stone-300">
+                    Tolerância (gracePeriodEndsAt)
+                  </label>
                   <input
                     type="date"
                     value={formGracePeriodEndsAt}

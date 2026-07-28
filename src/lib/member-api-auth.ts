@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { isPlatformAdmin, isSubscriptionActive, getOrCreateSubscription } from "@/lib/subscription-utils";
+import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
 
 const MEMBER_ROLES = ["OWNER", "MANAGER", "BARBER"];
 
@@ -42,7 +42,7 @@ export async function getMemberSession() {
 
   // Se não for platform admin e tiver barbearia vinculada, validar assinatura
   if (!isPlatform) {
-    const subscription = await getOrCreateSubscription(member.barbershopId);
+    const subscription = await getTenantSubscription(member.barbershopId);
     if (!isSubscriptionActive(subscription)) {
       return {
         error: NextResponse.json(

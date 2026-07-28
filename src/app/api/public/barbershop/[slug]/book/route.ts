@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
-import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
 import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
 import {
   AppointmentConflictError,
@@ -269,7 +269,7 @@ export async function POST(
   }
 
   // Verificar status de assinatura do tenant
-  const subscription = await getOrCreateSubscription(barbershop.id);
+  const subscription = await getTenantSubscription(barbershop.id);
   if (!isSubscriptionActive(subscription)) {
     return NextResponse.json(
       { error: "SUBSCRIPTION_SUSPENDED", message: "Esta barbearia está temporariamente indisponível para agendamentos." },

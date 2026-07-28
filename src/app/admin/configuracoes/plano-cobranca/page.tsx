@@ -45,9 +45,15 @@ interface RecentPayment {
 
 interface BillingStatusResponse {
   hasSubscription?: boolean;
-  accessStatus?: "TRIAL" | "PENDING_PAYMENT" | "ACTIVE" | "OVERDUE" | "GRACE_PERIOD" | "CANCELED" | "EXPIRED";
+  accessStatus?: "TRIAL" | "ACTIVE" | "GRACE_PERIOD" | "PAST_DUE" | "SUSPENDED" | "CANCELED" | "EXPIRED" | "NO_SUBSCRIPTION";
+  accessAllowed?: boolean;
+  accessType?: "TRIAL" | "PAID" | "GRACE" | "NONE";
   remainingDays?: number;
   remainingLabel?: string;
+  formattedValidUntil?: string | null;
+  billingStatus?: "NONE" | "PENDING" | "PAID" | "OVERDUE" | "CANCELED" | "REFUNDED";
+  billingLabel?: string | null;
+  formattedBillingDueDate?: string | null;
   recentPayments?: RecentPayment[];
   permissions?: {
     canEditProfile: boolean;
@@ -55,12 +61,13 @@ interface BillingStatusResponse {
   };
 }
 
-function translatePaymentStatus(status: string): { label: string; color: string } {
+function translatePaymentStatus(status: string | undefined): { label: string; color: string } {
   switch (status) {
     case "PENDING":
       return { label: "Aguardando pagamento", color: "bg-amber-950/60 border-amber-500/40 text-amber-300" };
     case "RECEIVED":
     case "CONFIRMED":
+    case "PAID":
       return { label: "Pago", color: "bg-emerald-950/60 border-emerald-500/40 text-emerald-300" };
     case "OVERDUE":
       return { label: "Vencido", color: "bg-red-950/60 border-red-500/40 text-red-300" };
@@ -68,8 +75,9 @@ function translatePaymentStatus(status: string): { label: string; color: string 
       return { label: "Estornado", color: "bg-purple-950/60 border-purple-500/40 text-purple-300" };
     case "CANCELED":
       return { label: "Cancelado", color: "bg-stone-800 border-stone-700 text-stone-400" };
+    case "NONE":
     default:
-      return { label: status, color: "bg-stone-800 border-stone-700 text-stone-300" };
+      return { label: "Sem cobrança", color: "bg-stone-800 border-stone-700 text-stone-400" };
   }
 }
 
@@ -77,15 +85,18 @@ function translateAccessBadge(status: string | undefined): { label: string; colo
   switch (status) {
     case "ACTIVE":
       return { label: "PLANO ATIVO", color: "bg-emerald-950/60 border-emerald-500/40 text-emerald-300" };
-    case "PENDING_PAYMENT":
-      return { label: "PAGAMENTO PENDENTE", color: "bg-amber-950/60 border-amber-500/40 text-amber-300" };
-    case "OVERDUE":
-      return { label: "PAGAMENTO EM ATRASO", color: "bg-red-950/60 border-red-500/40 text-red-300" };
     case "GRACE_PERIOD":
-      return { label: "TOLERÂNCIA", color: "bg-amber-950/60 border-amber-500/40 text-amber-300" };
+      return { label: "PERÍODO DE TOLERÂNCIA", color: "bg-amber-950/60 border-amber-500/40 text-amber-300" };
+    case "PAST_DUE":
+      return { label: "ACESSO SUSPENSO POR ATRASO", color: "bg-red-950/60 border-red-500/40 text-red-300" };
+    case "SUSPENDED":
+      return { label: "ACESSO SUSPENSO", color: "bg-red-950/60 border-red-500/40 text-red-300" };
     case "CANCELED":
+      return { label: "PLANO CANCELADO", color: "bg-stone-800 border-stone-700 text-stone-400" };
     case "EXPIRED":
       return { label: "ACESSO EXPIRADO", color: "bg-red-950/60 border-red-500/40 text-red-300" };
+    case "NO_SUBSCRIPTION":
+      return { label: "SEM ASSINATURA", color: "bg-stone-800 border-stone-700 text-stone-400" };
     case "TRIAL":
     default:
       return { label: "PERÍODO DE TESTE", color: "bg-amber-950/60 border-amber-500/40 text-amber-300" };
@@ -333,30 +344,69 @@ export default function PlanoCobrancaPage() {
         </div>
       )}
 
-      {/* Card Superior: Situacao da Assinatura */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-6 mb-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      {/* Grid de Cards: Situação do Acesso e Situação da Cobrança */}
+      <div className="grid gap-6 md:grid-cols-2 mb-6">
+        {/* CARD 1 — SITUAÇÃO DO ACESSO */}
+        <section className="bg-stone-900 border border-stone-800 rounded-xl p-6 flex flex-col justify-between">
           <div>
-            <span className={`inline-block px-3 py-1 text-xs font-bold rounded-full border mb-2 ${accessBadge.color}`}>
+            <span className="text-xs font-semibold uppercase tracking-wider text-stone-400 block mb-2">
+              Situação do acesso
+            </span>
+            <span className={`inline-block px-3 py-1 text-xs font-bold rounded-full border mb-3 ${accessBadge.color}`}>
               {accessBadge.label}
             </span>
             <h2 className="text-xl font-bold text-stone-100">Plano Tem Barber</h2>
             {statusData?.remainingLabel && (
-              <p className="text-stone-400 text-sm mt-1 font-medium">{statusData.remainingLabel}</p>
+              <p className="text-stone-300 text-sm mt-2 font-semibold">{statusData.remainingLabel}</p>
+            )}
+            {statusData?.formattedValidUntil && (
+              <p className="text-stone-400 text-xs mt-1">
+                {statusData.accessStatus === "TRIAL"
+                  ? `Seu teste termina em ${statusData.formattedValidUntil}`
+                  : statusData.accessStatus === "GRACE_PERIOD"
+                  ? `Seu acesso será bloqueado em ${statusData.formattedValidUntil}`
+                  : `Próxima renovação: ${statusData.formattedValidUntil}`}
+              </p>
             )}
           </div>
-          <div className="flex items-center gap-3">
+        </section>
+
+        {/* CARD 2 — SITUAÇÃO DA COBRANÇA */}
+        <section className="bg-stone-900 border border-stone-800 rounded-xl p-6 flex flex-col justify-between">
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-stone-400 block mb-2">
+              Situação da cobrança
+            </span>
+            {(() => {
+              const billingInfo = translatePaymentStatus(statusData?.billingStatus);
+              return (
+                <span className={`inline-block px-3 py-1 text-xs font-bold rounded-full border mb-3 ${billingInfo.color}`}>
+                  {billingInfo.label}
+                </span>
+              );
+            })()}
+            <h2 className="text-xl font-bold text-stone-100">
+              {statusData?.billingLabel || "Sem cobrança"}
+            </h2>
+            {statusData?.formattedBillingDueDate && (
+              <p className="text-stone-400 text-xs mt-2">
+                Vencimento: {statusData.formattedBillingDueDate}
+              </p>
+            )}
+          </div>
+          <div className="mt-4 pt-3 border-t border-stone-800 flex items-center justify-between">
+            <span className="text-xs text-stone-500">Forma de pagamento: Pix / Boleto</span>
             {hasSubscription && (
               <Link
                 href="/admin/configuracoes/plano-cobranca/pagamento"
-                className="rounded-lg bg-amber-500 px-6 py-2.5 text-sm font-bold text-stone-950 hover:bg-amber-400 transition-colors whitespace-nowrap shadow-md"
+                className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-stone-950 hover:bg-amber-400 transition-colors whitespace-nowrap shadow-md"
               >
                 Ver cobrança
               </Link>
             )}
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       {/* Card do Plano */}
       <section className="bg-stone-900 border border-stone-800 rounded-xl p-6 mb-6">

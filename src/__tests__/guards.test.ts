@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopMember: { findFirst: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn() },
   },
   getServerSessionMock: vi.fn(),
 }));
@@ -24,6 +25,11 @@ beforeEach(() => {
     userId: "user-a",
     barbershopId: "shop-a",
     isActive: true,
+  });
+  prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    status: "ACTIVE",
+    currentPeriodStart: new Date(),
+    currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
   });
 });
 

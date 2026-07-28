@@ -245,7 +245,12 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
 
     const req = new NextRequest("http://localhost/api/admin/platform-subscriptions", {
       method: "PUT",
-      body: JSON.stringify({ barbershopId: "shop-id", status: "ACTIVE" }),
+      body: JSON.stringify({
+        barbershopId: "shop-id",
+        status: "ACTIVE",
+        currentPeriodStart: "2026-07-01",
+        currentPeriodEnd: "2026-08-30",
+      }),
     });
 
     const res = await updateSubscriptionApi(req);

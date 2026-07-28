@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { Avatar } from "@/components/ui/Avatar";
-import { getOrCreateSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
+import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
 import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
 const DAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -65,7 +65,7 @@ export default async function BarbershopPublicPage({
   if (!barbershop || !isPublicBarbershop(barbershop)) notFound();
 
   // Verificar status de assinatura do tenant
-  const subscription = await getOrCreateSubscription(barbershop.id);
+  const subscription = await getTenantSubscription(barbershop.id);
   if (!isSubscriptionActive(subscription)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-stone-950 text-stone-100 px-4">

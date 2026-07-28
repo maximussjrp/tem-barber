@@ -17,6 +17,7 @@ const txMock = {
 const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn() },
     idempotencyKey: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -62,6 +63,11 @@ beforeEach(() => {
     phone: "5511999999999",
   });
   prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
+  prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    status: "ACTIVE",
+    currentPeriodStart: new Date(),
+    currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+  });
   prismaMock.idempotencyKey.findUnique.mockResolvedValue(null);
   prismaMock.$transaction.mockImplementation((callback: (tx: typeof txMock) => unknown) =>
     callback(txMock)
