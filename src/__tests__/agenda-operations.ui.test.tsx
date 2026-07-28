@@ -80,9 +80,13 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response);
 }
 
-function mockAdminFetch(deleteStatus = 200) {
+function mockAdminFetch(deleteStatus = 200, appointmentStatus: "CONFIRMED" | "CANCELLED" = "CONFIRMED") {
   let blockDeleted = false;
   let appointmentDeleted = false;
+  const appointments = adminPayload.appointments.map((appointment) => ({
+    ...appointment,
+    status: appointmentStatus,
+  }));
   global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     if (url.startsWith("/api/admin/appointments/appt-1") && init?.method === "DELETE") {
       if (deleteStatus === 200) appointmentDeleted = true;
@@ -98,7 +102,7 @@ function mockAdminFetch(deleteStatus = 200) {
     if (url.startsWith("/api/admin/appointments")) {
       return jsonResponse({
         ...adminPayload,
-        appointments: appointmentDeleted ? [] : adminPayload.appointments,
+        appointments: appointmentDeleted ? [] : appointments,
         scheduleBlocks: blockDeleted ? [] : adminPayload.scheduleBlocks,
       });
     }
@@ -185,14 +189,15 @@ describe("Agenda operations UI", () => {
   });
 
   it("CANCELLED permite excluir", async () => {
-    mockAdminFetch();
+    mockAdminFetch(200, "CANCELLED");
     render(<AdminSchedulePage />);
     fireEvent.click(await screen.findByText("Ana Cliente"));
     expect(await screen.findByRole("button", { name: "Excluir agendamento" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
   });
 
-  it("Cancelar permanece separado", async () => {
-    mockAdminFetch();
+  it("CONFIRMED mantem Cancelar e Excluir como acoes separadas", async () => {
+    mockAdminFetch(200, "CONFIRMED");
     render(<AdminSchedulePage />);
     fireEvent.click(await screen.findByText("Ana Cliente"));
     expect(await screen.findByRole("button", { name: "Cancelar" })).toBeInTheDocument();

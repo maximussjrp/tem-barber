@@ -72,25 +72,41 @@ export function normalizeStoredTimeOffInterval<T extends { startDate: Date; endD
 ): T & { startDate: Date; endDate: Date; allDay: boolean } {
   const startDate = new Date(timeOff.startDate);
   const storedEnd = new Date(timeOff.endDate);
-  const startsAtMidnight =
-    startDate.getUTCHours() === 0 &&
-    startDate.getUTCMinutes() === 0 &&
-    startDate.getUTCSeconds() === 0 &&
-    startDate.getUTCMilliseconds() === 0;
-  const endsAtEndOfDay =
-    storedEnd.getUTCHours() === 23 &&
-    storedEnd.getUTCMinutes() === 59 &&
-    storedEnd.getUTCSeconds() === 59;
-  const isLegacyAllDay = !timeOff.allDay && startsAtMidnight && endsAtEndOfDay;
+  const isLegacyAllDay = !timeOff.allDay && isUtcMidnight(startDate) && isUtcMidnight(storedEnd);
 
-  if (timeOff.allDay || isLegacyAllDay) {
-    const endDate = timeOff.allDay
-      ? storedEnd
-      : new Date(Date.UTC(storedEnd.getUTCFullYear(), storedEnd.getUTCMonth(), storedEnd.getUTCDate() + 1, 0, 0, 0, 0));
+  if (timeOff.allDay) {
+    return { ...timeOff, startDate, endDate: storedEnd, allDay: true };
+  }
+
+  if (isLegacyAllDay) {
+    const endDate = new Date(
+      Date.UTC(storedEnd.getUTCFullYear(), storedEnd.getUTCMonth(), storedEnd.getUTCDate() + 1, 0, 0, 0, 0)
+    );
     return { ...timeOff, startDate, endDate, allDay: true };
   }
 
   return { ...timeOff, startDate, endDate: storedEnd, allDay: false };
+}
+
+export function isUtcMidnight(date: Date) {
+  return (
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+  );
+}
+
+export function isNormalizedTimeOffOverlapping(
+  timeOff: { startDate: Date; endDate: Date; allDay?: boolean | null },
+  interval: { start: Date; end: Date }
+) {
+  const normalized = normalizeStoredTimeOffInterval(timeOff);
+  return normalized.startDate < interval.end && normalized.endDate > interval.start;
+}
+
+export function getScheduleBlockCandidateFloor(start: Date) {
+  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 0, 0, 0, 0));
 }
 
 export async function findOverlappingScheduleBlock(
@@ -107,12 +123,13 @@ export async function findOverlappingScheduleBlock(
   }
 
   const excludeId = input.excludeTimeOffId ?? null;
+  const candidateFloor = getScheduleBlockCandidateFloor(input.start);
   const blocks = await tx.timeOff.findMany({
     where: {
       memberId: input.memberId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
       startDate: { lt: input.end },
-      endDate: { gt: input.start },
+      endDate: { gte: candidateFloor },
     },
     select: {
       id: true,
@@ -120,10 +137,13 @@ export async function findOverlappingScheduleBlock(
       startDate: true,
       endDate: true,
       reason: true,
+      allDay: true,
     },
   });
 
-  return (blocks ?? [])[0] ?? null;
+  return (blocks ?? []).find((block) =>
+    isNormalizedTimeOffOverlapping(block, { start: input.start, end: input.end })
+  ) ?? null;
 }
 
 export async function findAppointmentsConflictingWithScheduleBlock(

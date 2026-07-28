@@ -440,7 +440,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(spDateTime.getUTCHours()).toBe(11);
     expect(spDateTime.getUTCMinutes()).toBe(18);
   });
-  it("15. TimeOff bloqueia encaixe da fila antes de criar Appointment ou atualizar a posicao", async () => {
+  it("15. TimeOff bloqueia encaixe da fila com erro operacional antes de criar Appointment ou atualizar a posicao", async () => {
     getAdminSessionMock.mockResolvedValue({
       error: null,
       data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
@@ -463,10 +463,40 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const res = await callNextAdmin(req);
     const data = await res.json();
 
-    expect(res.status).toBe(500);
-    expect(data.error).toBe("INTERNAL_ERROR");
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
     expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalled();
+  });
+
+  it("16. rota member tambem retorna 409 para bloqueio de agenda", async () => {
+    getMemberSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: "u-barber-1", barbershopId: "shop-1", memberId: "member-barber-1", role: "BARBER" },
+    });
+    prismaMock.timeOff.findMany.mockResolvedValue([
+      {
+        id: "block-1",
+        memberId: "member-barber-1",
+        startDate: new Date("2000-01-01T00:00:00.000Z"),
+        endDate: new Date("2999-01-01T00:00:00.000Z"),
+        reason: "Bloqueio",
+        allDay: false,
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/member/waitlist/call-next", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    const res = await callNextMember(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
   });
 });

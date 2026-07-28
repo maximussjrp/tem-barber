@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { getMemberSession } from "@/lib/member-api-auth";
 import {
   createScheduleBlockWithLock,
+  isNormalizedTimeOffOverlapping,
   normalizeStoredTimeOffInterval,
   parseScheduleBlockInterval,
   ScheduleBlockAppointmentConflictError,
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
     where = {
       ...where,
       startDate: { lt: endOfDay },
-      endDate: { gt: startOfDay },
+      endDate: { gte: startOfDay },
     };
   }
 
@@ -43,7 +44,16 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  return NextResponse.json(blocks.map((block) => normalizeStoredTimeOffInterval(block)));
+  const normalizedBlocks = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    ? blocks.filter((block) => {
+        const [y, m, d] = dateStr.split("-").map(Number);
+        const startOfDay = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0, 0));
+        return isNormalizedTimeOffOverlapping(block, { start: startOfDay, end: endOfDay });
+      })
+    : blocks;
+
+  return NextResponse.json(normalizedBlocks.map((block) => normalizeStoredTimeOffInterval(block)));
 }
 
 export async function POST(request: NextRequest) {

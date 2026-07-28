@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { normalizeStoredTimeOffInterval, parseScheduleBlockInterval } from "@/lib/schedule-blocks";
+import {
+  findOverlappingScheduleBlock,
+  isNormalizedTimeOffOverlapping,
+  normalizeStoredTimeOffInterval,
+  parseScheduleBlockInterval,
+} from "@/lib/schedule-blocks";
 
 describe("Schedule blocks - compatibilidade legada e timezone", () => {
   it("legado startDate === endDate bloqueia um dia", () => {
     const block = normalizeStoredTimeOffInterval({
       startDate: new Date("2026-07-28T00:00:00.000Z"),
-      endDate: new Date("2026-07-28T23:59:59.999Z"),
+      endDate: new Date("2026-07-28T00:00:00.000Z"),
+      allDay: false,
     });
 
     expect(block.allDay).toBe(true);
@@ -16,7 +22,8 @@ describe("Schedule blocks - compatibilidade legada e timezone", () => {
   it("legado 28->30 bloqueia 28, 29 e 30", () => {
     const block = normalizeStoredTimeOffInterval({
       startDate: new Date("2026-07-28T00:00:00.000Z"),
-      endDate: new Date("2026-07-30T23:59:59.999Z"),
+      endDate: new Date("2026-07-30T00:00:00.000Z"),
+      allDay: false,
     });
 
     expect(block.endDate.toISOString()).toBe("2026-07-31T00:00:00.000Z");
@@ -48,6 +55,44 @@ describe("Schedule blocks - compatibilidade legada e timezone", () => {
 
     expect(block.allDay).toBe(false);
     expect(block.endDate.toISOString()).toBe("2026-07-28T01:00:00.000Z");
+  });
+
+  it("registro moderno terminando no inicio do dia nao bloqueia o dia seguinte", () => {
+    const block = {
+      startDate: new Date("2026-07-28T23:00:00.000Z"),
+      endDate: new Date("2026-07-29T00:00:00.000Z"),
+      allDay: false,
+    };
+
+    expect(isNormalizedTimeOffOverlapping(block, {
+      start: new Date("2026-07-29T00:00:00.000Z"),
+      end: new Date("2026-07-30T00:00:00.000Z"),
+    })).toBe(false);
+  });
+
+  it("findOverlappingScheduleBlock encontra legado start=end", async () => {
+    const tx = {
+      timeOff: {
+        findMany: async () => [
+          {
+            id: "legacy",
+            memberId: "m1",
+            startDate: new Date("2026-07-28T00:00:00.000Z"),
+            endDate: new Date("2026-07-28T00:00:00.000Z"),
+            reason: "Folga",
+            allDay: false,
+          },
+        ],
+      },
+    };
+
+    const overlap = await findOverlappingScheduleBlock(tx as never, {
+      memberId: "m1",
+      start: new Date("2026-07-28T10:00:00.000Z"),
+      end: new Date("2026-07-28T10:30:00.000Z"),
+    });
+
+    expect(overlap?.id).toBe("legacy");
   });
 
   it("horario 10:00 permanece 10:00", () => {

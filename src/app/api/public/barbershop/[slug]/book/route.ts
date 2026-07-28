@@ -13,6 +13,7 @@ import {
   InvalidServiceSelectionError,
   ProfessionalNotAvailableError,
   ProfessionalServiceMismatchError,
+  ScheduleBlockConflictApptError,
 } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
@@ -76,7 +77,8 @@ function jsonError(error: unknown) {
     error instanceof IdempotencyKeyInvalidError ||
     error instanceof InvalidServiceSelectionError ||
     error instanceof ProfessionalNotAvailableError ||
-    error instanceof ProfessionalServiceMismatchError
+    error instanceof ProfessionalServiceMismatchError ||
+    error instanceof ScheduleBlockConflictApptError
   ) {
     return NextResponse.json(
       { error: error.code, message: error.message },

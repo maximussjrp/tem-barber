@@ -19,7 +19,7 @@ import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-tra
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
 import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import { todayIsoBR, nowBR } from "@/lib/time-utils";
-import { normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
+import { isNormalizedTimeOffOverlapping, normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 
 interface AdminAppointmentBody {
   memberId?: string;
@@ -166,7 +166,7 @@ export async function GET(request: NextRequest) {
           where: {
             member: { barbershopId, isActive: true },
             startDate: { lt: endOfDay },
-            endDate: { gt: startOfDay },
+            endDate: { gte: startOfDay },
           },
           select: {
             id: true,
@@ -181,7 +181,9 @@ export async function GET(request: NextRequest) {
       : Promise.resolve([]),
   ]);
 
-  const scheduleBlocks = (scheduleBlocksRaw ?? []).map((b) => {
+  const scheduleBlocks = (scheduleBlocksRaw ?? []).filter((b) =>
+    isNormalizedTimeOffOverlapping(b, { start: startOfDay, end: endOfDay })
+  ).map((b) => {
     const normalized = normalizeStoredTimeOffInterval(b);
     return {
       id: normalized.id,
@@ -208,7 +210,7 @@ export async function GET(request: NextRequest) {
       timeOffs: {
         where: {
           startDate: { lt: endOfDay },
-          endDate: { gt: startOfDay },
+          endDate: { gte: startOfDay },
         },
       },
     },
@@ -253,7 +255,9 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const timeOffBusy = member.timeOffs.map((storedTimeOff) => {
+    const timeOffBusy = member.timeOffs.filter((storedTimeOff) =>
+      isNormalizedTimeOffOverlapping(storedTimeOff, { start: startOfDay, end: endOfDay })
+    ).map((storedTimeOff) => {
       const to = normalizeStoredTimeOffInterval(storedTimeOff);
       const toStart = new Date(to.startDate);
       const toEnd = new Date(to.endDate);

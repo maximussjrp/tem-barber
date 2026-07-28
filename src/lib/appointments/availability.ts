@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { startOfDayUTC, endOfDayUTC, nowBR, todayIsoBR } from "@/lib/time-utils";
-import { normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
+import { isNormalizedTimeOffOverlapping, normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 import { findEligibleMembersForServices } from "./professional-service-capability";
 
 export interface GetAvailabilityParams {
@@ -59,7 +59,7 @@ export async function getAvailableSlots({
         timeOffs: {
           where: {
             startDate: { lt: endOfDay },
-            endDate: { gt: startOfDay },
+            endDate: { gte: startOfDay },
           },
         },
       },
@@ -82,7 +82,9 @@ export async function getAvailableSlots({
     const breakEnd = wh.breakEnd ? toMinutes(wh.breakEnd) : null;
 
     // Converter TimeOffs em intervalos ocupados de minutos no dia
-    const timeOffBusy = member.timeOffs.map((storedTimeOff) => {
+    const timeOffBusy = member.timeOffs.filter((storedTimeOff) =>
+      isNormalizedTimeOffOverlapping(storedTimeOff, { start: startOfDay, end: endOfDay })
+    ).map((storedTimeOff) => {
       const to = normalizeStoredTimeOffInterval(storedTimeOff);
       const toStart = to.startDate ? new Date(to.startDate) : null;
       const toEnd = to.endDate ? new Date(to.endDate) : null;

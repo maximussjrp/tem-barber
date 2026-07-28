@@ -183,8 +183,33 @@ describe("Member Schedule Blocks API", () => {
     expect(data[0].memberId).toBe("member-123");
     expect(prismaMock.timeOff.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ memberId: "member-123" }),
+        where: expect.objectContaining({
+          memberId: "member-123",
+          endDate: { gte: new Date("2026-07-28T00:00:00.000Z") },
+        }),
       })
     );
+  });
+
+  it("GET por data retorna legado start=end apos normalizacao", async () => {
+    prismaMock.timeOff.findMany.mockResolvedValue([
+      {
+        id: "legacy-block",
+        memberId: "member-123",
+        startDate: new Date("2026-07-28T00:00:00.000Z"),
+        endDate: new Date("2026-07-28T00:00:00.000Z"),
+        reason: "Folga antiga",
+        allDay: false,
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/member/schedule-blocks?date=2026-07-28");
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data[0].id).toBe("legacy-block");
+    expect(data[0].allDay).toBe(true);
+    expect(data[0].endDate).toBe("2026-07-29T00:00:00.000Z");
   });
 });

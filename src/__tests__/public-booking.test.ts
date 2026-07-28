@@ -9,6 +9,7 @@ const txMock = {
   barberService: { findMany: vi.fn() },
   appointmentWhatsappConfirmation: { create: vi.fn() },
   appointment: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
+  timeOff: { findMany: vi.fn() },
   user: { findFirst: vi.fn(), create: vi.fn() },
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
@@ -92,6 +93,7 @@ beforeEach(() => {
   ]);
   txMock.appointment.findFirst.mockResolvedValue(null);
   txMock.appointment.count.mockResolvedValue(0);
+  txMock.timeOff.findMany.mockResolvedValue([]);
   txMock.$queryRaw.mockResolvedValueOnce([]).mockResolvedValue([]);
   txMock.user.findFirst.mockResolvedValue({ id: "customer-existing", phone: "11999999999" });
   txMock.user.create.mockResolvedValue({ id: "customer-new", phone: "11999999999" });
@@ -324,6 +326,28 @@ describe("agendamento publico", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("SLOT_UNAVAILABLE");
     expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("retorna 409 quando booking publico conflita com bloqueio de agenda", async () => {
+    txMock.timeOff.findMany.mockResolvedValue([
+      {
+        id: "block-a",
+        memberId: "member-a",
+        startDate: new Date("2026-07-20T13:00:00.000Z"),
+        endDate: new Date("2026-07-20T14:00:00.000Z"),
+        reason: "Bloqueio",
+        allDay: false,
+      },
+    ]);
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+    expect(txMock.appointmentWhatsappConfirmation.create).not.toHaveBeenCalled();
+    expect(txMock.idempotencyKey.update).not.toHaveBeenCalled();
   });
 
   it("rejeita profissional que nao executa todos os servicos", async () => {

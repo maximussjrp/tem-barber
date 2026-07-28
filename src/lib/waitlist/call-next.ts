@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { ScheduleBlockConflictApptError } from "@/lib/appointments/errors";
 import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/create-fit-in-appointment";
 import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
 
@@ -262,6 +263,9 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
         }
       );
     } catch (err) {
+      if (err instanceof ScheduleBlockConflictApptError) {
+        throw new CallNextWaitlistError(err.code, err.message, err.status);
+      }
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === "P2034" &&
