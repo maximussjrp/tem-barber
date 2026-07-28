@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { startOfDayUTC, endOfDayUTC, nowBR, todayIsoBR } from "@/lib/time-utils";
+import { normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 import { findEligibleMembersForServices } from "./professional-service-capability";
 
 export interface GetAvailabilityParams {
@@ -57,17 +58,14 @@ export async function getAvailableSlots({
         },
         timeOffs: {
           where: {
-            startDate: { lte: endOfDay },
-            endDate: { gte: startOfDay },
+            startDate: { lt: endOfDay },
+            endDate: { gt: startOfDay },
           },
         },
       },
     });
 
     if (!member) continue;
-
-    // Skip if on time off
-    if (member.timeOffs.length > 0) continue;
 
     // Skip if no working hours for this day
     const wh = member.workingHours[0];
@@ -83,6 +81,27 @@ export async function getAvailableSlots({
     const breakStart = wh.breakStart ? toMinutes(wh.breakStart) : null;
     const breakEnd = wh.breakEnd ? toMinutes(wh.breakEnd) : null;
 
+    // Converter TimeOffs em intervalos ocupados de minutos no dia
+    const timeOffBusy = member.timeOffs.map((storedTimeOff) => {
+      const to = normalizeStoredTimeOffInterval(storedTimeOff);
+      const toStart = to.startDate ? new Date(to.startDate) : null;
+      const toEnd = to.endDate ? new Date(to.endDate) : null;
+
+      if (!toStart || !toEnd || isNaN(toStart.getTime()) || isNaN(toEnd.getTime())) {
+        return { start: 0, end: 1440 };
+      }
+
+      const startMin = toStart.getTime() <= startOfDay.getTime()
+        ? 0
+        : toStart.getUTCHours() * 60 + toStart.getUTCMinutes();
+
+      const endMin = toEnd.getTime() >= endOfDay.getTime()
+        ? 1440
+        : toEnd.getUTCHours() * 60 + toEnd.getUTCMinutes();
+
+      return { start: startMin, end: endMin };
+    });
+
     // Get existing appointments for this member on this day
     const existing = await prisma.appointment.findMany({
       where: {
@@ -94,11 +113,14 @@ export async function getAvailableSlots({
     });
 
     // Build busy intervals in minutes based on UTC hours (since dateTime is stored UTC aligned)
-    const busy = existing.map((a) => {
-      const dt = new Date(a.dateTime);
-      const startMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
-      return { start: startMin, end: startMin + a.durationMin };
-    });
+    const busy = [
+      ...existing.map((a) => {
+        const dt = new Date(a.dateTime);
+        const startMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
+        return { start: startMin, end: startMin + a.durationMin };
+      }),
+      ...timeOffBusy,
+    ];
 
     const SLOT_INTERVAL = 30;
     const slots: string[] = [];
@@ -128,11 +150,13 @@ export async function getAvailableSlots({
       slots.push(`${hh}:${mm}`);
     }
 
-    results.push({
-      memberId: mId,
-      memberName: member.user.name,
-      slots,
-    });
+    if (slots.length > 0) {
+      results.push({
+        memberId: mId,
+        memberName: member.user?.name ?? "Profissional",
+        slots,
+      });
+    }
   }
 
   return { results, totalDuration };

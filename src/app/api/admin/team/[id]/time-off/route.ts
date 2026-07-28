@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
+import {
+  createScheduleBlockWithLock,
+  deleteScheduleBlock,
+  normalizeStoredTimeOffInterval,
+  parseScheduleBlockInterval,
+  ScheduleBlockAppointmentConflictError,
+  ScheduleBlockConflictError,
+} from "@/lib/schedule-blocks";
 
 async function guardMember(memberId: string, barbershopId: string) {
-  const m = await prisma.barbershopMember.findUnique({ where: { id: memberId } });
-  return m && m.barbershopId === barbershopId ? m : null;
+  const member = await prisma.barbershopMember.findUnique({ where: { id: memberId } });
+  return member && member.barbershopId === barbershopId ? member : null;
 }
 
 export async function GET(
@@ -16,7 +25,7 @@ export async function GET(
   const { id } = await params;
 
   if (!(await guardMember(id, data!.barbershopId!))) {
-    return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+    return NextResponse.json({ error: "Colaborador nao encontrado." }, { status: 404 });
   }
 
   const timeOffs = await prisma.timeOff.findMany({
@@ -24,7 +33,7 @@ export async function GET(
     orderBy: { startDate: "asc" },
   });
 
-  return NextResponse.json(timeOffs);
+  return NextResponse.json(timeOffs.map((timeOff) => normalizeStoredTimeOffInterval(timeOff)));
 }
 
 export async function POST(
@@ -36,7 +45,7 @@ export async function POST(
   const { id } = await params;
 
   if (!(await guardMember(id, data!.barbershopId!))) {
-    return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+    return NextResponse.json({ error: "Colaborador nao encontrado." }, { status: 404 });
   }
 
   try {
@@ -44,31 +53,43 @@ export async function POST(
     const { startDate, endDate, reason } = body;
 
     if (!startDate || !endDate) {
-      return NextResponse.json({ error: "Datas de início e fim são obrigatórias." }, { status: 400 });
+      return NextResponse.json({ error: "Datas de inicio e fim sao obrigatorias." }, { status: 400 });
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const { start, end } = parseScheduleBlockInterval(startDate, endDate, true);
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return NextResponse.json({ error: "Datas inválidas." }, { status: 400 });
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return NextResponse.json({ error: "Datas invalidas." }, { status: 400 });
     }
 
-    if (end < start) {
-      return NextResponse.json({ error: "A data de fim deve ser após a de início." }, { status: 400 });
+    if (end <= start) {
+      return NextResponse.json({ error: "A data de fim deve ser apos a de inicio." }, { status: 400 });
     }
 
-    const timeOff = await prisma.timeOff.create({
-      data: {
-        memberId: id,
-        startDate: start,
-        endDate: end,
-        reason: reason?.trim() || null,
-      },
-    });
+    const timeOff = await prisma.$transaction(
+      (tx) =>
+        createScheduleBlockWithLock(tx, {
+          barbershopId: data!.barbershopId!,
+          memberId: id,
+          startDate: start,
+          endDate: end,
+          reason: reason?.trim() || "Folga",
+          allDay: true,
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
 
     return NextResponse.json(timeOff, { status: 201 });
-  } catch {
+  } catch (err) {
+    if (err instanceof ScheduleBlockAppointmentConflictError) {
+      return NextResponse.json(
+        { error: err.code, message: err.message, conflicts: err.conflicts },
+        { status: err.status }
+      );
+    }
+    if (err instanceof ScheduleBlockConflictError) {
+      return NextResponse.json({ error: err.code, message: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "Erro ao registrar folga." }, { status: 500 });
   }
 }
@@ -82,7 +103,7 @@ export async function DELETE(
   const { id } = await params;
 
   if (!(await guardMember(id, data!.barbershopId!))) {
-    return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+    return NextResponse.json({ error: "Colaborador nao encontrado." }, { status: 404 });
   }
 
   try {
@@ -90,17 +111,21 @@ export async function DELETE(
     const { timeOffId } = body;
 
     if (!timeOffId) {
-      return NextResponse.json({ error: "timeOffId é obrigatório." }, { status: 400 });
+      return NextResponse.json({ error: "timeOffId e obrigatorio." }, { status: 400 });
     }
 
-    const timeOff = await prisma.timeOff.findUnique({ where: { id: timeOffId } });
-    if (!timeOff || timeOff.memberId !== id) {
-      return NextResponse.json({ error: "Folga não encontrada." }, { status: 404 });
-    }
-
-    await prisma.timeOff.delete({ where: { id: timeOffId } });
+    await prisma.$transaction((tx) =>
+      deleteScheduleBlock(tx, {
+        barbershopId: data!.barbershopId!,
+        memberId: id,
+        timeOffId,
+      })
+    );
     return NextResponse.json({ success: true });
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === "SCHEDULE_BLOCK_NOT_FOUND") {
+      return NextResponse.json({ error: "Folga nao encontrada." }, { status: 404 });
+    }
     return NextResponse.json({ error: "Erro ao excluir folga." }, { status: 500 });
   }
 }

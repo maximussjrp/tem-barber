@@ -1,0 +1,1 @@
+ALTER TABLE "time_offs" ADD COLUMN "all_day" BOOLEAN NOT NULL DEFAULT false;

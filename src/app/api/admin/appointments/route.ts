@@ -9,6 +9,7 @@ import {
   InvalidServiceSelectionError,
   ProfessionalNotAvailableError,
   ProfessionalServiceMismatchError,
+  ScheduleBlockConflictApptError,
 } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
@@ -18,6 +19,7 @@ import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-tra
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
 import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import { todayIsoBR, nowBR } from "@/lib/time-utils";
+import { normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 
 interface AdminAppointmentBody {
   memberId?: string;
@@ -124,7 +126,7 @@ export async function GET(request: NextRequest) {
     where.status = statusFilter as AppointmentStatus;
   }
 
-  const [appointments, total, barbershop] = await Promise.all([
+  const [appointments, total, barbershop, scheduleBlocksRaw] = await Promise.all([
     prisma.appointment.findMany({
       where,
       include: {
@@ -159,7 +161,37 @@ export async function GET(request: NextRequest) {
       where: { id: barbershopId },
       select: { name: true, slug: true },
     }),
+    prisma.timeOff?.findMany
+      ? prisma.timeOff.findMany({
+          where: {
+            member: { barbershopId, isActive: true },
+            startDate: { lt: endOfDay },
+            endDate: { gt: startOfDay },
+          },
+          select: {
+            id: true,
+            memberId: true,
+            startDate: true,
+            endDate: true,
+            reason: true,
+            allDay: true,
+          },
+          orderBy: { startDate: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
+
+  const scheduleBlocks = (scheduleBlocksRaw ?? []).map((b) => {
+    const normalized = normalizeStoredTimeOffInterval(b);
+    return {
+      id: normalized.id,
+      memberId: normalized.memberId,
+      startDate: normalized.startDate,
+      endDate: normalized.endDate,
+      reason: normalized.reason,
+      allDay: normalized.allDay,
+    };
+  });
 
   const dayOfWeek = startOfDay.getUTCDay();
   const rawMembers = await prisma.barbershopMember.findMany({
@@ -175,8 +207,8 @@ export async function GET(request: NextRequest) {
       },
       timeOffs: {
         where: {
-          startDate: { lte: endOfDay },
-          endDate: { gte: startOfDay },
+          startDate: { lt: endOfDay },
+          endDate: { gt: startOfDay },
         },
       },
     },
@@ -194,17 +226,6 @@ export async function GET(request: NextRequest) {
 
   const members = [];
   for (const member of rawMembers) {
-    if (member.timeOffs.length > 0) {
-      members.push({
-        id: member.id,
-        user: { name: member.user.name },
-        startTime: "",
-        endTime: "",
-        freeSlots: [],
-      });
-      continue;
-    }
-
     const wh = member.workingHours[0];
     if (!wh) {
       members.push({
@@ -222,20 +243,40 @@ export async function GET(request: NextRequest) {
     const breakStart = wh.breakStart ? toMinutes(wh.breakStart) : null;
     const breakEnd = wh.breakEnd ? toMinutes(wh.breakEnd) : null;
 
-    // Get busy times for this member today
+    // Get busy times for this member today (appointments + timeOffs)
     const appts = await prisma.appointment.findMany({
       where: {
+        barbershopId,
         memberId: member.id,
         dateTime: { gte: startOfDay, lte: endOfDay },
         status: { in: ["PENDING", "CONFIRMED"] },
       },
     });
 
-    const busy = appts.map((a) => {
-      const dt = new Date(a.dateTime);
-      const startMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
-      return { start: startMin, end: startMin + a.durationMin };
+    const timeOffBusy = member.timeOffs.map((storedTimeOff) => {
+      const to = normalizeStoredTimeOffInterval(storedTimeOff);
+      const toStart = new Date(to.startDate);
+      const toEnd = new Date(to.endDate);
+
+      const startMin = toStart.getTime() <= startOfDay.getTime()
+        ? 0
+        : toStart.getUTCHours() * 60 + toStart.getUTCMinutes();
+
+      const endMin = toEnd.getTime() >= endOfDay.getTime()
+        ? 1440
+        : toEnd.getUTCHours() * 60 + toEnd.getUTCMinutes();
+
+      return { start: startMin, end: endMin };
     });
+
+    const busy = [
+      ...appts.map((a) => {
+        const dt = new Date(a.dateTime);
+        const startMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
+        return { start: startMin, end: startMin + a.durationMin };
+      }),
+      ...timeOffBusy,
+    ];
 
     const freeSlots: number[] = [];
     const SLOT_INTERVAL = 30;
@@ -266,6 +307,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     appointments,
+    scheduleBlocks,
     total,
     page,
     pageSize,
@@ -412,6 +454,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof AppointmentConflictError) {
       return conflictResponse(error);
+    }
+    if (error instanceof ScheduleBlockConflictApptError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message },
+        { status: error.status }
+      );
     }
     if (
       error instanceof InvalidServiceSelectionError ||

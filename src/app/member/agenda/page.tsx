@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
@@ -22,6 +22,14 @@ interface Appointment {
   customer: { name: string; phone: string };
   barbershop?: { name: string };
   services: AppointmentService[];
+}
+
+interface ScheduleBlock {
+  id: string;
+  startDate: string;
+  endDate: string;
+  reason: string | null;
+  allDay: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -80,6 +88,11 @@ function shiftDate(dateStr: string, days: number) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d + days));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function formatBlockPeriod(block: ScheduleBlock) {
+  if (block.allDay) return "Dia inteiro";
+  return `${formatTime(block.startDate)} - ${formatTime(block.endDate)}`;
 }
 
 // ─── Appointment Card ─────────────────────────────────────────────────────────
@@ -252,19 +265,87 @@ function AgendaContent() {
   const currentDate = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : today;
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlock[]>([]);
   const [loading, setLoading] = useState(true);
+  const [blockAllDay, setBlockAllDay] = useState(false);
+  const [blockStartTime, setBlockStartTime] = useState("10:00");
+  const [blockEndTime, setBlockEndTime] = useState("11:00");
+  const [blockReason, setBlockReason] = useState("");
+  const [blockError, setBlockError] = useState<string | null>(null);
+  const [savingBlock, setSavingBlock] = useState(false);
+  const [deletingBlockId, setDeletingBlockId] = useState<string | null>(null);
 
   const fetchAppointments = useCallback(async (date: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/member/agenda?date=${date}`);
-      if (res.ok) {
-        setAppointments(await res.json());
-      }
+      const [agendaRes, blocksRes] = await Promise.all([
+        fetch(`/api/member/agenda?date=${date}`),
+        fetch(`/api/member/schedule-blocks?date=${date}`),
+      ]);
+      if (agendaRes.ok) setAppointments(await agendaRes.json());
+      if (blocksRes.ok) setScheduleBlocks(await blocksRes.json());
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const createScheduleBlock = async (event: FormEvent) => {
+    event.preventDefault();
+    setBlockError(null);
+
+    const reason = blockReason.trim();
+    if (reason.length < 3) {
+      setBlockError("Informe um motivo com pelo menos 3 caracteres.");
+      return;
+    }
+    if (!blockAllDay && blockEndTime <= blockStartTime) {
+      setBlockError("Horario final deve ser maior que o inicial.");
+      return;
+    }
+
+    setSavingBlock(true);
+    try {
+      const body = blockAllDay
+        ? { startDate: currentDate, reason, allDay: true, memberId: "ignored-by-server" }
+        : {
+            startDate: `${currentDate}T${blockStartTime}:00.000Z`,
+            endDate: `${currentDate}T${blockEndTime}:00.000Z`,
+            reason,
+            allDay: false,
+            memberId: "ignored-by-server",
+          };
+      const res = await fetch("/api/member/schedule-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBlockError(data.message ?? data.error ?? "Erro ao bloquear agenda.");
+        return;
+      }
+      setBlockReason("");
+      await fetchAppointments(currentDate);
+    } finally {
+      setSavingBlock(false);
+    }
+  };
+
+  const deleteScheduleBlock = async (id: string) => {
+    setDeletingBlockId(id);
+    setBlockError(null);
+    try {
+      const res = await fetch(`/api/member/schedule-blocks/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        setBlockError(data.message ?? data.error ?? "Erro ao excluir bloqueio.");
+        return;
+      }
+      setScheduleBlocks((prev) => prev.filter((block) => block.id !== id));
+    } finally {
+      setDeletingBlockId(null);
+    }
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -340,6 +421,78 @@ function AgendaContent() {
           </div>
         ))}
       </div>
+
+      <section className="mb-6 rounded-xl border border-stone-800 bg-stone-900/50 p-4 space-y-4">
+        <form onSubmit={createScheduleBlock} className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-bold text-stone-100">Bloquear propria agenda</h2>
+            <label className="flex items-center gap-2 text-xs font-semibold text-stone-300">
+              <input
+                type="checkbox"
+                checked={blockAllDay}
+                onChange={(e) => setBlockAllDay(e.target.checked)}
+                className="accent-amber-500"
+              />
+              Dia inteiro
+            </label>
+          </div>
+          {!blockAllDay && (
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                type="time"
+                value={blockStartTime}
+                onChange={(e) => setBlockStartTime(e.target.value)}
+                title="Inicio do bloqueio"
+                className="rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100"
+              />
+              <input
+                type="time"
+                value={blockEndTime}
+                onChange={(e) => setBlockEndTime(e.target.value)}
+                title="Fim do bloqueio"
+                className="rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100"
+              />
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              value={blockReason}
+              onChange={(e) => setBlockReason(e.target.value)}
+              placeholder="Motivo do bloqueio"
+              className="min-w-0 flex-1 rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100"
+            />
+            <button
+              type="submit"
+              disabled={savingBlock}
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-stone-950 disabled:opacity-50"
+            >
+              {savingBlock ? "..." : "Bloquear"}
+            </button>
+          </div>
+          {blockError && <p className="text-xs font-semibold text-red-400">{blockError}</p>}
+        </form>
+
+        {scheduleBlocks.length > 0 && (
+          <div className="space-y-2 border-t border-stone-800 pt-3">
+            {scheduleBlocks.map((block) => (
+              <div key={block.id} className="flex items-center justify-between gap-3 rounded-lg bg-stone-950/70 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-amber-300">{formatBlockPeriod(block)}</p>
+                  <p className="truncate text-xs text-stone-500">{block.reason || "Bloqueio de agenda"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => deleteScheduleBlock(block.id)}
+                  disabled={deletingBlockId === block.id}
+                  className="shrink-0 rounded-md border border-stone-800 px-3 py-1.5 text-xs font-semibold text-stone-300 disabled:opacity-50"
+                >
+                  Excluir
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* List */}
       {loading ? (

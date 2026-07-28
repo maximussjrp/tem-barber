@@ -11,7 +11,7 @@ interface WorkingHour {
   dayOfWeek: number; startTime: string; endTime: string;
   breakStart: string | null; breakEnd: string | null; isActive: boolean;
 }
-interface TimeOff { id: string; startDate: string; endDate: string; reason: string | null }
+interface TimeOff { id: string; startDate: string; endDate: string; reason: string | null; allDay?: boolean }
 interface CareerLevelOption { id: string; name: string }
 interface Member {
   id: string; role: string; bio: string | null; isActive: boolean; ratingAvg: number;
@@ -37,6 +37,14 @@ const ROLE_OPTIONS = [
 ];
 const inputClass = "w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500/80 focus:ring-1 focus:ring-amber-500/80 transition-all text-sm";
 const labelClass = "block text-xs font-semibold uppercase tracking-wider text-stone-400 mb-1.5";
+
+function formatTimeOffDateRange(timeOff: TimeOff) {
+  const start = new Date(timeOff.startDate);
+  const end = new Date(timeOff.endDate);
+  const displayEnd = timeOff.allDay ? new Date(end.getTime() - 1) : end;
+
+  return `${start.toLocaleDateString("pt-BR", { timeZone: "UTC" })} -> ${displayEnd.toLocaleDateString("pt-BR", { timeZone: "UTC" })}`;
+}
 
 function defaultHours(existing: WorkingHour[]): WorkingHour[] {
   return DAYS.map((d) => {
@@ -200,7 +208,7 @@ export default function MemberDetailPage() {
       const res = await fetch(`/api/admin/team/${memberId}/time-off`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate: timeOffStart, endDate: timeOffEnd, reason: timeOffReason }),
+        body: JSON.stringify({ startDate: timeOffStart, endDate: timeOffEnd, reason: timeOffReason, allDay: true }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -512,7 +520,7 @@ export default function MemberDetailPage() {
                   <li key={t.id} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-stone-200 text-sm">
-                        {new Date(t.startDate).toLocaleDateString("pt-BR")} → {new Date(t.endDate).toLocaleDateString("pt-BR")}
+                        {formatTimeOffDateRange(t)}
                       </p>
                       {t.reason && <p className="text-stone-500 text-xs mt-0.5">{t.reason}</p>}
                     </div>

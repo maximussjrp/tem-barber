@@ -258,6 +258,7 @@ model TimeOff {
   startDate DateTime @map("start_date")
   endDate   DateTime @map("end_date")
   reason    String? // Ex: "Férias", "Médico", "Bloqueio manual"
+  allDay    Boolean  @default(false) @map("all_day")
 
   member BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
 

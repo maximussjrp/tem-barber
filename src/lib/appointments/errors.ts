@@ -7,6 +7,17 @@ export const PROFESSIONAL_NOT_AVAILABLE = "PROFESSIONAL_NOT_AVAILABLE";
 export const PROFESSIONAL_SERVICE_MISMATCH = "PROFESSIONAL_SERVICE_MISMATCH";
 export const FIT_IN_REASON_REQUIRED = "FIT_IN_REASON_REQUIRED";
 export const FIT_IN_NOT_ALLOWED = "FIT_IN_NOT_ALLOWED";
+export const SCHEDULE_BLOCK_CONFLICT = "SCHEDULE_BLOCK_CONFLICT";
+
+export class ScheduleBlockConflictApptError extends Error {
+  readonly code = SCHEDULE_BLOCK_CONFLICT;
+  readonly status = 409;
+
+  constructor(message = "O profissional está indisponível neste período por um bloqueio de agenda.") {
+    super(message);
+    this.name = "ScheduleBlockConflictApptError";
+  }
+}
 
 export class AppointmentConflictError extends Error {
   readonly code = SLOT_UNAVAILABLE;

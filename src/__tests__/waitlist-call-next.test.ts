@@ -18,6 +18,9 @@ const { prismaMock, getAdminSessionMock, getMemberSessionMock } = vi.hoisted(() 
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    timeOff: {
+      findMany: vi.fn(),
+    },
     user: { findFirst: vi.fn(), create: vi.fn() },
     comanda: { count: vi.fn() },
     $executeRaw: vi.fn(),
@@ -89,6 +92,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     prismaMock.onlineWaitlistMemberConfig.findUnique.mockResolvedValue(null);
 
     prismaMock.appointment.findFirst.mockResolvedValue(null);
+    prismaMock.timeOff.findMany.mockResolvedValue([]);
 
     prismaMock.appointment.create.mockResolvedValue({
       id: "app-fit-in-1",
@@ -435,5 +439,34 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(spDateTime.getUTCDate()).toBe(24);
     expect(spDateTime.getUTCHours()).toBe(11);
     expect(spDateTime.getUTCMinutes()).toBe(18);
+  });
+  it("15. TimeOff bloqueia encaixe da fila antes de criar Appointment ou atualizar a posicao", async () => {
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
+    });
+    prismaMock.timeOff.findMany.mockResolvedValue([
+      {
+        id: "block-1",
+        memberId: "member-barber-1",
+        startDate: new Date("2000-01-01T00:00:00.000Z"),
+        endDate: new Date("2999-01-01T00:00:00.000Z"),
+        reason: "Bloqueio",
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/admin/waitlist/call-next", {
+      method: "POST",
+      body: JSON.stringify({ memberId: "member-barber-1" }),
+    });
+
+    const res = await callNextAdmin(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(data.error).toBe("INTERNAL_ERROR");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalled();
   });
 });

@@ -209,7 +209,7 @@ const ROW_HEIGHT = 48; // px per 30-min slot
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-import { toBR, todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
+import { todayIsoBR, nowBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 
 function getTodayStr() {
   return todayIsoBR();
@@ -989,12 +989,519 @@ function CancelModal({
   );
 }
 
+export interface ScheduleBlock {
+  id: string;
+  memberId: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  allDay?: boolean;
+}
+
+// ─── Modal Opções da Agenda ───────────────────────────────────────────────────
+
+function OperationOptionsModal({
+  onClose,
+  onSelectFitIn,
+  onSelectBlock,
+}: {
+  onClose: () => void;
+  onSelectFitIn: () => void;
+  onSelectBlock: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-[var(--text-primary)]">Opções da agenda</h3>
+          <button onClick={onClose} className="p-1 rounded-lg text-stone-400 hover:bg-stone-800 transition-colors">✕</button>
+        </div>
+
+        <p className="text-xs text-[var(--text-secondary)]">Selecione a operação que deseja realizar na agenda:</p>
+
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => { onClose(); onSelectFitIn(); }}
+            className="w-full text-left p-4 rounded-xl border border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 transition-all flex flex-col gap-1 group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-orange-200 group-hover:text-orange-100">+ NOVO ENCAIXE</span>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">Encaixe</span>
+            </div>
+            <p className="text-xs text-stone-300">
+              Criar um atendimento mesmo quando houver outro agendamento no horário.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { onClose(); onSelectBlock(); }}
+            className="w-full text-left p-4 rounded-xl border border-stone-700 bg-stone-900/80 hover:bg-stone-800 transition-all flex flex-col gap-1 group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-stone-200 group-hover:text-stone-100">🔒 BLOQUEAR AGENDA</span>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-stone-800 text-stone-400">Bloqueio</span>
+            </div>
+            <p className="text-xs text-stone-400">
+              Indisponibilizar um período para saída, compromisso, intervalo ou ausência do profissional.
+            </p>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full py-2.5 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Excluir Agendamento ────────────────────────────────────────────────
+
+function DeleteAppointmentModal({
+  appointment,
+  onClose,
+  onDeleted,
+}: {
+  appointment: Appointment;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/admin/appointments/${appointment.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onDeleted(appointment.id);
+      } else {
+        setErrorMsg(data.message ?? data.error ?? "Erro ao excluir agendamento.");
+      }
+    } catch {
+      setErrorMsg("Erro de conexão ao excluir agendamento.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="bg-[var(--surface-1)] border border-red-500/30 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-red-400">Excluir agendamento?</h3>
+          <button onClick={onClose} disabled={loading} className="p-1 rounded-lg text-stone-400 hover:bg-stone-800 transition-colors">✕</button>
+        </div>
+
+        <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+          Esta ação remove definitivamente o agendamento da agenda e do histórico. Use Cancelar quando desejar manter o registro do cancelamento.
+        </p>
+
+        <div className="bg-[var(--surface-2)] border border-[var(--border-subtle)] rounded-xl p-4 space-y-2 text-xs">
+          <div>
+            <span className="text-[var(--text-muted)] font-semibold">Cliente: </span>
+            <span className="text-[var(--text-primary)] font-bold">{appointment.customer.name}</span>
+          </div>
+          <div>
+            <span className="text-[var(--text-muted)] font-semibold">Profissional: </span>
+            <span className="text-[var(--text-primary)]">{appointment.barber.user.name}</span>
+          </div>
+          <div>
+            <span className="text-[var(--text-muted)] font-semibold">Data/Hora: </span>
+            <span className="text-[var(--text-primary)]">{formatDateTime(appointment.dateTime)}</span>
+          </div>
+          {serviceNames && (
+            <div>
+              <span className="text-[var(--text-muted)] font-semibold">Serviços: </span>
+              <span className="text-[var(--text-primary)]">{serviceNames}</span>
+            </div>
+          )}
+        </div>
+
+        {errorMsg && (
+          <div className="p-3 rounded-xl bg-red-950/50 border border-red-800/60 text-red-300 text-xs font-medium">
+            {errorMsg}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="py-3 px-4 rounded-xl border border-[var(--border-subtle)] text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+          >
+            Voltar
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={loading}
+            className="py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center"
+          >
+            {loading ? "Excluindo..." : "Excluir definitivamente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Criar Bloqueio de Agenda ───────────────────────────────────────────
+
+function ScheduleBlockModal({
+  members,
+  currentDate,
+  initialMemberId,
+  initialStartTime,
+  onClose,
+  onCreated,
+}: {
+  members: Member[];
+  currentDate: string;
+  initialMemberId?: string;
+  initialStartTime?: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [memberId, setMemberId] = useState(initialMemberId ?? members[0]?.id ?? "");
+  const [date, setDate] = useState(currentDate);
+  const [allDay, setAllDay] = useState(false);
+  const [startTime, setStartTime] = useState(initialStartTime ?? "10:00");
+  const [endTime, setEndTime] = useState(() => {
+    if (!initialStartTime) return "11:00";
+    const [h, m] = initialStartTime.split(":").map(Number);
+    const endH = (h + 1) % 24;
+    return `${String(endH).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  });
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<Array<{ appointmentId: string; start: string; end: string; customerName: string }> | null>(null);
+
+  const REASON_SUGGESTIONS = [
+    "Compromisso pessoal",
+    "Consulta médica",
+    "Saída externa",
+    "Intervalo",
+    "Reunião",
+    "Outro",
+  ];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setConflicts(null);
+
+    if (!memberId) {
+      setErrorMsg("Selecione o profissional.");
+      return;
+    }
+
+    const trimmedReason = reason.trim();
+    if (!trimmedReason || trimmedReason.length < 3) {
+      setErrorMsg("Informe o motivo do bloqueio (mínimo 3 caracteres).");
+      return;
+    }
+
+    let startDateIso: string;
+    let endDateIso: string;
+
+    if (allDay) {
+      startDateIso = `${date}T00:00:00.000Z`;
+      endDateIso = `${date}T23:59:59.999Z`;
+    } else {
+      if (!startTime || !endTime) {
+        setErrorMsg("Horários de início e fim são obrigatórios.");
+        return;
+      }
+      if (endTime <= startTime) {
+        setErrorMsg("Horário final deve ser maior que o inicial.");
+        return;
+      }
+      startDateIso = `${date}T${startTime}:00.000Z`;
+      endDateIso = `${date}T${endTime}:00.000Z`;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/schedule-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId,
+          startDate: startDateIso,
+          endDate: endDateIso,
+          reason: trimmedReason,
+          allDay,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        onCreated();
+        onClose();
+      } else {
+        if (data.conflicts && Array.isArray(data.conflicts)) {
+          setConflicts(data.conflicts);
+        }
+        setErrorMsg(data.message ?? data.error ?? "Erro ao criar bloqueio de agenda.");
+      }
+    } catch {
+      setErrorMsg("Erro de conexão ao criar bloqueio.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
+          <h3 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+            <span>🔒</span> Bloquear Agenda
+          </h3>
+          <button onClick={onClose} disabled={loading} className="p-1 rounded-lg text-stone-400 hover:bg-stone-800 transition-colors">✕</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className={LABEL_INPUT}>Profissional *</label>
+            <select
+              value={memberId}
+              onChange={(e) => setMemberId(e.target.value)}
+              className={INPUT_CLASS}
+            >
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{m.user.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className={LABEL_INPUT}>Data *</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className={INPUT_CLASS}
+              required
+            />
+          </div>
+
+          <div className="flex items-center gap-2 py-1">
+            <input
+              type="checkbox"
+              id="allDayCheck"
+              checked={allDay}
+              onChange={(e) => setAllDay(e.target.checked)}
+              className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
+            />
+            <label htmlFor="allDayCheck" className="text-xs font-semibold text-[var(--text-primary)] cursor-pointer">
+              Dia inteiro
+            </label>
+          </div>
+
+          {!allDay && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={LABEL_INPUT}>Início *</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className={INPUT_CLASS}
+                  required={!allDay}
+                />
+              </div>
+              <div>
+                <label className={LABEL_INPUT}>Fim *</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className={INPUT_CLASS}
+                  required={!allDay}
+                />
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className={LABEL_INPUT}>Motivo do bloqueio *</label>
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Ex: Consulta médica, Almoço..."
+              className={INPUT_CLASS}
+              required
+            />
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {REASON_SUGGESTIONS.map((sug) => (
+                <button
+                  key={sug}
+                  type="button"
+                  onClick={() => setReason(sug)}
+                  className="text-[11px] px-2.5 py-1 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--gold)] hover:text-[var(--gold)] transition-colors"
+                >
+                  {sug}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {errorMsg && (
+            <div className="p-3 rounded-xl bg-red-950/50 border border-red-800/60 text-red-300 text-xs font-medium space-y-2">
+              <p>{errorMsg}</p>
+              {conflicts && conflicts.length > 0 && (
+                <div className="border-t border-red-800/40 pt-2 space-y-1">
+                  <p className="font-bold text-[11px] text-red-200">Agendamentos conflitantes:</p>
+                  {conflicts.map((c) => (
+                    <div key={c.appointmentId} className="text-[11px] text-red-300">
+                      • {c.customerName} ({formatTime(c.start)} - {formatTime(c.end)})
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="py-3 px-4 rounded-xl border border-[var(--border-subtle)] text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold transition-colors disabled:opacity-50"
+            >
+              {loading ? "Bloqueando..." : "Bloquear agenda"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Detalhes do Bloqueio de Agenda ─────────────────────────────────────
+
+function ScheduleBlockDetailsModal({
+  block,
+  memberName,
+  onClose,
+  onDeleted,
+}: {
+  block: ScheduleBlock;
+  memberName: string;
+  onClose: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/admin/schedule-blocks/${block.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onDeleted(block.id);
+        onClose();
+      } else {
+        setErrorMsg(data.message ?? data.error ?? "Erro ao excluir bloqueio.");
+      }
+    } catch {
+      setErrorMsg("Erro de conexão.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const periodStr = block.allDay
+    ? "Dia inteiro"
+    : `${formatTime(block.startDate)} - ${formatTime(block.endDate)}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5">
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
+          <h3 className="text-base font-bold text-stone-200 flex items-center gap-2">
+            <span>🔒</span> Agenda bloqueada
+          </h3>
+          <button onClick={onClose} disabled={loading} className="p-1 rounded-lg text-stone-400 hover:bg-stone-800 transition-colors">✕</button>
+        </div>
+
+        <div className="bg-stone-900/90 border border-stone-800 rounded-xl p-4 space-y-2 text-xs">
+          <div>
+            <span className="text-stone-400 font-semibold">Profissional: </span>
+            <span className="text-stone-200 font-bold">{memberName}</span>
+          </div>
+          <div>
+            <span className="text-stone-400 font-semibold">Período: </span>
+            <span className="text-amber-400 font-bold">{periodStr}</span>
+          </div>
+          <div>
+            <span className="text-stone-400 font-semibold">Motivo: </span>
+            <span className="text-stone-200">{block.reason || "Sem motivo especificado"}</span>
+          </div>
+        </div>
+
+        {errorMsg && (
+          <p className="text-xs font-semibold text-red-400">{errorMsg}</p>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="py-3 px-4 rounded-xl border border-stone-800 text-xs font-bold text-stone-300 hover:bg-stone-800 transition-colors disabled:opacity-50"
+          >
+            Fechar
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={loading}
+            className="py-3 px-4 rounded-xl bg-red-950/60 hover:bg-red-900/80 text-red-200 border border-red-800/60 text-xs font-bold transition-colors disabled:opacity-50"
+          >
+            {loading ? "Excluindo..." : "Excluir bloqueio"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Appointment Block (calendar cell) ───────────────────────────────────────
 
 export function AppointmentBlock({
   appointment,
   onEdit,
   onCancel,
+  onDelete,
   onStatusChange,
   onAppointmentUpdated,
   onOpenComanda,
@@ -1005,6 +1512,7 @@ export function AppointmentBlock({
   appointment: Appointment;
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
+  onDelete?: (a: Appointment) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
   onAppointmentUpdated: (a: Appointment) => void;
   onOpenComanda: (a: Appointment) => void;
@@ -1529,6 +2037,22 @@ export function AppointmentBlock({
                 </div>
               )}
 
+              {/* Botão de Excluir agendamento (permitido para PENDING, CONFIRMED, CANCELLED quando sem comanda avançada) */}
+              {["PENDING", "CONFIRMED", "CANCELLED"].includes(appointment.status) &&
+                uiStatus !== "IN_SERVICE" &&
+                uiStatus !== "PENDING_PAYMENT" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggleOpen(false);
+                      onDelete?.(appointment);
+                    }}
+                    className="w-full text-sm font-bold px-3 py-2 mt-2 rounded-xl bg-transparent text-red-500 hover:bg-red-500/10 border border-red-500/30 transition-colors"
+                  >
+                    Excluir agendamento
+                  </button>
+                )}
+
               {/* Falta só permitida antes do início do atendimento (sem comanda ou comanda aberta) */}
               {(uiStatus === "PENDING" || uiStatus === "CONFIRMED" || uiStatus === "OPEN_COMANDA") && (
                 <button onClick={() => changeStatus("NO_SHOW")} disabled={loadingStatus} className="w-full text-sm font-bold px-3 py-2 mt-2 rounded-xl bg-transparent text-[var(--text-muted)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] transition-colors disabled:opacity-50">
@@ -1577,10 +2101,13 @@ export function AppointmentBlock({
 
 function CalendarGrid({
   appointments,
+  scheduleBlocks,
   members,
   filterMember,
   onEdit,
   onCancel,
+  onDelete,
+  onSelectScheduleBlock,
   onStatusChange,
   onAppointmentUpdated,
   onOpenComanda,
@@ -1589,10 +2116,13 @@ function CalendarGrid({
   barbershopName,
 }: {
   appointments: Appointment[];
+  scheduleBlocks: ScheduleBlock[];
   members: Member[];
   filterMember: string;
   onEdit: (a: Appointment) => void;
   onCancel: (a: Appointment) => void;
+  onDelete: (a: Appointment) => void;
+  onSelectScheduleBlock: (b: ScheduleBlock, memberName: string) => void;
   onStatusChange: (id: string, status: AppStatus) => void;
   onAppointmentUpdated: (a: Appointment) => void;
   onOpenComanda: (a: Appointment) => void;
@@ -1619,44 +2149,35 @@ function CalendarGrid({
     byMember[a.barber.id].push(a);
   }
 
-  const now = new Date();
-  const nowBR = toBR(now);
-  const today = getTodayStr();
-  const nowMinutes = nowBR.getUTCHours() * 60 + nowBR.getUTCMinutes();
-  const showNowLine =
-    currentDate === today && nowMinutes >= HOUR_START * 60 && nowMinutes < HOUR_END * 60;
+  const nowBRVal = nowBR();
+  const showNowLine = currentDate === getTodayStr();
+  const nowMinutes = nowBRVal.getUTCHours() * 60 + nowBRVal.getUTCMinutes();
   const nowTop = minutesToTop(nowMinutes);
 
   return (
-    <div className="flex-1 flex flex-col overflow-x-auto min-w-0 md:scrollbar-thin">
-      {/* Cabeçalho de profissionais integrado na mesma rolagem horizontal */}
+    <div className="flex-1 flex flex-col min-h-0 bg-[var(--background)]">
+      {/* Header with barber names */}
       <div className="shrink-0 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
         <div className="shrink-0 w-14 border-r border-[var(--border-subtle)]" />
         <div className="flex flex-1 border-l border-[var(--border-subtle)]">
-          {visibleMembers.map((m) => {
-            const count = appointments.filter(
-              (a) => a.barber.id === m.id && !["CANCELLED", "NO_SHOW"].includes(a.status)
-            ).length;
-            return (
-              <div
-                key={m.id}
-                className="flex-1 min-w-[280px] lg:min-w-[320px] px-3 py-2.5 border-r border-[var(--border-subtle)] flex items-center gap-2.5"
-              >
-                <div className="w-7 h-7 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center text-[11px] font-bold text-[var(--gold)] font-serif shrink-0">
-                  {m.user.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-[var(--text-primary)] truncate">{m.user.name}</p>
-                  <p className="text-[10px] text-[var(--text-muted)]">{count} agend.</p>
-                </div>
-              </div>
-            );
-          })}
+          {visibleMembers.map((m) => (
+            <div
+              key={m.id}
+              className="flex-1 min-w-[280px] lg:min-w-[320px] px-3 py-2.5 border-r border-[var(--border-subtle)] text-center"
+            >
+              <p className="text-sm font-bold text-[var(--text-primary)] truncate">
+                {m.user.name}
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                {m.startTime && m.endTime ? `${m.startTime} - ${m.endTime}` : "Sem horário"}
+              </p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Corpo da grade (scroll vertical restrito a esta div) */}
-      <div className="flex-1 overflow-y-auto flex min-w-0">
+      {/* Grid container */}
+      <div className="flex-1 overflow-auto flex">
         {/* Time gutter */}
         <div className="shrink-0 w-14 relative select-none border-r border-[var(--border-subtle)] bg-[var(--background)]" style={{ height: totalHeight }}>
           {hours.map((h) => (
@@ -1670,13 +2191,6 @@ function CalendarGrid({
               </span>
             </div>
           ))}
-          {showNowLine && (
-            <div className="absolute right-0 left-0 flex items-center justify-end pr-1" style={{ top: nowTop - 8 }}>
-              <span className="text-[9px] text-red-400 font-bold tabular-nums">
-                {String(nowBR.getUTCHours()).padStart(2, "0")}:{String(nowBR.getUTCMinutes()).padStart(2, "0")}
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Member columns */}
@@ -1707,7 +2221,7 @@ function CalendarGrid({
                   </div>
                 )}
 
-                {/* Appointments */}
+                {/* Appointments and Schedule Blocks */}
                 <div className="relative" style={{ height: totalHeight }}>
                   {slotMinutes.map((minutes) => (
                     <button
@@ -1725,12 +2239,48 @@ function CalendarGrid({
                       aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
                     />
                   ))}
+
+                  {/* Schedule Blocks */}
+                  {(scheduleBlocks.filter((b) => b.memberId === m.id)).map((b) => {
+                    const startMin = isoToMinutes(b.startDate);
+                    const endMin = b.allDay ? HOUR_END * 60 : isoToMinutes(b.endDate);
+                    const top = minutesToTop(Math.max(HOUR_START * 60, startMin));
+                    const height = Math.max(ROW_HEIGHT, minutesToTop(Math.min(HOUR_END * 60, endMin)) - top);
+                    const periodStr = b.allDay
+                      ? "Dia inteiro"
+                      : `${formatTime(b.startDate)} - ${formatTime(b.endDate)}`;
+
+                    return (
+                      <div
+                        key={b.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectScheduleBlock(b, m.user.name);
+                        }}
+                        className="absolute left-1 right-1 z-20 rounded-xl p-2.5 cursor-pointer border border-stone-700/60 bg-[repeating-linear-gradient(45deg,rgba(41,37,36,0.9),rgba(41,37,36,0.9)_10px,rgba(28,25,23,0.95)_10px,rgba(28,25,23,0.95)_20px)] shadow-md hover:border-amber-500/50 transition-all flex flex-col justify-between select-none"
+                        style={{ top, height }}
+                        title={`Bloqueio: ${b.reason || "Agenda bloqueada"}`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-bold text-stone-300 flex items-center gap-1">
+                            <span>🔒</span> Agenda bloqueada
+                          </span>
+                          <span className="text-[10px] font-mono text-amber-400 font-bold">
+                            {periodStr}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-400 truncate mt-0.5">{b.reason || "Sem motivo especificado"}</p>
+                      </div>
+                    );
+                  })}
+
                   {(byMember[m.id] ?? []).map((a) => (
                     <AppointmentBlock
                       key={a.id}
                       appointment={a}
                       onEdit={onEdit}
                       onCancel={onCancel}
+                      onDelete={onDelete}
                       onStatusChange={onStatusChange}
                       onAppointmentUpdated={onAppointmentUpdated}
                       onOpenComanda={onOpenComanda}
@@ -1760,6 +2310,7 @@ function AgendamentosContent() {
     dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : today;
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlock[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [barbershopServices, setBarbershopServices] = useState<Service[]>([]);
   const [barbershopName, setBarbershopName] = useState("");
@@ -1772,6 +2323,18 @@ function AgendamentosContent() {
     useState<NewAppointmentInitialState | null>(null);
   const [newAppointmentMode, setNewAppointmentMode] = useState<BookingMode>("NORMAL");
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Appointment | null>(null);
+
+  const [operationOptionsOpen, setOperationOptionsOpen] = useState(false);
+  const [scheduleBlockOpen, setScheduleBlockOpen] = useState(false);
+  const [scheduleBlockInitial, setScheduleBlockInitial] = useState<{
+    memberId?: string;
+    startTime?: string;
+  } | null>(null);
+  const [selectedScheduleBlock, setSelectedScheduleBlock] = useState<{
+    block: ScheduleBlock;
+    memberName: string;
+  } | null>(null);
 
   useEffect(() => {
     const customerId = searchParams.get("customerId");
@@ -1857,6 +2420,7 @@ function AgendamentosContent() {
       const apptData = await apptRes.json();
       const svcData = await svcRes.json();
       setAppointments(apptData.appointments ?? []);
+      setScheduleBlocks(apptData.scheduleBlocks ?? []);
       setMembers(apptData.members ?? []);
       setBarbershopName(apptData.barbershopName ?? "");
       setBarbershopSlug(apptData.barbershopSlug ?? "");
@@ -1894,6 +2458,15 @@ function AgendamentosContent() {
   const handleCancelled = (a: Appointment) => {
     setAppointments((prev) => prev.map((x) => (x.id === a.id ? a : x)));
     setCancelTarget(null);
+  };
+
+  const handleDeleted = (id: string) => {
+    setAppointments((prev) => prev.filter((x) => x.id !== id));
+    setDeleteTarget(null);
+  };
+
+  const handleBlockChanged = () => {
+    fetchData(currentDate);
   };
 
   const handleStatusChange = (id: string, status: AppStatus) => {
@@ -1962,6 +2535,41 @@ function AgendamentosContent() {
           onCancelled={handleCancelled}
         />
       )}
+      {deleteTarget && (
+        <DeleteAppointmentModal
+          appointment={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={handleDeleted}
+        />
+      )}
+      {operationOptionsOpen && (
+        <OperationOptionsModal
+          onClose={() => setOperationOptionsOpen(false)}
+          onSelectFitIn={() => openNewAppointment(null, "FIT_IN")}
+          onSelectBlock={() => setScheduleBlockOpen(true)}
+        />
+      )}
+      {scheduleBlockOpen && (
+        <ScheduleBlockModal
+          members={members}
+          currentDate={currentDate}
+          initialMemberId={scheduleBlockInitial?.memberId || filterMember || undefined}
+          initialStartTime={scheduleBlockInitial?.startTime}
+          onClose={() => {
+            setScheduleBlockOpen(false);
+            setScheduleBlockInitial(null);
+          }}
+          onCreated={handleBlockChanged}
+        />
+      )}
+      {selectedScheduleBlock && (
+        <ScheduleBlockDetailsModal
+          block={selectedScheduleBlock.block}
+          memberName={selectedScheduleBlock.memberName}
+          onClose={() => setSelectedScheduleBlock(null)}
+          onDeleted={handleBlockChanged}
+        />
+      )}
 
       <div className="flex flex-col h-[calc(100dvh-57px)] lg:h-[calc(100dvh-64px)]">
         {/* ── Top bar ─────────────────────────────────────────────────── */}
@@ -2021,10 +2629,10 @@ function AgendamentosContent() {
                 + Novo
               </button>
               <button
-                onClick={() => openNewAppointment(null, "FIT_IN")}
+                onClick={() => setOperationOptionsOpen(true)}
                 className="bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 border border-orange-500/30 font-bold text-sm px-3.5 py-2 rounded-lg transition-colors shrink-0"
               >
-                + Encaixe
+                + Opções
               </button>
             </div>
           </div>
@@ -2043,10 +2651,13 @@ function AgendamentosContent() {
           ) : (
             <CalendarGrid
               appointments={appointments}
+              scheduleBlocks={scheduleBlocks}
               members={members}
               filterMember={filterMember}
               onEdit={(a) => setEditTarget(a)}
               onCancel={(a) => setCancelTarget(a)}
+              onDelete={(a) => setDeleteTarget(a)}
+              onSelectScheduleBlock={(b, memberName) => setSelectedScheduleBlock({ block: b, memberName })}
               onStatusChange={handleStatusChange}
               onAppointmentUpdated={handleUpdated}
               onOpenComanda={handleOpenComanda}

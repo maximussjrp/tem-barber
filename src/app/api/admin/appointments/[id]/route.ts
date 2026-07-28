@@ -7,6 +7,7 @@ import {
   InvalidServiceSelectionError,
   ProfessionalNotAvailableError,
   ProfessionalServiceMismatchError,
+  ScheduleBlockConflictApptError,
 } from "@/lib/appointments/errors";
 import {
   calculateAppointmentTotals,
@@ -158,7 +159,7 @@ export async function PUT(
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
   } catch (error) {
-    if (error instanceof AppointmentConflictError) {
+    if (error instanceof AppointmentConflictError || error instanceof ScheduleBlockConflictApptError) {
       return NextResponse.json(
         { error: error.code, message: error.message },
         { status: error.status }
@@ -315,7 +316,7 @@ export async function PATCH(
   return NextResponse.json(updated);
 }
 
-// DELETE /api/admin/appointments/[id] — hard delete only if PENDING/CANCELLED
+// DELETE /api/admin/appointments/[id] — hard delete for PENDING/CONFIRMED/CANCELLED without financial/operational effects
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -328,22 +329,113 @@ export async function DELETE(
   if (!data!.barbershopId) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });
   }
+  const barbershopId = data!.barbershopId;
+
+  // Apenas OWNER e MANAGER podem excluir agendamentos
+  if (!["OWNER", "MANAGER"].includes(data!.role)) {
+    return NextResponse.json(
+      { error: "Apenas proprietários e gerentes podem excluir agendamentos." },
+      { status: 403 }
+    );
+  }
 
   const existingDel = await prisma.appointment.findFirst({
-    where: { id, barbershopId: data!.barbershopId },
+    where: { id, barbershopId },
   });
 
   if (!existingDel) {
     return NextResponse.json({ error: "Agendamento não encontrado." }, { status: 404 });
   }
 
-  if (!["PENDING", "CANCELLED"].includes(existingDel.status)) {
+  // Não permitir exclusão de agendamentos COMPLETED ou NO_SHOW
+  if (["COMPLETED", "NO_SHOW"].includes(existingDel.status)) {
     return NextResponse.json(
-      { error: "Só é possível excluir agendamentos pendentes ou cancelados." },
+      { error: "Não é possível excluir agendamentos concluídos ou com falta." },
       { status: 422 }
     );
   }
 
+  // Verificar se há vínculo com a Fila Online (fitInAppointmentId)
+  const waitlistEntry = await prisma.onlineWaitlistEntry.findFirst({
+    where: { fitInAppointmentId: id, barbershopId },
+  });
+
+  if (waitlistEntry) {
+    return NextResponse.json(
+      { error: "Este agendamento foi criado pela fila online. Faça a reversão pela fila antes de excluí-lo." },
+      { status: 422 }
+    );
+  }
+
+  const review = await prisma.review.findFirst({
+    where: { appointmentId: id },
+    select: { id: true },
+  });
+
+  if (review) {
+    return NextResponse.json(
+      { error: "Este agendamento possui avaliacao vinculada e nao pode ser excluido." },
+      { status: 422 }
+    );
+  }
+
+  const comandas = await prisma.comanda.findMany({
+    where: { appointmentId: id, barbershopId },
+    include: {
+      payments: { where: { status: "CONFIRMED" } },
+      items: {
+        include: {
+          stockMovements: true,
+          commissionEntry: true,
+          clubBenefitUsage: true,
+          clubPointEntry: true,
+        },
+      },
+    },
+  });
+
+  if (comandas.length > 0) {
+    const hasBlockedComanda = comandas.some((comanda) => {
+      const hasConfirmedPayments = comanda.payments.length > 0;
+      const hasStock = comanda.items.some((item) => item.stockMovements.length > 0);
+      const hasCommissions = comanda.items.some((item) => item.commissionEntry !== null);
+      const hasClubBenefits = comanda.items.some((item) => item.clubBenefitUsage !== null);
+      const hasClubPoints = comanda.items.some((item) => item.clubPointEntry !== null);
+      const isComandaAdvanced = !["OPEN", "CANCELLED"].includes(comanda.status);
+
+      return (
+        isComandaAdvanced ||
+        hasConfirmedPayments ||
+        hasStock ||
+        hasCommissions ||
+        hasClubBenefits ||
+        hasClubPoints
+      );
+    });
+
+    const financialEntries = await prisma.financialEntry.count({
+      where: { comandaId: { in: comandas.map((comanda) => comanda.id) } },
+    });
+
+    if (hasBlockedComanda || financialEntries > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Este agendamento possui atendimento ou movimentacoes vinculadas e nao pode ser excluido. Cancele ou estorne a comanda antes de continuar.",
+        },
+        { status: 422 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const comanda of comandas) {
+        await tx.comanda.delete({ where: { id: comanda.id } });
+      }
+      await tx.appointment.delete({ where: { id } });
+    });
+
+    return NextResponse.json({ success: true });
+  }
   await prisma.appointment.delete({ where: { id } });
 
   return NextResponse.json({ success: true });

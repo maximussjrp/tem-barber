@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { lockAppointmentSchedule } from "./appointment-lock";
 import { findOverlappingAppointment } from "./find-overlap";
+import { findOverlappingScheduleBlock } from "@/lib/schedule-blocks";
+import { ScheduleBlockConflictApptError } from "./errors";
 import {
   type AppointmentServiceInput,
   mapAppointmentServiceSnapshots,
@@ -49,6 +51,16 @@ export async function createFitInAppointmentWithScheduleLock(
   conflictSnapshot: FitInConflictSnapshot | null;
 }> {
   await lockAppointmentSchedule(tx, input.barbershopId, input.memberId);
+
+  const end = new Date(input.dateTime.getTime() + input.durationMin * 60 * 1000);
+  const block = await findOverlappingScheduleBlock(tx, {
+    memberId: input.memberId,
+    start: input.dateTime,
+    end,
+  });
+  if (block) {
+    throw new ScheduleBlockConflictApptError();
+  }
 
   const conflict = await findOverlappingAppointment(tx, {
     barbershopId: input.barbershopId,
