@@ -163,10 +163,32 @@ export async function GET(request: NextRequest) {
       totalDiscountsCents += toCents(comanda.discountTotal);
       totalSurchargesCents += toCents(comanda.surchargeTotal);
 
-      for (const item of comanda.items) {
+      const regularItems = comanda.items.filter(
+        (item) =>
+          (item.type === "SERVICE" || item.type === "PRODUCT") &&
+          item.status !== "CANCELLED" &&
+          toCents(item.total) > 0
+      );
+      const regularItemsTotalCents = regularItems.reduce(
+        (sum, item) => sum + toCents(item.total),
+        0
+      );
+      const targetNetCents = Math.max(0, toCents(comanda.total));
+      let allocatedNetCents = 0;
+
+      for (const [index, item] of regularItems.entries()) {
         const itemGross = toCents(item.unitPrice) * Number(item.quantity);
-        const itemNet = toCents(item.total);
+        const itemTotalCents = toCents(item.total);
+        const isLastRegularItem = index === regularItems.length - 1;
+        const itemNet =
+          regularItemsTotalCents <= 0
+            ? itemTotalCents
+            : isLastRegularItem
+              ? Math.max(0, targetNetCents - allocatedNetCents)
+              : Math.floor((itemTotalCents * targetNetCents) / regularItemsTotalCents);
         const qty = Number(item.quantity);
+
+        allocatedNetCents += itemNet;
 
         // Top Services aggregation
         if (item.serviceId) {

@@ -414,6 +414,8 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
             items: [
               {
                 id: "ci-1",
+                type: "SERVICE",
+                status: "DONE",
                 quantity: new Prisma.Decimal("1"),
                 unitPrice: new Prisma.Decimal("50.00"),
                 total: new Prisma.Decimal("50.00"),
@@ -424,6 +426,8 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
               },
               {
                 id: "ci-2",
+                type: "SERVICE",
+                status: "DONE",
                 quantity: new Prisma.Decimal("1"),
                 unitPrice: new Prisma.Decimal("100.00"),
                 total: new Prisma.Decimal("100.00"),
@@ -553,5 +557,350 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     expect(body.totals.netRevenue).toBe(105);
     expect(body.closedCommands.amount).toBe(105);
     expect(body.totals.commandReceived).toBe(105);
+  });
+
+  it("21. rateia desconto global nos rankings sem alterar cards gerais ou grossRevenue", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-discount-ranking",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("10.00"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("90.00"),
+            items: [
+              {
+                id: "ci-discount",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("100.00"),
+                total: new Prisma.Decimal("100.00"),
+                serviceId: "s-corte",
+                executorId: "m-barber-1",
+                service: { id: "s-corte", name: "Corte" },
+                executor: { id: "m-barber-1", user: { name: "Barbeiro Max" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+
+    expect(body.totals.grossRevenue).toBe(100);
+    expect(body.totals.totalDiscounts).toBe(10);
+    expect(body.totals.netRevenue).toBe(90);
+    expect(body.closedCommands.amount).toBe(90);
+    expect(body.topServices[0].grossRevenue).toBe(100);
+    expect(body.topServices[0].netRevenue).toBe(90);
+    expect(body.topProfessionals[0].grossRevenue).toBe(100);
+    expect(body.topProfessionals[0].netRevenue).toBe(90);
+  });
+
+  it("22. rateia acrescimo global nos rankings", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-surcharge-ranking",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("0.00"),
+            surchargeTotal: new Prisma.Decimal("20.00"),
+            total: new Prisma.Decimal("120.00"),
+            items: [
+              {
+                id: "ci-surcharge",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("100.00"),
+                total: new Prisma.Decimal("100.00"),
+                serviceId: "s-corte",
+                executorId: "m-barber-1",
+                service: { id: "s-corte", name: "Corte" },
+                executor: { id: "m-barber-1", user: { name: "Barbeiro Max" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+
+    expect(body.totals.totalSurcharges).toBe(20);
+    expect(body.totals.netRevenue).toBe(120);
+    expect(body.topServices[0].grossRevenue).toBe(100);
+    expect(body.topServices[0].netRevenue).toBe(120);
+    expect(body.topProfessionals[0].netRevenue).toBe(120);
+  });
+
+  it("23. distribui desconto proporcional entre dois servicos", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-proportional",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("10.00"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("90.00"),
+            items: [
+              {
+                id: "ci-70",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("70.00"),
+                total: new Prisma.Decimal("70.00"),
+                serviceId: "s-a",
+                executorId: "m-a",
+                service: { id: "s-a", name: "Servico A" },
+                executor: { id: "m-a", user: { name: "Prof A" } },
+              },
+              {
+                id: "ci-30",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("30.00"),
+                total: new Prisma.Decimal("30.00"),
+                serviceId: "s-b",
+                executorId: "m-b",
+                service: { id: "s-b", name: "Servico B" },
+                executor: { id: "m-b", user: { name: "Prof B" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+    const serviceA = body.topServices.find((s: any) => s.serviceId === "s-a");
+    const serviceB = body.topServices.find((s: any) => s.serviceId === "s-b");
+
+    expect(serviceA.netRevenue).toBe(63);
+    expect(serviceB.netRevenue).toBe(27);
+    expect(body.topServices.reduce((sum: number, service: any) => sum + service.netRevenue, 0)).toBe(90);
+  });
+
+  it("24. corrige arredondamento no ultimo item para bater exatamente com total da comanda", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-rounding",
+            subtotal: new Prisma.Decimal("99.99"),
+            discountTotal: new Prisma.Decimal("0.99"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("99.00"),
+            items: [
+              {
+                id: "ci-r1",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("33.33"),
+                total: new Prisma.Decimal("33.33"),
+                serviceId: "s-r1",
+                executorId: "m-r1",
+                service: { id: "s-r1", name: "R1" },
+                executor: { id: "m-r1", user: { name: "R1" } },
+              },
+              {
+                id: "ci-r2",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("33.33"),
+                total: new Prisma.Decimal("33.33"),
+                serviceId: "s-r2",
+                executorId: "m-r2",
+                service: { id: "s-r2", name: "R2" },
+                executor: { id: "m-r2", user: { name: "R2" } },
+              },
+              {
+                id: "ci-r3",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("33.33"),
+                total: new Prisma.Decimal("33.33"),
+                serviceId: "s-r3",
+                executorId: "m-r3",
+                service: { id: "s-r3", name: "R3" },
+                executor: { id: "m-r3", user: { name: "R3" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+    const rankingTotal = body.topServices.reduce((sum: number, service: any) => sum + service.netRevenue, 0);
+
+    expect(body.totals.netRevenue).toBe(99);
+    expect(rankingTotal).toBe(99);
+    expect(body.topServices).toHaveLength(3);
+  });
+
+  it("25. profissionais usam liquido rateado e comissao liberada permanece separada", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-professionals",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("10.00"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("90.00"),
+            items: [
+              {
+                id: "ci-prof-a",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("70.00"),
+                total: new Prisma.Decimal("70.00"),
+                serviceId: "s-pa",
+                executorId: "m-pa",
+                service: { id: "s-pa", name: "Servico PA" },
+                executor: { id: "m-pa", user: { name: "Prof A" } },
+              },
+              {
+                id: "ci-prof-b",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("30.00"),
+                total: new Prisma.Decimal("30.00"),
+                serviceId: "s-pb",
+                executorId: "m-pb",
+                service: { id: "s-pb", name: "Servico PB" },
+                executor: { id: "m-pb", user: { name: "Prof B" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    (mockedCommissionEntry.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status?.in) {
+        return Promise.resolve([
+          { memberId: "m-pa", releasedAmount: new Prisma.Decimal("12.00"), reversedAmount: new Prisma.Decimal("0.00") },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+    const profA = body.topProfessionals.find((p: any) => p.memberId === "m-pa");
+    const profB = body.topProfessionals.find((p: any) => p.memberId === "m-pb");
+
+    expect(profA.netRevenue).toBe(63);
+    expect(profA.releasedCommissions).toBe(12);
+    expect(profB.netRevenue).toBe(27);
+    expect(profB.releasedCommissions).toBe(0);
+  });
+
+  it("26. sem desconto ou acrescimo mantem ranking igual ao item.total", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-no-adjustment",
+            subtotal: new Prisma.Decimal("80.00"),
+            discountTotal: new Prisma.Decimal("0.00"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("80.00"),
+            items: [
+              {
+                id: "ci-no-adjustment",
+                type: "SERVICE",
+                status: "DONE",
+                quantity: new Prisma.Decimal("1"),
+                unitPrice: new Prisma.Decimal("80.00"),
+                total: new Prisma.Decimal("80.00"),
+                serviceId: "s-no-adjustment",
+                executorId: "m-no-adjustment",
+                service: { id: "s-no-adjustment", name: "Sem Ajuste" },
+                executor: { id: "m-no-adjustment", user: { name: "Prof Sem Ajuste" } },
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+
+    expect(body.totals.netRevenue).toBe(80);
+    expect(body.topServices[0].grossRevenue).toBe(80);
+    expect(body.topServices[0].netRevenue).toBe(80);
+    expect(body.topProfessionals[0].netRevenue).toBe(80);
   });
 });
