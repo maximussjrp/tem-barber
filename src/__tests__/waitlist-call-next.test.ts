@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 const { prismaMock, getAdminSessionMock, getMemberSessionMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -48,6 +49,36 @@ type MockFindFirstArgs = {
 type MockComandaFindUniqueArgs = {
   select?: {
     customerId?: boolean;
+  };
+};
+
+type MockAppointmentCreateArgs = {
+  data: {
+    dateTime: Date;
+    totalPrice: number;
+    services: {
+      create: Array<{
+        serviceId: string;
+        priceApplied: string;
+      }>;
+    };
+  };
+};
+
+type MockComandaCreateArgs = {
+  data: {
+    items: {
+      create: Array<{
+        unitPrice: string | number | Prisma.Decimal;
+        total: string | number | Prisma.Decimal;
+      }>;
+    };
+  };
+};
+
+type CallNextResponseData = {
+  comanda: {
+    total: string | number | Prisma.Decimal;
   };
 };
 
@@ -570,6 +601,180 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(res.status).toBe(409);
     expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
+  });
+
+  function mockBarbaWaitlistPrice(price: unknown) {
+    prismaMock.onlineWaitlistEntry.findFirst.mockResolvedValue({
+      id: "entry-barba",
+      sessionId: "session-1",
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      customerName: "Carlos Cliente",
+      customerPhone: "5517999998888",
+      serviceId: "service-barba",
+      preferredMemberId: null,
+      queueNumber: 2,
+      status: "WAITING",
+      publicTokenHash: "secret-token-hash",
+      service: { id: "service-barba", name: "Barba", durationMin: 30, price },
+      customer: { id: "cust-1", name: "Carlos Cliente", phone: "5517999998888" },
+      preferredMember: null,
+    });
+
+    prismaMock.barberService.findUnique.mockResolvedValue({
+      barberId: "member-barber-1",
+      serviceId: "service-barba",
+    });
+
+    let createdAppointmentData: MockAppointmentCreateArgs["data"] | undefined;
+    prismaMock.appointment.create.mockImplementation((args: MockAppointmentCreateArgs) => {
+      createdAppointmentData = args.data;
+      return Promise.resolve({
+        id: "app-fit-in-1",
+        barbershopId: "shop-1",
+        memberId: "member-barber-1",
+        customerId: "cust-1",
+        dateTime: args.data.dateTime,
+        totalPrice: args.data.totalPrice,
+        durationMin: 30,
+        status: "CONFIRMED",
+        bookingMode: "FIT_IN",
+        fitInReason: "Fila Online - Senha #2",
+        fitInCreatedById: "admin-1",
+        fitInCreatedAt: new Date("2026-07-24T14:00:00.000Z"),
+        conflictSnapshot: null,
+        barber: { user: { name: "Barbeiro Joao", avatarUrl: null } },
+        customer: { id: "cust-1", name: "Carlos Cliente", phone: "5517999998888" },
+        services: [{ service: { id: "service-barba", name: "Barba", durationMin: 30 } }],
+        comandas: [],
+      });
+    });
+
+    prismaMock.appointment.findFirst.mockImplementation((args: MockFindFirstArgs) => {
+      if (args?.where?.id === "app-fit-in-1") {
+        const priceApplied = createdAppointmentData?.services?.create?.[0]?.priceApplied ?? "35";
+        return Promise.resolve({
+          id: "app-fit-in-1",
+          barbershopId: "shop-1",
+          memberId: "member-barber-1",
+          customerId: "cust-1",
+          dateTime: new Date("2026-07-24T14:00:00.000Z"),
+          totalPrice: createdAppointmentData?.totalPrice ?? 35,
+          durationMin: 30,
+          customer: { id: "cust-1", name: "Carlos Cliente", phone: "5517999998888" },
+          services: [
+            {
+              serviceId: "service-barba",
+              priceApplied,
+              service: { id: "service-barba", name: "Barba", durationMin: 30 },
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    prismaMock.comandaItem.findMany.mockResolvedValue([
+      { type: "SERVICE", status: "PENDING", total: "35.00", clubBenefitUsage: null },
+    ]);
+
+    prismaMock.comanda.update.mockResolvedValue({
+      id: "comanda-fit-in-1",
+      barbershopId: "shop-1",
+      status: "OPEN",
+      total: "35.00",
+      remainingTotal: "35.00",
+      items: [],
+      payments: [],
+    });
+
+    prismaMock.onlineWaitlistEntry.findUnique.mockResolvedValue({
+      id: "entry-barba",
+      sessionId: "session-1",
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      customerName: "Carlos Cliente",
+      customerPhone: "5517999998888",
+      serviceId: "service-barba",
+      preferredMemberId: null,
+      queueNumber: 2,
+      status: "FIT_IN_CREATED",
+      fitInAppointmentId: "app-fit-in-1",
+      calledByMemberId: "member-barber-1",
+      calledAt: new Date("2026-07-24T14:00:00.000Z"),
+      service: { id: "service-barba", name: "Barba", durationMin: 30, price },
+      calledByMember: { user: { id: "u-barber-1", name: "Barbeiro Joao" } },
+      preferredMember: null,
+    });
+  }
+
+  async function callNextAsOwner() {
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
+    });
+
+    const req = new NextRequest("http://localhost/api/admin/waitlist/call-next", {
+      method: "POST",
+      body: JSON.stringify({ memberId: "member-barber-1" }),
+    });
+
+    return callNextAdmin(req);
+  }
+
+  function expectBarbaPriceApplied(data: CallNextResponseData) {
+    const appointmentData = (prismaMock.appointment.create.mock.calls[0][0] as MockAppointmentCreateArgs).data;
+    expect(appointmentData.totalPrice).toBe(35);
+    expect(Number(appointmentData.services.create[0].priceApplied)).toBe(35);
+
+    const comandaItems = (prismaMock.comanda.create.mock.calls[0][0] as MockComandaCreateArgs).data.items.create;
+    expect(comandaItems).toHaveLength(1);
+    expect(Number(comandaItems[0].unitPrice)).toBe(35);
+    expect(Number(comandaItems[0].total)).toBe(35);
+    expect(Number(data.comanda.total)).toBe(35);
+  }
+
+  it("17. call-next usa preco Decimal do servico ao criar FIT_IN e comanda", async () => {
+    mockBarbaWaitlistPrice(new Prisma.Decimal("35.00"));
+
+    const res = await callNextAsOwner();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expectBarbaPriceApplied(data);
+  });
+
+  it("18. call-next usa preco string do servico ao criar FIT_IN e comanda", async () => {
+    mockBarbaWaitlistPrice("35.00");
+
+    const res = await callNextAsOwner();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expectBarbaPriceApplied(data);
+  });
+
+  it("19. call-next usa preco number do servico ao criar FIT_IN e comanda", async () => {
+    mockBarbaWaitlistPrice(35);
+
+    const res = await callNextAsOwner();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expectBarbaPriceApplied(data);
+  });
+
+  it("20. preco invalido nao cria appointment nem altera fila", async () => {
+    mockBarbaWaitlistPrice({ toString: () => "valor-invalido" });
+
+    const res = await callNextAsOwner();
+    const data = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(data.error).toBe("INVALID_SERVICE_PRICE");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.comanda.create).not.toHaveBeenCalled();
     expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
   });
 });

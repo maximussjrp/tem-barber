@@ -29,13 +29,24 @@ export class CallNextWaitlistError extends Error {
   }
 }
 
-function parseNumber(value: unknown, fallback: number): number {
-  if (typeof value === "number" && !isNaN(value)) return value;
-  if (typeof value === "string") {
-    const parsed = parseFloat(value);
-    if (!isNaN(parsed)) return parsed;
+function parseMoneyNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
   }
-  return fallback;
+
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "object" && "toString" in value) {
+    const parsed = Number(String(value).replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
 export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
@@ -197,7 +208,15 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
           }
 
           // 8. Create FIT_IN appointment with local operational date/time (America/Sao_Paulo)
-          const servicePrice = parseNumber(entry.service.price, 0);
+          const servicePrice = parseMoneyNumber(entry.service.price);
+          if (servicePrice === null || servicePrice < 0) {
+            throw new CallNextWaitlistError(
+              "INVALID_SERVICE_PRICE",
+              `O preÃ§o cadastrado para o serviÃ§o "${entry.service.name}" Ã© invÃ¡lido.`,
+              422
+            );
+          }
+
           const appointmentDateTime = getCurrentSaoPauloDateTimeForAppointment(now);
 
           const { appointment } = await createFitInAppointmentWithScheduleLock(tx, {
