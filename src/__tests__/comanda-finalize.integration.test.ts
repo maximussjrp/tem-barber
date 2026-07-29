@@ -24,6 +24,13 @@ let productsRoute: typeof import("@/app/api/admin/products/route");
 let cashOpenRoute: typeof import("@/app/api/admin/cash-sessions/open/route");
 let commissionsRoute: typeof import("@/app/api/admin/commissions/route");
 
+type CommissionReportRow = {
+  id: string;
+  generatedAmount: string | number;
+  releasedAmount: string | number;
+  status: string;
+};
+
 function jsonRequest(url: string, body: unknown, key?: string) {
   return new NextRequest(url, {
     method: "POST",
@@ -58,13 +65,23 @@ async function truncateDatabase() {
       "services",
       "categories",
       "barbershop_members",
+      "tenant_subscriptions",
       "barbershops",
+      "plans",
       "users"
     CASCADE
   `);
 }
 
 async function seedTenant(label: string) {
+  const plan = await prisma.plan.create({
+    data: {
+      name: `Plano Finalize ${label}`,
+      price: "49.90",
+      maxMembers: 10,
+      isActive: true,
+    },
+  });
   const shop = await prisma.barbershop.create({
     data: {
       name: `Barbearia ${label}`,
@@ -76,6 +93,16 @@ async function seedTenant(label: string) {
       neighborhood: "Centro",
       city: "Sao Paulo",
       state: "SP",
+    },
+  });
+  await prisma.tenantSubscription.create({
+    data: {
+      barbershopId: shop.id,
+      planId: plan.id,
+      status: "TRIAL",
+      planName: plan.name,
+      monthlyPrice: plan.price,
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     },
   });
   const ownerUser = await prisma.user.create({
@@ -130,6 +157,13 @@ async function seedTenant(label: string) {
   return { shop, ownerUser, owner, barber, customer, cut, beard, appointment };
 }
 
+async function markServicesDone(comandaId: string) {
+  await prisma.comandaItem.updateMany({
+    where: { comandaId, type: "SERVICE", status: "PENDING" },
+    data: { status: "DONE", completedAt: new Date() },
+  });
+}
+
 describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () => {
   beforeAll(async () => {
     process.env.DATABASE_URL = testDatabaseUrl;
@@ -165,6 +199,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     );
     expect(createComanda.status).toBe(201);
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
 
     // 3. Finalizar com Pix + Dinheiro
     const finalizeRes = await finalizeRoute.POST(
@@ -206,6 +241,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
       jsonRequest("http://localhost/api/admin/comandas", { appointmentId: appointment.id })
     );
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
 
     // Finalizar com Pix (sem caixa aberto)
     const finalizeRes = await finalizeRoute.POST(
@@ -219,6 +255,88 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     expect(finalizeRes.status).toBe(200);
     const finalized = await finalizeRes.json();
     expect(finalized.status).toBe("CLOSED");
+  });
+
+  it("fecha comanda com total zero sem criar Payment ou FinancialEntry", async () => {
+    const tenant = await seedTenant("zero");
+    getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+    const createComanda = await comandasRoute.POST(
+      jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+    );
+    const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
+
+    const discountRes = await itemsRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
+        type: "DISCOUNT",
+        amount: 50.00,
+        description: "Cortesia integral",
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+    expect(discountRes.status).toBe(201);
+
+    const finalizeRes = await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, { payments: [] }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    expect(finalizeRes.status).toBe(200);
+    const finalized = await finalizeRes.json();
+    expect(finalized.status).toBe("CLOSED");
+    expect(Number(finalized.total)).toBe(0);
+    expect(await prisma.payment.count({ where: { comandaId: comanda.id } })).toBe(0);
+    expect(await prisma.financialEntry.count({ where: { comandaId: comanda.id } })).toBe(0);
+    const appt = await prisma.appointment.findUnique({ where: { id: tenant.appointment.id } });
+    expect(appt?.status).toBe("COMPLETED");
+  });
+
+  it("retorna PAYMENT_REQUIRED para comanda positiva com payments vazio", async () => {
+    const tenant = await seedTenant("payment-required");
+    getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+    const createComanda = await comandasRoute.POST(
+      jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+    );
+    const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
+
+    const finalizeRes = await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, { payments: [] }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    expect(finalizeRes.status).toBe(422);
+    const errorBody = await finalizeRes.json();
+    expect(errorBody.error).toBe("PAYMENT_REQUIRED");
+    expect(await prisma.payment.count({ where: { comandaId: comanda.id } })).toBe(0);
+    expect(await prisma.financialEntry.count({ where: { comandaId: comanda.id } })).toBe(0);
+  });
+
+  it("bloqueia finalize com servico PENDING sem criar efeitos financeiros", async () => {
+    const tenant = await seedTenant("pending-service");
+    getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+    const createComanda = await comandasRoute.POST(
+      jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+    );
+    const comanda = await createComanda.json();
+
+    const finalizeRes = await finalizeRoute.POST(
+      jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
+        payments: [{ method: "PIX", amount: 50.00 }],
+      }),
+      { params: Promise.resolve({ id: comanda.id }) }
+    );
+
+    expect(finalizeRes.status).toBe(422);
+    const errorBody = await finalizeRes.json();
+    expect(errorBody.error).toBe("PENDING_ITEMS");
+    expect(await prisma.payment.count({ where: { comandaId: comanda.id } })).toBe(0);
+    expect(await prisma.financialEntry.count({ where: { comandaId: comanda.id } })).toBe(0);
+    const dbComanda = await prisma.comanda.findUnique({ where: { id: comanda.id } });
+    expect(dbComanda?.status).toBe("OPEN");
   });
 
   it("retorna CASH_SESSION_REQUIRED e faz rollback total se pagar CASH sem caixa aberto", async () => {
@@ -241,6 +359,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
       jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
     );
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
 
     // Adicionar produto
     await itemsRoute.POST(
@@ -297,6 +416,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
       jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
     );
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
 
     // Adicionar 2 unidades (não dispara erro ao adicionar, mas sim na hora de fechar/finalizar)
     // Para contornar a validação do addProductItem que impede adicionar mais do que o estoque,
@@ -344,6 +464,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
       jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
     );
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
 
     const idempotencyKey = "test-double-click-finalize";
 
@@ -379,6 +500,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
       jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
     );
     const comanda = await createComanda.json();
+    await markServicesDone(comanda.id);
     await finalizeRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {
         payments: [{ method: "PIX", amount: 50.00 }]
@@ -395,7 +517,8 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     expect(resFilter.status).toBe(200);
     const list = await resFilter.json();
     expect(list).toHaveLength(2); // Retorna os members ativos (Owner e Barber)
-    const barberRep = list.find((item: any) => item.id === tenant.barber.id);
+    const barberRep = (list as CommissionReportRow[]).find((item) => item.id === tenant.barber.id);
+    if (!barberRep) throw new Error("Relatório do barbeiro não encontrado");
     expect(Number(barberRep.generatedAmount)).toBe(25.00);
     expect(Number(barberRep.releasedAmount)).toBe(25.00);
 

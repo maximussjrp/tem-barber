@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
-import { requireOperationalSession, forbidden } from "@/lib/operations/permissions";
+import { requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { registerPayment, closeComanda } from "@/lib/operations/payments";
@@ -33,8 +33,8 @@ export async function POST(
     return NextResponse.json({ error: "Body inválido." }, { status: 400 });
   }
 
-  if (!body.payments || !Array.isArray(body.payments) || body.payments.length === 0) {
-    return NextResponse.json({ error: "payments é obrigatório e deve ser um array não vazio." }, { status: 400 });
+  if (!Array.isArray(body.payments)) {
+    return NextResponse.json({ error: "payments deve ser um array." }, { status: 400 });
   }
 
   // Obter chave de idempotência dos headers ou do body
@@ -75,6 +75,17 @@ export async function POST(
         }
       }
 
+      const hasPendingService = comanda.items.some(
+        (item) => item.type === "SERVICE" && item.status === "PENDING"
+      );
+      if (hasPendingService) {
+        throw new OperationalError(
+          "PENDING_ITEMS",
+          "Conclua ou cancele todos os itens de serviço antes de finalizar a comanda.",
+          422
+        );
+      }
+
       // Recalcular totais para garantir dados atualizados
       const currentComanda = await recalculateComandaTotals(tx, id);
 
@@ -89,8 +100,17 @@ export async function POST(
 
       const remainingCents = toCents(currentComanda.remainingTotal);
 
-      // Se a comanda tiver valor total zero (ou coberta por descontos), e não enviou pagamentos
-      // permitimos fechar se a soma de pagamentos for 0 e o restante for 0.
+      if (body.payments.length === 0) {
+        if (remainingCents > 0) {
+          throw new OperationalError(
+            "PAYMENT_REQUIRED",
+            "Informe o pagamento para finalizar a comanda.",
+            422
+          );
+        }
+        return closeComanda(tx, data!.barbershopId, id);
+      }
+
       if (remainingCents === 0 && totalPaymentsCents > 0) {
         throw new OperationalError("OVERPAYMENT", "A comanda já está totalmente paga.", 422);
       }

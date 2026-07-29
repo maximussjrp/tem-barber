@@ -36,7 +36,11 @@ type FinancialSummaryData = {
   totals: {
     grossRevenue: number;
     totalDiscounts: number;
+    totalSurcharges: number;
     netRevenue: number;
+    commandReceived: number;
+    manualIncome: number;
+    manualExpenses: number;
     totalReceived: number;
     totalReceivable: number;
     totalExpenses: number;
@@ -412,7 +416,7 @@ export default function FinanceiroPage() {
               <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
                 {formatBRL(data.totals.grossRevenue)}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Antes dos descontos</p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Antes de descontos e acréscimos</p>
             </div>
 
             {/* 2. Descontos */}
@@ -434,7 +438,9 @@ export default function FinanceiroPage() {
               <p className="text-xl font-bold text-[var(--gold)] mt-2">
                 {formatBRL(data.totals.netRevenue)}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Bruto - Descontos</p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                Bruto - descontos + acréscimos
+              </p>
             </div>
 
             {/* 4. Total Recebido */}
@@ -445,7 +451,29 @@ export default function FinanceiroPage() {
               <p className="text-xl font-bold text-emerald-400 mt-2">
                 {formatBRL(data.totals.totalReceived)}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Pagamentos confirmados</p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                Comandas {formatBRL(data.totals.commandReceived)} + manuais {formatBRL(data.totals.manualIncome)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
+              <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                Entradas Manuais
+              </p>
+              <p className="text-xl font-bold text-emerald-400 mt-2">
+                {formatBRL(data.totals.manualIncome)}
+              </p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos de entrada</p>
+            </div>
+
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                Acréscimos
+              </p>
+              <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
+                {formatBRL(data.totals.totalSurcharges)}
+              </p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Incluídos no líquido</p>
             </div>
 
             {/* 5. A Receber */}
@@ -461,15 +489,15 @@ export default function FinanceiroPage() {
               </p>
             </div>
 
-            {/* 6. Despesas */}
+            {/* 6. Saídas manuais */}
             <div className="rounded-xl border border-red-500/20 bg-[var(--surface)] p-4 shadow-sm">
               <p className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                Despesas (Saídas)
+                Saídas Manuais
               </p>
               <p className="text-xl font-bold text-red-400 mt-2">
-                {formatBRL(data.totals.totalExpenses)}
+                {formatBRL(data.totals.manualExpenses)}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos manuais</p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos de saída</p>
             </div>
 
             {/* 7. Comissões Liberadas */}

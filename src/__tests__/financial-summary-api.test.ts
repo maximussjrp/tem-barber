@@ -458,7 +458,7 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     expect(body.topProfessionals[1].netRevenue).toBe(50);
   });
 
-  it("18. Timezone não exclui item criado no fim do dia (23:59:59)", async () => {
+  it("18. usa fronteira local de Sao Paulo com endExclusive", async () => {
     mockedRequireOperationalSession.mockResolvedValue({
       error: null,
       data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
@@ -476,11 +476,82 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           paidAt: {
-            gte: new Date(Date.UTC(2026, 6, 15, 0, 0, 0, 0)),
-            lte: new Date(Date.UTC(2026, 6, 15, 23, 59, 59, 999)),
+            gte: new Date(Date.UTC(2026, 6, 15, 3, 0, 0, 0)),
+            lt: new Date(Date.UTC(2026, 6, 16, 3, 0, 0, 0)),
           },
         }),
       })
     );
+  });
+
+  it("19. MANUAL_IN entra em totalReceived e operationalResult sem entrar em paymentMethods", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    mockedComanda.findMany.mockResolvedValue([]);
+    mockedPayment.findMany.mockResolvedValue([
+      { id: "p-1", barbershopId: barbershopId1, method: "PIX", amount: new Prisma.Decimal("100.00"), status: "CONFIRMED" } as any,
+    ]);
+    mockedFinancialEntry.findMany.mockResolvedValue([
+      { id: "fe-in", barbershopId: barbershopId1, type: "MANUAL_IN", amount: new Prisma.Decimal("40.00") } as any,
+      { id: "fe-out", barbershopId: barbershopId1, type: "MANUAL_OUT", amount: new Prisma.Decimal("-15.00") } as any,
+    ]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const req = createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" });
+    const res = await getFinancialSummary(req);
+    const body = await res.json();
+
+    expect(body.totals.commandReceived).toBe(100);
+    expect(body.totals.manualIncome).toBe(40);
+    expect(body.totals.manualExpenses).toBe(15);
+    expect(body.totals.totalReceived).toBe(140);
+    expect(body.totals.totalExpenses).toBe(15);
+    expect(body.totals.operationalResult).toBe(125);
+    const pixMethod = body.paymentMethods.find((m: any) => m.method === "PIX");
+    expect(pixMethod.amount).toBe(100);
+  });
+
+  it("20. surcharge entra no netRevenue e closedCommands.amount", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-surcharge",
+            barbershopId: barbershopId1,
+            status: "CLOSED",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("10.00"),
+            surchargeTotal: new Prisma.Decimal("15.00"),
+            total: new Prisma.Decimal("105.00"),
+            items: [],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockedPayment.findMany.mockResolvedValue([
+      { id: "p-surcharge", barbershopId: barbershopId1, method: "PIX", amount: new Prisma.Decimal("105.00"), status: "CONFIRMED" } as any,
+    ]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const req = createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" });
+    const res = await getFinancialSummary(req);
+    const body = await res.json();
+
+    expect(body.totals.grossRevenue).toBe(100);
+    expect(body.totals.totalDiscounts).toBe(10);
+    expect(body.totals.totalSurcharges).toBe(15);
+    expect(body.totals.netRevenue).toBe(105);
+    expect(body.closedCommands.amount).toBe(105);
+    expect(body.totals.commandReceived).toBe(105);
   });
 });

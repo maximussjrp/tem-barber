@@ -18,11 +18,15 @@ const { prismaMock, getAdminSessionMock, getMemberSessionMock } = vi.hoisted(() 
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    comandaItem: { findMany: vi.fn() },
+    payment: { findMany: vi.fn() },
+    customerClubSubscription: { findMany: vi.fn() },
+    clubBenefitUsage: { findMany: vi.fn() },
     timeOff: {
       findMany: vi.fn(),
     },
     user: { findFirst: vi.fn(), create: vi.fn() },
-    comanda: { count: vi.fn() },
+    comanda: { count: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -34,6 +38,18 @@ const { prismaMock, getAdminSessionMock, getMemberSessionMock } = vi.hoisted(() 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
 vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
 vi.mock("@/lib/member-api-auth", () => ({ getMemberSession: getMemberSessionMock }));
+
+type MockFindFirstArgs = {
+  where?: {
+    id?: string;
+  };
+};
+
+type MockComandaFindUniqueArgs = {
+  select?: {
+    customerId?: boolean;
+  };
+};
 
 import { POST as callNextAdmin } from "@/app/api/admin/waitlist/call-next/route";
 import { POST as callNextMember } from "@/app/api/member/waitlist/call-next/route";
@@ -91,7 +107,28 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
 
     prismaMock.onlineWaitlistMemberConfig.findUnique.mockResolvedValue(null);
 
-    prismaMock.appointment.findFirst.mockResolvedValue(null);
+    prismaMock.appointment.findFirst.mockImplementation((args: MockFindFirstArgs) => {
+      if (args?.where?.id === "app-fit-in-1") {
+        return Promise.resolve({
+          id: "app-fit-in-1",
+          barbershopId: "shop-1",
+          memberId: "member-barber-1",
+          customerId: null,
+          dateTime: new Date("2026-07-24T14:00:00.000Z"),
+          totalPrice: "50.00",
+          durationMin: 30,
+          customer: { id: "cust-1", name: "Carlos Cliente", phone: "5517999998888" },
+          services: [
+            {
+              serviceId: "service-corte",
+              priceApplied: "50.00",
+              service: { id: "service-corte", name: "Corte Tradicional", durationMin: 30 },
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
     prismaMock.timeOff.findMany.mockResolvedValue([]);
 
     prismaMock.appointment.create.mockResolvedValue({
@@ -115,6 +152,32 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     });
 
     prismaMock.onlineWaitlistEntry.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.comanda.findUnique.mockImplementation((args: MockComandaFindUniqueArgs) => {
+      if (args?.select?.customerId) {
+        return Promise.resolve({
+          customerId: "cust-1",
+          barbershopId: "shop-1",
+          createdAt: new Date("2026-07-24T14:00:00.000Z"),
+        });
+      }
+      return Promise.resolve(null);
+    });
+    prismaMock.comanda.create.mockResolvedValue({ id: "comanda-fit-in-1" });
+    prismaMock.comandaItem.findMany.mockResolvedValue([
+      { type: "SERVICE", status: "PENDING", total: "50.00", clubBenefitUsage: null },
+    ]);
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.customerClubSubscription.findMany.mockResolvedValue([]);
+    prismaMock.clubBenefitUsage.findMany.mockResolvedValue([]);
+    prismaMock.comanda.update.mockResolvedValue({
+      id: "comanda-fit-in-1",
+      barbershopId: "shop-1",
+      status: "OPEN",
+      total: "50.00",
+      remainingTotal: "50.00",
+      items: [],
+      payments: [],
+    });
 
     prismaMock.onlineWaitlistEntry.findUnique.mockResolvedValue({
       id: "entry-1",
@@ -397,7 +460,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(data.error).toBe("WAITLIST_ENTRY_ALREADY_CALLED");
   });
 
-  it("12. Confirma que NENHUMA Comanda é criada ao chamar o próximo", async () => {
+  it("12. cria comanda automaticamente ao chamar o próximo", async () => {
     getAdminSessionMock.mockResolvedValue({
       error: null,
       data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
@@ -408,9 +471,19 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
       body: JSON.stringify({ memberId: "member-barber-1" }),
     });
 
-    await callNextAdmin(req);
+    const res = await callNextAdmin(req);
+    const data = await res.json();
 
-    expect(prismaMock.comanda.count).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(data.comandaId).toBe("comanda-fit-in-1");
+    expect(prismaMock.comanda.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          appointmentId: "app-fit-in-1",
+          barbershopId: "shop-1",
+        }),
+      })
+    );
   });
 
   it("13. Confirma que publicTokenHash não vaza no payload da API", async () => {

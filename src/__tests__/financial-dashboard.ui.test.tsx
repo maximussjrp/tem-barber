@@ -12,7 +12,11 @@ const mockSummaryData = {
   totals: {
     grossRevenue: 1500.0,
     totalDiscounts: 100.0,
+    totalSurcharges: 50.0,
     netRevenue: 1400.0,
+    commandReceived: 1250.0,
+    manualIncome: 150.0,
+    manualExpenses: 150.0,
     totalReceived: 1400.0,
     totalReceivable: 250.0,
     totalExpenses: 150.0,
@@ -106,6 +110,9 @@ describe("Dashboard Financeiro por Período — PR #17 UI Tests", () => {
     expect(screen.getByText("R$ 1.500,00")).toBeInTheDocument(); // grossRevenue
     expect(screen.getByText("R$ 100,00")).toBeInTheDocument(); // totalDiscounts
     expect(screen.getAllByText("R$ 1.400,00").length).toBeGreaterThan(0); // netRevenue & totalReceived
+    expect(screen.getByText("Entradas Manuais")).toBeInTheDocument();
+    expect(screen.getByText("Acréscimos")).toBeInTheDocument();
+    expect(screen.getByText("Saídas Manuais")).toBeInTheDocument();
     expect(screen.getByText("Resultado Operacional")).toBeInTheDocument();
     expect(screen.getByText("+R$ 850,00")).toBeInTheDocument(); // operationalResult
   });
@@ -180,7 +187,11 @@ describe("Dashboard Financeiro por Período — PR #17 UI Tests", () => {
       totals: {
         grossRevenue: 0,
         totalDiscounts: 0,
+        totalSurcharges: 0,
         netRevenue: 0,
+        commandReceived: 0,
+        manualIncome: 0,
+        manualExpenses: 0,
         totalReceived: 0,
         totalReceivable: 0,
         totalExpenses: 0,

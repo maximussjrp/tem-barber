@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { ScheduleBlockConflictApptError } from "@/lib/appointments/errors";
 import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/create-fit-in-appointment";
 import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
+import { ensureComandaForAppointment } from "@/lib/operations/comandas";
 
 export interface CallNextWaitlistEntryInput {
   barbershopId: string;
@@ -217,6 +218,11 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
             fitInCreatedById: input.calledByUserId,
           });
 
+          const comanda = await ensureComandaForAppointment(tx, {
+            barbershopId: input.barbershopId,
+            appointmentId: appointment.id,
+          });
+
           // 9. Atomic update of OnlineWaitlistEntry
           const updateResult = await tx.onlineWaitlistEntry.updateMany({
             where: {
@@ -254,6 +260,13 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
           return {
             entry: updatedEntry,
             appointment,
+            comanda: {
+              id: comanda.id,
+              status: comanda.status,
+              total: comanda.total,
+              remainingTotal: comanda.remainingTotal,
+            },
+            comandaId: comanda.id,
             preferredMemberMismatch,
           };
         },

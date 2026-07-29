@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import { fromCents, nonNegativeCents, positiveCents, toCents } from "./money";
 import { syncCommissionReleaseForComanda } from "./commissions";
+import { resolveClubBenefitForComandaItem } from "./club";
 
 export const comandaInclude = {
   customer: { select: { id: true, name: true, phone: true } },
@@ -38,6 +39,91 @@ export class OperationalError extends Error {
   ) {
     super(message);
   }
+}
+
+export async function ensureComandaForAppointment(
+  tx: Prisma.TransactionClient,
+  input: {
+    barbershopId: string;
+    appointmentId: string;
+  }
+) {
+  const existing = await tx.comanda.findUnique({
+    where: { appointmentId: input.appointmentId },
+    include: comandaInclude,
+  });
+  if (existing) {
+    if (existing.barbershopId !== input.barbershopId) {
+      throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+    }
+    return existing;
+  }
+
+  const appointment = await tx.appointment.findFirst({
+    where: { id: input.appointmentId, barbershopId: input.barbershopId },
+    include: {
+      customer: { select: { id: true, name: true, phone: true } },
+      services: { include: { service: true } },
+    },
+  });
+  if (!appointment) {
+    throw new OperationalError("APPOINTMENT_NOT_FOUND", "Agendamento nao encontrado.", 404);
+  }
+
+  const itemsToCreate = [];
+  for (const item of appointment.services) {
+    let clubBenefitRequested = false;
+    let requestedClubPlanBenefitId = null;
+
+    try {
+      const resolved = await resolveClubBenefitForComandaItem({
+        barbershopId: input.barbershopId,
+        customerId: appointment.customerId,
+        serviceId: item.serviceId,
+        itemType: "SERVICE",
+        atDate: appointment.dateTime,
+        tx,
+      });
+
+      if (resolved.isApplicable) {
+        clubBenefitRequested = true;
+        requestedClubPlanBenefitId = resolved.clubPlanBenefitId;
+      }
+    } catch {
+      // Keep comanda creation available even when club preview is unavailable.
+    }
+
+    itemsToCreate.push({
+      barbershopId: input.barbershopId,
+      type: "SERVICE" as const,
+      description: item.service.name,
+      quantity: 1,
+      unitPrice: item.priceApplied,
+      total: item.priceApplied,
+      serviceId: item.serviceId,
+      executorId: appointment.memberId,
+      clubBenefitRequested,
+      requestedClubPlanBenefitId,
+    });
+  }
+
+  const comanda = await tx.comanda.create({
+    data: {
+      barbershopId: input.barbershopId,
+      appointmentId: appointment.id,
+      customerId: appointment.customerId,
+      customerName: appointment.customer.name,
+      customerPhone: appointment.customer.phone,
+      status: "OPEN",
+      openedAt: appointment.dateTime,
+      createdAt: appointment.dateTime,
+      items: {
+        create: itemsToCreate,
+      },
+    },
+  });
+
+  return recalculateComandaTotals(tx, comanda.id);
 }
 
 export function calculateItemTotal(input: {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOperationalSession } from "@/lib/api-auth";
 import { toCents } from "@/lib/operations/money";
+import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
 function money(cents: number): number {
   return Number((cents / 100).toFixed(2));
@@ -41,20 +42,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const [y1, m1, d1] = startDateStr.split("-").map(Number);
-  const [y2, m2, d2] = endDateStr.split("-").map(Number);
+  const start = localDateToUTCBoundary(startDateStr);
+  const endExclusive = localDateToUTCBoundary(shiftDateISO(endDateStr, 1));
 
-  const start = new Date(Date.UTC(y1, m1 - 1, d1, 0, 0, 0, 0));
-  const end = new Date(Date.UTC(y2, m2 - 1, d2, 23, 59, 59, 999));
-
-  if (end < start) {
+  if (endExclusive <= start) {
     return NextResponse.json(
       { error: "A data final não pode ser anterior à data inicial." },
       { status: 400 }
     );
   }
 
-  const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+  const diffDays = (endExclusive.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
   if (diffDays > 366) {
     return NextResponse.json(
       { error: "O período máximo permitido é de 366 dias." },
@@ -76,7 +74,7 @@ export async function GET(request: NextRequest) {
         where: {
           barbershopId,
           status: "CLOSED",
-          closedAt: { gte: start, lte: end },
+          closedAt: { gte: start, lt: endExclusive },
         },
         include: {
           items: {
@@ -105,16 +103,16 @@ export async function GET(request: NextRequest) {
       prisma.payment.findMany({
         where: {
           barbershopId,
-          paidAt: { gte: start, lte: end },
+          paidAt: { gte: start, lt: endExclusive },
         },
       }),
 
-      // Manual expenses in period
+      // Manual entries in period
       prisma.financialEntry.findMany({
         where: {
           barbershopId,
-          entryDate: { gte: start, lte: end },
-          type: "MANUAL_OUT",
+          entryDate: { gte: start, lt: endExclusive },
+          type: { in: ["MANUAL_IN", "MANUAL_OUT"] },
         },
       }),
 
@@ -122,7 +120,7 @@ export async function GET(request: NextRequest) {
       prisma.commissionEntry.findMany({
         where: {
           barbershopId,
-          updatedAt: { gte: start, lte: end },
+          updatedAt: { gte: start, lt: endExclusive },
           status: { in: ["RELEASED", "PAID", "PARTIALLY_RELEASED"] },
         },
         select: {
@@ -136,7 +134,7 @@ export async function GET(request: NextRequest) {
       prisma.commissionEntry.findMany({
         where: {
           barbershopId,
-          createdAt: { gte: start, lte: end },
+          createdAt: { gte: start, lt: endExclusive },
           status: "GENERATED",
         },
         select: {
@@ -148,6 +146,7 @@ export async function GET(request: NextRequest) {
     // 1. Calculations for Comandas & Items
     let grossRevenueCents = 0;
     let totalDiscountsCents = 0;
+    let totalSurchargesCents = 0;
 
     const topServicesMap: Record<
       string,
@@ -162,6 +161,7 @@ export async function GET(request: NextRequest) {
     for (const comanda of closedComandas) {
       grossRevenueCents += toCents(comanda.subtotal);
       totalDiscountsCents += toCents(comanda.discountTotal);
+      totalSurchargesCents += toCents(comanda.surchargeTotal);
 
       for (const item of comanda.items) {
         const itemGross = toCents(item.unitPrice) * Number(item.quantity);
@@ -206,7 +206,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const netRevenueCents = grossRevenueCents - totalDiscountsCents;
+    const netRevenueCents = grossRevenueCents - totalDiscountsCents + totalSurchargesCents;
 
     // 2. Open Comandas & Receivables
     let totalReceivableCents = 0;
@@ -236,7 +236,7 @@ export async function GET(request: NextRequest) {
     }
 
     const totalPaymentCents = Object.values(byMethod).reduce((acc, curr) => acc + curr.cents, 0);
-    const totalReceivedCents = totalPaymentCents - refundCents;
+    const commandReceivedCents = totalPaymentCents - refundCents;
 
     const paymentMethodsList = Object.entries(byMethod).map(([method, data]) => ({
       method,
@@ -244,11 +244,15 @@ export async function GET(request: NextRequest) {
       count: data.count,
     }));
 
-    // 4. Expenses
-    const totalExpensesCents = financialEntries.reduce(
-      (sum, entry) => sum + Math.abs(toCents(entry.amount)),
-      0
-    );
+    // 4. Manual entries
+    const manualIncomeCents = financialEntries
+      .filter((entry) => entry.type === "MANUAL_IN")
+      .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
+    const manualExpenseCents = financialEntries
+      .filter((entry) => entry.type === "MANUAL_OUT")
+      .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
+    const totalExpensesCents = manualExpenseCents;
+    const totalReceivedCents = commandReceivedCents + manualIncomeCents;
 
     // 5. Commissions
     let releasedCommissionsCents = 0;
@@ -303,7 +307,11 @@ export async function GET(request: NextRequest) {
       totals: {
         grossRevenue: money(grossRevenueCents),
         totalDiscounts: money(totalDiscountsCents),
+        totalSurcharges: money(totalSurchargesCents),
         netRevenue: money(netRevenueCents),
+        commandReceived: money(commandReceivedCents),
+        manualIncome: money(manualIncomeCents),
+        manualExpenses: money(manualExpenseCents),
         totalReceived: money(totalReceivedCents),
         totalReceivable: money(totalReceivableCents),
         totalExpenses: money(totalExpensesCents),
