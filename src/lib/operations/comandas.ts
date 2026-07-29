@@ -1,4 +1,5 @@
 import {
+  ComandaStatus,
   ComandaItemStatus,
   ComandaItemType,
   Prisma,
@@ -268,6 +269,86 @@ export async function assertEditableComanda(
     throw new OperationalError("COMANDA_CANCELLED", "Comanda cancelada nao pode ser editada.", 422);
   }
   return comanda;
+}
+
+export async function reopenComanda(
+  tx: Prisma.TransactionClient,
+  input: {
+    barbershopId: string;
+    comandaId: string;
+    reason: string;
+    userId: string;
+    memberId?: string | null;
+  }
+) {
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new OperationalError(
+      "REOPEN_REASON_REQUIRED",
+      "Informe um motivo com pelo menos 5 caracteres para reabrir a comanda.",
+      400
+    );
+  }
+
+  const comanda = await tx.comanda.findFirst({
+    where: { id: input.comandaId, barbershopId: input.barbershopId },
+  });
+  if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+  if (comanda.status === ComandaStatus.CANCELLED) {
+    throw new OperationalError("COMANDA_CANCELLED", "Comanda cancelada nao pode ser reaberta.", 422);
+  }
+  if (comanda.status !== ComandaStatus.CLOSED) {
+    throw new OperationalError("COMANDA_NOT_CLOSED", "Apenas comandas fechadas podem ser reabertas.", 422);
+  }
+
+  const payments = await tx.payment.findMany({
+    where: { comandaId: input.comandaId, barbershopId: input.barbershopId, status: "CONFIRMED" },
+  });
+  const paidCents = payments.reduce(
+    (sum, payment) => sum + Math.max(0, toCents(payment.amount) - toCents(payment.refundedAmount || 0)),
+    0
+  );
+  const totalCents = toCents(comanda.total);
+  if (totalCents < paidCents) {
+    throw new OperationalError(
+      "TOTAL_BELOW_PAID",
+      "O total atual da comanda esta abaixo do valor ja pago.",
+      422
+    );
+  }
+
+  const remainingCents = Math.max(0, totalCents - paidCents);
+  const newStatus = ComandaStatus.PENDING_PAYMENT;
+  const reopened = await tx.comanda.update({
+    where: { id: input.comandaId },
+    data: {
+      status: newStatus,
+      closedAt: null,
+      paidTotal: fromCents(paidCents),
+      remainingTotal: fromCents(remainingCents),
+    },
+    include: comandaInclude,
+  });
+
+  await tx.comandaReopenAudit.create({
+    data: {
+      barbershopId: input.barbershopId,
+      comandaId: input.comandaId,
+      reopenedByUserId: input.userId,
+      reopenedByMemberId: input.memberId ?? null,
+      reason,
+      previousStatus: comanda.status,
+      newStatus,
+      previousTotal: comanda.total,
+      previousPaidTotal: comanda.paidTotal,
+      previousRemainingTotal: comanda.remainingTotal,
+      newTotal: fromCents(totalCents),
+      newPaidTotal: fromCents(paidCents),
+      newRemainingTotal: fromCents(remainingCents),
+    },
+  });
+
+  return reopened;
 }
 
 export async function resolveExecutor(

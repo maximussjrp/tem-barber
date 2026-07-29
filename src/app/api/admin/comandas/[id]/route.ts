@@ -4,7 +4,7 @@ import { ComandaStatus } from "@prisma/client";
 import { closeComanda } from "@/lib/operations/payments";
 import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
-import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import { canManageComandas, canReopenComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
@@ -31,7 +31,12 @@ export async function GET(
   if (data!.role === "BARBER" && !comanda.items.some((item) => item.executorId === data!.memberId)) {
     return forbidden();
   }
-  return NextResponse.json(comanda);
+  return NextResponse.json({
+    ...comanda,
+    permissions: {
+      canReopen: comanda.status === "CLOSED" && canReopenComandas(data!.role),
+    },
+  });
 }
 
 export async function PATCH(

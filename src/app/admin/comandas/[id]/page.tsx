@@ -36,10 +36,30 @@ type Comanda = {
   createdAt: string;
   openedAt: string;
   closedAt: string | null;
+  permissions?: {
+    canReopen?: boolean;
+  };
 };
 type Service = { id: string; name: string; price: string };
 type Product = { id: string; name: string; salePrice: string; currentStock: string; trackStock: boolean };
 type Member = { id: string; user: { name: string } };
+type ClubBenefit = {
+  id: string;
+  benefitType: string;
+  serviceId?: string | null;
+  productId?: string | null;
+  isUnlimited?: boolean;
+  availableQty?: number | null;
+  includedQty?: number | null;
+  pointWeight?: number | string | null;
+  discountPercent?: number | string | null;
+  canUse?: boolean;
+};
+type ClubBalance = {
+  status?: string;
+  clubPlan?: { id: string; name: string } | null;
+  benefits?: ClubBenefit[];
+};
 
 function brl(value: string | number) {
   return Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -61,6 +81,7 @@ export default function ComandaDetailPage() {
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [showReopenModal, setShowReopenModal] = useState(false);
 
   // Form states
   const [selectedServiceId, setSelectedServiceId] = useState("");
@@ -71,9 +92,10 @@ export default function ComandaDetailPage() {
   
   const [discountAmount, setDiscountAmount] = useState("");
   const [discountReason, setDiscountReason] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
 
   // Customer Club states
-  const [clubBalance, setClubBalance] = useState<any>(null);
+  const [clubBalance, setClubBalance] = useState<ClubBalance | null>(null);
   const [clubBenefitRequested, setClubBenefitRequested] = useState(false);
   const [requestedClubPlanBenefitId, setRequestedClubPlanBenefitId] = useState("");
 
@@ -235,6 +257,22 @@ export default function ComandaDetailPage() {
     if (ok) setShowPaymentModal(false);
   }
 
+  async function handleReopen(e: React.FormEvent) {
+    e.preventDefault();
+    const reason = reopenReason.trim();
+    if (reason.length < 5) {
+      setError("Informe um motivo com pelo menos 5 caracteres para reabrir a comanda.");
+      return;
+    }
+
+    const ok = await mutate(`/api/admin/comandas/${id}/reopen`, { reason });
+    if (ok) {
+      setShowReopenModal(false);
+      setReopenReason("");
+      await load();
+    }
+  }
+
   function getStatusLabel(status: string) {
     switch (status) {
       case "OPEN": return "Aberta";
@@ -250,6 +288,7 @@ export default function ComandaDetailPage() {
   if (!comanda) return <div className="p-6 text-[var(--danger)]">{error || "Comanda não encontrada."}</div>;
 
   const comandaClosed = comanda.status === "CLOSED" || comanda.status === "CANCELLED";
+  const canReopenComanda = comanda.status === "CLOSED" && Boolean(comanda.permissions?.canReopen);
 
   // Build timeline from real data
   const timeline = [
@@ -296,6 +335,15 @@ export default function ComandaDetailPage() {
 
         {/* Desktop actions */}
         <div className="flex flex-wrap gap-2">
+          {canReopenComanda && (
+            <button
+              disabled={busy}
+              onClick={() => setShowReopenModal(true)}
+              className="px-4 py-2 rounded-lg border border-[var(--gold-border)] bg-[var(--surface)] hover:bg-[var(--surface-hover)] text-[var(--gold)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Reabrir comanda
+            </button>
+          )}
           {!comandaClosed && (
             <button
               disabled={busy}
@@ -410,6 +458,15 @@ export default function ComandaDetailPage() {
           <span className="text-xl font-bold text-[var(--gold)] font-serif">{brl(comanda.remainingTotal)}</span>
         </div>
         <div className="grid grid-cols-1">
+          {canReopenComanda && (
+            <button
+              disabled={busy}
+              onClick={() => setShowReopenModal(true)}
+              className="w-full py-3 rounded-lg border border-[var(--gold-border)] bg-[var(--surface-raised)] text-[var(--gold)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Reabrir comanda
+            </button>
+          )}
           {!comandaClosed && (
             <button
               disabled={busy}
@@ -430,6 +487,40 @@ export default function ComandaDetailPage() {
           onPay={handlePay} 
           onClose={() => setShowPaymentModal(false)} 
         />
+      )}
+
+      {showReopenModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
+          <form onSubmit={handleReopen} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Reabrir comanda</h2>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Pagamentos e registros financeiros existentes serao preservados. A comanda voltara para pagamento pendente e podera ser ajustada sem reduzir o total abaixo do valor ja pago.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                  Motivo <span className="text-[var(--danger)]">*</span>
+                </label>
+                <textarea
+                  value={reopenReason}
+                  onChange={e => setReopenReason(e.target.value)}
+                  minLength={5}
+                  maxLength={500}
+                  required
+                  rows={4}
+                  placeholder="Ex: Correcao de item lancado incorretamente"
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)] resize-none"
+                />
+              </div>
+            </div>
+            <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
+              <button type="button" onClick={() => setShowReopenModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Confirmar reabertura</button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showServiceModal && (
@@ -469,14 +560,14 @@ export default function ComandaDetailPage() {
                   <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Benefícios do Clube</p>
                   {(() => {
                     const matchingBenefits = clubBalance.benefits.filter(
-                      (b: any) => b.serviceId === selectedServiceId
+                      (b: ClubBenefit) => b.serviceId === selectedServiceId
                     );
                     if (matchingBenefits.length === 0) {
                       return <p className="text-xs text-[var(--text-muted)]">Nenhum benefício para este serviço.</p>;
                     }
                     return (
                       <div className="space-y-1.5">
-                        {matchingBenefits.map((b: any) => {
+                        {matchingBenefits.map((b: ClubBenefit) => {
                           const isIncluded = b.benefitType === "INCLUDED_SERVICE";
                           const label = isIncluded 
                             ? (b.isUnlimited ? "Serviço incluso (Ilimitado)" : `Serviço incluso (${b.availableQty} / ${b.includedQty} restantes)`)
@@ -566,14 +657,14 @@ export default function ComandaDetailPage() {
                   <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Benefícios do Clube</p>
                   {(() => {
                     const matchingBenefits = clubBalance.benefits.filter(
-                      (b: any) => b.productId === selectedProductId
+                      (b: ClubBenefit) => b.productId === selectedProductId
                     );
                     if (matchingBenefits.length === 0) {
                       return <p className="text-xs text-[var(--text-muted)]">Nenhum benefício para este produto.</p>;
                     }
                     return (
                       <div className="space-y-1.5">
-                        {matchingBenefits.map((b: any) => {
+                        {matchingBenefits.map((b: ClubBenefit) => {
                           const label = `Desconto de ${b.discountPercent}% no produto`;
 
                           return (

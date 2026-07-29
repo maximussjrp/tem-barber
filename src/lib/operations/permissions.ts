@@ -26,6 +26,10 @@ export function canManageComandas(role: string) {
   return role === "OWNER" || role === "MANAGER" || role === "BARBER";
 }
 
+export function canReopenComandas(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
 export function canManageFinancial(role: string) {
   return role === "OWNER" || role === "MANAGER";
 }

@@ -40,6 +40,7 @@ model User {
   verifiedWhatsappCustomerLinks CustomerBarbershopLink[]          @relation("WhatsappVerifiedBy")
   createdWaitlistSessions       OnlineWaitlistSession[]
   onlineWaitlistEntries         OnlineWaitlistEntry[]
+  comandaReopenAudits           ComandaReopenAudit[]
 
   @@map("users")
 }
@@ -105,6 +106,7 @@ model Barbershop {
   asaasBillingPayments        AsaasBillingPayment[]
   asaasWebhookEvents          AsaasWebhookEvent[]
   billingProfile              BarbershopBillingProfile?
+  comandaReopenAudits         ComandaReopenAudit[]
 
   @@map("barbershops")
 }
@@ -161,6 +163,7 @@ model BarbershopMember {
   preferredWaitlistEntries OnlineWaitlistEntry[]       @relation("WaitlistPreferredMember")
   calledWaitlistEntries    OnlineWaitlistEntry[]       @relation("WaitlistCalledByMember")
   onlineWaitlistConfig     OnlineWaitlistMemberConfig?
+  comandaReopenAudits      ComandaReopenAudit[]
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -558,15 +561,44 @@ model Comanda {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
-  barbershop  Barbershop    @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  appointment Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  customer    User?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  items       ComandaItem[]
-  payments    Payment[]
+  barbershop   Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  appointment  Appointment?         @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  customer     User?                @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items        ComandaItem[]
+  payments     Payment[]
+  reopenAudits ComandaReopenAudit[]
 
   @@index([barbershopId, status])
   @@index([barbershopId, openedAt])
   @@map("comandas")
+}
+
+model ComandaReopenAudit {
+  id                     String        @id @default(uuid())
+  barbershopId           String        @map("barbershop_id")
+  comandaId              String        @map("comanda_id")
+  reopenedByUserId       String        @map("reopened_by_user_id")
+  reopenedByMemberId     String?       @map("reopened_by_member_id")
+  reason                 String
+  previousStatus         ComandaStatus @map("previous_status")
+  newStatus              ComandaStatus @map("new_status")
+  previousTotal          Decimal       @map("previous_total") @db.Decimal(10, 2)
+  previousPaidTotal      Decimal       @map("previous_paid_total") @db.Decimal(10, 2)
+  previousRemainingTotal Decimal       @map("previous_remaining_total") @db.Decimal(10, 2)
+  newTotal               Decimal       @map("new_total") @db.Decimal(10, 2)
+  newPaidTotal           Decimal       @map("new_paid_total") @db.Decimal(10, 2)
+  newRemainingTotal      Decimal       @map("new_remaining_total") @db.Decimal(10, 2)
+  createdAt              DateTime      @default(now()) @map("created_at")
+
+  barbershop       Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comanda          Comanda           @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  reopenedByUser   User              @relation(fields: [reopenedByUserId], references: [id], onDelete: Restrict)
+  reopenedByMember BarbershopMember? @relation(fields: [reopenedByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, comandaId])
+  @@index([reopenedByUserId])
+  @@index([reopenedByMemberId])
+  @@map("comanda_reopen_audits")
 }
 
 model ComandaItem {
