@@ -1,4 +1,4 @@
-import { ComandaStatus, PaymentMethod, Prisma, StockMovementType } from "@prisma/client";
+import { ComandaStatus, PaymentMethod, Prisma } from "@prisma/client";
 import { syncCashSessionExpectedAmount } from "./cash";
 import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "./comandas";
@@ -97,21 +97,67 @@ export async function refundPayment(
   tx: Prisma.TransactionClient,
   input: {
     barbershopId: string;
+    comandaId?: string;
     paymentId: string;
     amount: string | number;
     reason: string;
     userId: string;
+    idempotencyKey?: string | null;
   }
 ) {
-  const amount = positiveCents(input.amount, "Estorno");
+  // Idempotency check
+  if (input.idempotencyKey) {
+    const existing = await tx.payment.findFirst({
+      where: {
+        barbershopId: input.barbershopId,
+        idempotencyKey: input.idempotencyKey,
+      },
+    });
+    if (existing) {
+      const updated = await recalculateComandaTotals(tx, existing.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Recalculo por estorno");
+      return updated;
+    }
+  }
+
+  // Reason check
+  if (!input.reason || input.reason.trim().length < 5) {
+    throw new OperationalError("REFUND_REASON_REQUIRED", "O motivo do estorno deve ter pelo menos 5 caracteres.", 400);
+  }
+
+  // Amount check
+  if (input.amount === undefined || input.amount === null || input.amount === "") {
+    throw new OperationalError("REFUND_AMOUNT_REQUIRED", "O valor do estorno é obrigatório.", 400);
+  }
+
+  let amount: number;
+  try {
+    amount = positiveCents(input.amount, "Estorno");
+  } catch {
+    throw new OperationalError("REFUND_AMOUNT_REQUIRED", "O valor do estorno deve ser maior que zero.", 400);
+  }
+
+  // Find original payment
   const original = await tx.payment.findFirst({
-    where: { id: input.paymentId, barbershopId: input.barbershopId, status: "CONFIRMED" },
+    where: { id: input.paymentId, barbershopId: input.barbershopId },
   });
-  if (!original) throw new OperationalError("PAYMENT_NOT_FOUND", "Pagamento nao encontrado.", 404);
+
+  if (!original) {
+    throw new OperationalError("PAYMENT_NOT_FOUND", "Pagamento não encontrado.", 404);
+  }
+
+  if (original.status !== "CONFIRMED") {
+    throw new OperationalError("PAYMENT_NOT_REFUNDABLE", "Este pagamento não pode ser estornado pois já foi estornado ou não está confirmado.", 422);
+  }
+
+  // Check comandaId match
+  if (input.comandaId && original.comandaId !== input.comandaId) {
+    throw new OperationalError("PAYMENT_COMANDA_MISMATCH", "O pagamento não pertence à comanda especificada.", 422);
+  }
 
   const refundable = toCents(original.amount) - toCents(original.refundedAmount);
   if (amount > refundable) {
-    throw new OperationalError("REFUND_EXCEEDS_PAYMENT", "Estorno excede saldo estornavel.", 422);
+    throw new OperationalError("REFUND_EXCEEDS_PAYMENT", "O valor do estorno excede o saldo estornável.", 422);
   }
 
   const refund = await tx.payment.create({
@@ -124,6 +170,7 @@ export async function refundPayment(
       refundOfId: original.id,
       refundReason: input.reason,
       receivedById: input.userId,
+      idempotencyKey: input.idempotencyKey || null,
     },
   });
 
@@ -216,7 +263,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
       // Resolve e registra cada um dos benefícios
       const competence = `${comanda.openedAt.getFullYear()}-${String(comanda.openedAt.getMonth() + 1).padStart(2, "0")}`;
 
-      const { getClubBenefitsBalance, resolveClubBenefitForComandaItem, registerClubBenefitUsage } = await import("./club");
+      const { resolveClubBenefitForComandaItem, registerClubBenefitUsage } = await import("./club");
 
       for (const item of itemsRequestingClub) {
         const itemType = item.type === "PRODUCT" ? "PRODUCT" : "SERVICE";
@@ -267,7 +314,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
 
         await registerClubBenefitUsage({
           barbershopId,
-          subscriptionId: (resolved as any).subscriptionId || activeSub.id,
+          subscriptionId: (resolved as { subscriptionId?: string }).subscriptionId || activeSub.id,
           comandaItemId: item.id,
           serviceId: item.serviceId || undefined,
           productId: item.productId || undefined,

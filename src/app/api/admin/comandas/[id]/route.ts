@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ComandaStatus } from "@prisma/client";
 import { closeComanda } from "@/lib/operations/payments";
-import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
-import { canManageComandas, canReopenComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import { canManageComandas, canReopenComandas, canRefundPayments, canCancelComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
@@ -35,6 +34,8 @@ export async function GET(
     ...comanda,
     permissions: {
       canReopen: comanda.status === "CLOSED" && canReopenComandas(data!.role),
+      canRefund: canRefundPayments(data!.role),
+      canCancel: canCancelComandas(data!.role),
     },
   });
 }
@@ -101,33 +102,15 @@ export async function PATCH(
         return closeComanda(tx, data!.barbershopId, id);
       }
       if (body.status === "CANCELLED") {
-        const { syncStockForComanda } = await import("@/lib/operations/stock");
-        await syncStockForComanda(tx, data!.barbershopId, id, "Cancelamento da comanda inteira", true);
-
-        const items = await tx.comandaItem.findMany({
-          where: { comandaId: id, status: { not: "CANCELLED" } }
+        if (!canCancelComandas(data!.role)) return forbidden();
+        const { cancelComanda } = await import("@/lib/operations/comandas");
+        return cancelComanda(tx, {
+          barbershopId: data!.barbershopId,
+          comandaId: id,
+          reason: "Cancelada via status",
+          refundAll: true,
+          userId: data!.userId,
         });
-        const { reverseClubBenefitUsage } = await import("@/lib/operations/club");
-        for (const item of items) {
-          await reverseClubBenefitUsage({
-            barbershopId: data!.barbershopId,
-            comandaItemId: item.id,
-            reversalReason: "Cancelamento da comanda inteira",
-            tx,
-          });
-        }
-
-        await tx.comandaItem.updateMany({
-          where: { comandaId: id, status: { not: "CANCELLED" } },
-          data: { status: "CANCELLED", cancelledAt: new Date() },
-        });
-        const cancelledComanda = await tx.comanda.update({
-          where: { id },
-          data: { status: "CANCELLED", cancelledAt: new Date() },
-          include: comandaInclude,
-        });
-        await syncCommissionReleaseForComanda(tx, data!.barbershopId, id);
-        return cancelledComanda;
       }
       return tx.comanda.update({
         where: { id },

@@ -599,3 +599,143 @@ export async function upsertDiscountItem(
   return updated;
 }
 
+export async function cancelComanda(
+  tx: Prisma.TransactionClient,
+  input: {
+    barbershopId: string;
+    comandaId: string;
+    reason: string;
+    userId: string;
+    refundAll?: boolean;
+  }
+) {
+  // 1. Validations
+  if (!input.reason || input.reason.trim().length < 5) {
+    throw new OperationalError("CANCEL_REASON_REQUIRED", "O motivo do cancelamento deve ter pelo menos 5 caracteres.", 400);
+  }
+
+  const comanda = await tx.comanda.findFirst({
+    where: { id: input.comandaId, barbershopId: input.barbershopId },
+    include: {
+      payments: { where: { status: "CONFIRMED" } },
+      items: { include: { clubBenefitUsage: true } },
+    },
+  });
+
+  if (!comanda) {
+    throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
+  }
+
+  if (comanda.status === "CANCELLED") {
+    throw new OperationalError("COMANDA_ALREADY_CANCELLED", "Comanda já está cancelada.", 422);
+  }
+
+  const paidTotalCents = toCents(comanda.paidTotal);
+  if (paidTotalCents > 0) {
+    if (!input.refundAll) {
+      throw new OperationalError("REFUND_REQUIRED", "A comanda possui pagamentos confirmados. É necessário estorná-los para cancelá-la.", 422);
+    }
+
+    const { refundPayment } = await import("./payments");
+    for (const payment of comanda.payments) {
+      const refundableCents = toCents(payment.amount) - toCents(payment.refundedAmount);
+      if (refundableCents > 0) {
+        await refundPayment(tx, {
+          barbershopId: input.barbershopId,
+          comandaId: comanda.id,
+          paymentId: payment.id,
+          amount: refundableCents / 100,
+          reason: `Estorno automático por cancelamento de comanda: ${input.reason}`,
+          userId: input.userId,
+          idempotencyKey: `auto-refund-${comanda.id}-${payment.id}`,
+        });
+      }
+    }
+  }
+
+  // 2. Revert club usages
+  const { reverseClubBenefitUsage } = await import("./club");
+  for (const item of comanda.items) {
+    if (item.clubBenefitUsage && item.clubBenefitUsage.status === "APPLIED") {
+      try {
+        await reverseClubBenefitUsage({
+          barbershopId: input.barbershopId,
+          comandaItemId: item.id,
+          reversalReason: `Cancelamento de comanda: ${input.reason}`,
+          tx,
+        });
+      } catch (err) {
+        const error = err as { code?: string; message?: string };
+        if (error.code === "SETTLEMENT_LOCKED" || error.message?.includes("SETTLEMENT_LOCKED") || error.message?.includes("liquidado")) {
+          throw new OperationalError(
+            "CLUB_USAGE_REVERSAL_REQUIRED",
+            "Não foi possível reverter o benefício do clube porque o ponto já foi liquidado em fechamento.",
+            422
+          );
+        }
+        throw err;
+      }
+    }
+  }
+
+  // 3. Cancel all active items
+  await tx.comandaItem.updateMany({
+    where: { comandaId: comanda.id, status: { not: "CANCELLED" } },
+    data: {
+      status: "CANCELLED",
+      cancelledAt: new Date(),
+    },
+  });
+
+  // 4. Update comanda status and cancel time
+  const updatedComanda = await tx.comanda.update({
+    where: { id: comanda.id },
+    data: {
+      status: ComandaStatus.CANCELLED,
+      cancelledAt: new Date(),
+      subtotal: 0,
+      discountTotal: 0,
+      surchargeTotal: 0,
+      total: 0,
+      paidTotal: 0,
+      remainingTotal: 0,
+    },
+    include: comandaInclude,
+  });
+
+  // 5. Revert stock
+  const { syncStockForComanda } = await import("./stock");
+  await syncStockForComanda(tx, input.barbershopId, comanda.id, `Reversão por cancelamento de comanda: ${input.reason}`, true);
+
+  // 6. Recalculate commissions
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, comanda.id, "Cancelamento de comanda");
+
+  // 7. Write cancel audit log
+  const member = await tx.barbershopMember.findUnique({
+    where: {
+      barbershopId_userId: {
+        barbershopId: input.barbershopId,
+        userId: input.userId,
+      },
+    },
+  });
+
+  await tx.comandaCancelAudit.create({
+    data: {
+      barbershopId: input.barbershopId,
+      comandaId: comanda.id,
+      cancelledByUserId: input.userId,
+      cancelledByMemberId: member?.id ?? null,
+      reason: input.reason,
+      previousStatus: comanda.status,
+      previousTotal: comanda.total,
+      previousPaidTotal: comanda.paidTotal,
+      previousRemainingTotal: comanda.remainingTotal,
+      refundedTotal: comanda.paidTotal,
+      newStatus: ComandaStatus.CANCELLED,
+    },
+  });
+
+  return updatedComanda;
+}
+

@@ -41,6 +41,7 @@ model User {
   createdWaitlistSessions       OnlineWaitlistSession[]
   onlineWaitlistEntries         OnlineWaitlistEntry[]
   comandaReopenAudits           ComandaReopenAudit[]
+  comandaCancelAudits           ComandaCancelAudit[]              @relation("ComandaCancelledByUser")
 
   @@map("users")
 }
@@ -107,6 +108,7 @@ model Barbershop {
   asaasWebhookEvents          AsaasWebhookEvent[]
   billingProfile              BarbershopBillingProfile?
   comandaReopenAudits         ComandaReopenAudit[]
+  comandaCancelAudits         ComandaCancelAudit[]
 
   @@map("barbershops")
 }
@@ -164,6 +166,7 @@ model BarbershopMember {
   calledWaitlistEntries    OnlineWaitlistEntry[]       @relation("WaitlistCalledByMember")
   onlineWaitlistConfig     OnlineWaitlistMemberConfig?
   comandaReopenAudits      ComandaReopenAudit[]
+  comandaCancelAudits      ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -567,6 +570,7 @@ model Comanda {
   items        ComandaItem[]
   payments     Payment[]
   reopenAudits ComandaReopenAudit[]
+  cancelAudits ComandaCancelAudit[]
 
   @@index([barbershopId, status])
   @@index([barbershopId, openedAt])
@@ -599,6 +603,32 @@ model ComandaReopenAudit {
   @@index([reopenedByUserId])
   @@index([reopenedByMemberId])
   @@map("comanda_reopen_audits")
+}
+
+model ComandaCancelAudit {
+  id                     String        @id @default(uuid())
+  barbershopId           String        @map("barbershop_id")
+  comandaId              String        @map("comanda_id")
+  cancelledByUserId      String        @map("cancelled_by_user_id")
+  cancelledByMemberId    String?       @map("cancelled_by_member_id")
+  reason                 String
+  previousStatus         ComandaStatus @map("previous_status")
+  previousTotal          Decimal       @map("previous_total") @db.Decimal(10, 2)
+  previousPaidTotal      Decimal       @map("previous_paid_total") @db.Decimal(10, 2)
+  previousRemainingTotal Decimal       @map("previous_remaining_total") @db.Decimal(10, 2)
+  refundedTotal          Decimal       @map("refunded_total") @db.Decimal(10, 2)
+  newStatus              ComandaStatus @map("new_status")
+  createdAt              DateTime      @default(now()) @map("created_at")
+
+  barbershop        Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comanda           Comanda           @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  cancelledByUser   User              @relation("ComandaCancelledByUser", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  cancelledByMember BarbershopMember? @relation("ComandaCancelledByMember", fields: [cancelledByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, comandaId])
+  @@index([cancelledByUserId])
+  @@index([cancelledByMemberId])
+  @@map("comanda_cancel_audits")
 }
 
 model ComandaItem {

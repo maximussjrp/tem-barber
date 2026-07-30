@@ -34,7 +34,14 @@ export function canManageFinancial(role: string) {
   return role === "OWNER" || role === "MANAGER";
 }
 
+export function canRefundPayments(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export function canCancelComandas(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
 export function forbidden() {
   return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
 }
-
