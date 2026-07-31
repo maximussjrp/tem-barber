@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, block: result });
   } catch (error: unknown) {
     if (error instanceof CustomerBlockError) {
-      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Erro ao desbloquear cliente.";
     return NextResponse.json({ error: message }, { status: 500 });

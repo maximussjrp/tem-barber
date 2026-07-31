@@ -1,22 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll } from "vitest";
 import prisma from "@/lib/prisma";
 import { normalizeBrazilPhone, isValidBrazilMobilePhone, sanitizePhoneForLog } from "@/lib/phone-utils";
 import { blockCustomer, unblockCustomer, listBlockedCustomers, isCustomerOrPhoneBlocked } from "@/lib/operations/blocked-customers";
-import * as blockRoute from "@/app/api/admin/customers/block/route";
-import * as unblockRoute from "@/app/api/admin/customers/unblock/route";
-import * as listRoute from "@/app/api/admin/customers/blocked/route";
 import * as bookRoute from "@/app/api/public/barbershop/[slug]/book/route";
 import { NextRequest } from "next/server";
 
-const testDatabaseUrl = process.env.DATABASE_URL || process.env.TEST_DATABASE_URL;
-const canRunIntegration =
+const testDatabaseUrl = process.env.DATABASE_URL || process.env.TEST_DATABASE_URL || "";
+const isSafeTestDatabase =
   Boolean(testDatabaseUrl) &&
-  /match_barber_blocklist_gate|match_barber_test|5434/.test(testDatabaseUrl || "") &&
-  !/prod|production/i.test(testDatabaseUrl || "");
+  /match_barber|localhost|127\.0\.0\.1|5434|5439/.test(testDatabaseUrl) &&
+  !/prod|production/i.test(testDatabaseUrl);
 
-const describeIf = canRunIntegration ? describe : describe.skip;
-
-function createNextRequest(url: string, method = "GET", body?: any, headers?: Record<string, string>): NextRequest {
+function createNextRequest(url: string, method = "GET", body?: unknown, headers?: Record<string, string>): NextRequest {
   const reqHeaders = new Headers(headers ?? {});
   if (body) reqHeaders.set("Content-Type", "application/json");
   return new NextRequest(url, {
@@ -26,11 +21,15 @@ function createNextRequest(url: string, method = "GET", body?: any, headers?: Re
   });
 }
 
-describeIf("Customer Blocklist Integration", () => {
+describe("Customer Blocklist Integration", () => {
+  beforeAll(() => {
+    if (!isSafeTestDatabase) {
+      throw new Error("customer-blocklist.integration.test.ts requires a safe test database");
+    }
+  });
   let tenantAId: string;
   let tenantBId: string;
   let tenantASlug: string;
-  let tenantBSlug: string;
   let ownerUserId: string;
   let ownerMemberId: string;
   let barberUserId: string;

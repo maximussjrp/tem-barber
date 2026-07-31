@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
-import { listBlockedCustomers } from "@/lib/operations/blocked-customers";
+import { listBlockedCustomers, CustomerBlockError } from "@/lib/operations/blocked-customers";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await getAdminSession();
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error: unknown) {
     if (error instanceof CustomerBlockError) {
-      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Erro ao listar clientes bloqueados.";
     return NextResponse.json({ error: message }, { status: 500 });
