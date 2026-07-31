@@ -110,15 +110,34 @@ export async function GET(
     take: 20,
   });
 
-  const history = recentAppointments.map((a) => ({
-    id: a.id,
-    dateTime: a.dateTime.toISOString(),
-    status: a.status,
-    bookingMode: a.bookingMode,
-    professional: a.barber.user.name,
-    services: a.services.map((s) => s.service.name),
-    totalPrice: Number(a.totalPrice),
+  const history = recentAppointments.map((h) => ({
+    id: h.id,
+    dateTime: h.dateTime ? new Date(h.dateTime).toISOString() : new Date().toISOString(),
+    status: h.status,
+    bookingMode: h.bookingMode,
+    totalPrice: Number(h.totalPrice ?? 0),
+    professional: h.barber?.user?.name ?? "Profissional",
+    services: Array.isArray(h.services) ? h.services.map((s: { service?: { name: string } }) => s.service?.name ?? "") : [],
   }));
+
+  // 6. Verificar se o cliente está bloqueado na barbearia
+  const activeBlock = prisma.barbershopBlockedCustomer
+    ? await prisma.barbershopBlockedCustomer.findFirst({
+        where: {
+          barbershopId,
+          active: true,
+          OR: [
+            { userId: customerId },
+            { phoneNormalized: user.phone },
+          ],
+        },
+        select: {
+          id: true,
+          reason: true,
+          blockedAt: true,
+        },
+      })
+    : null;
 
   // Retornar payload consolidado
   return NextResponse.json({
@@ -126,6 +145,12 @@ export async function GET(
     name: user.name,
     phone: user.phone,
     createdAt: user.createdAt.toISOString(),
+    isBlocked: Boolean(activeBlock),
+    blockRecord: activeBlock ? {
+      id: activeBlock.id,
+      reason: activeBlock.reason,
+      blockedAt: activeBlock.blockedAt.toISOString(),
+    } : null,
     metrics,
     history,
   });

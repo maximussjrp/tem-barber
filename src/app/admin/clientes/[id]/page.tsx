@@ -19,6 +19,12 @@ interface ClientData {
   name: string;
   phone: string;
   createdAt: string;
+  isBlocked?: boolean;
+  blockRecord?: {
+    id: string;
+    reason: string;
+    blockedAt: string;
+  } | null;
   metrics: {
     totalAppointments: number;
     completedVisits: number;
@@ -146,6 +152,10 @@ export default function Cliente360Page() {
   const [data, setData] = useState<ClientData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [blockReason, setBlockReason] = useState("");
+  const [blockError, setBlockError] = useState("");
+  const [submittingBlock, setSubmittingBlock] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -168,6 +178,53 @@ export default function Cliente360Page() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, [loadData]);
+
+  const handleBlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!blockReason || blockReason.trim().length < 5) {
+      setBlockError("O motivo deve ter no mínimo 5 caracteres.");
+      return;
+    }
+    setSubmittingBlock(true);
+    setBlockError("");
+    try {
+      const res = await fetch("/api/admin/customers/block", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id, phone: data?.phone, reason: blockReason }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.message || payload.error || "Erro ao bloquear cliente.");
+      setShowBlockModal(false);
+      setBlockReason("");
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro ao bloquear cliente.";
+      setBlockError(msg);
+    } finally {
+      setSubmittingBlock(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    if (!data?.blockRecord?.id) return;
+    const reason = prompt("Motivo do desbloqueio (mínimo 5 caracteres):");
+    if (!reason || reason.trim().length < 5) return;
+
+    try {
+      const res = await fetch("/api/admin/customers/unblock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockId: data.blockRecord.id, reason }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.message || payload.error || "Erro ao desbloquear cliente.");
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro ao desbloquear cliente.";
+      alert(msg);
+    }
+  };
 
   if (loading) {
     return (
@@ -208,7 +265,14 @@ export default function Cliente360Page() {
             {data.name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-stone-100">{data.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-stone-100">{data.name}</h1>
+              {data.isBlocked && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                  Bloqueado
+                </span>
+              )}
+            </div>
             <p className="text-sm text-stone-500 mt-0.5">{formatPhone(data.phone)}</p>
           </div>
         </div>
@@ -237,6 +301,23 @@ export default function Cliente360Page() {
           >
             WhatsApp
           </a>
+          {data.isBlocked ? (
+            <button
+              type="button"
+              onClick={handleUnblock}
+              className="px-4 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold hover:bg-emerald-500/20 transition-colors text-sm"
+            >
+              Desbloquear
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowBlockModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-semibold hover:bg-red-500/20 transition-colors text-sm"
+            >
+              Bloquear Cliente
+            </button>
+          )}
         </div>
       </div>
 
@@ -377,6 +458,55 @@ export default function Cliente360Page() {
           </div>
         )}
       </div>
+
+      {/* Block Modal */}
+      {showBlockModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 max-w-md w-full space-y-4">
+            <h3 className="text-lg font-bold text-stone-100">Bloquear Cliente</h3>
+            <p className="text-xs text-stone-400">
+              Ao bloquear, o cliente e seu número não conseguirão realizar agendamentos públicos nesta barbearia.
+              Agendamentos futuros ativos serão cancelados automaticamente.
+            </p>
+            <form onSubmit={handleBlockSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-400 mb-1">
+                  Motivo do bloqueio <span className="text-red-400">*</span>
+                </label>
+                <textarea
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  placeholder="Informe o motivo (mínimo 5 caracteres)..."
+                  rows={3}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-100 text-sm focus:border-red-500 focus:outline-none"
+                  required
+                />
+              </div>
+              {blockError && (
+                <p className="text-xs text-red-400 bg-red-950/30 p-2.5 rounded-lg border border-red-900/50">
+                  {blockError}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBlockModal(false)}
+                  className="px-4 py-2 rounded-xl bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingBlock}
+                  className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 disabled:opacity-50 transition-colors"
+                >
+                  {submittingBlock ? "Bloqueando..." : "Confirmar Bloqueio"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

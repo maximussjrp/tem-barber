@@ -86,8 +86,12 @@ export function normalizeBrazilianMobilePhone(input: string | null | undefined):
       if (localFirstDigit >= "2" && localFirstDigit <= "5") {
         return `55${digits}`; // do not inject 9
       }
-      // Otherwise inject 9
-      digits = `${digits.slice(0, 2)}9${digits.slice(2)}`;
+      // Mobile candidates start with 6, 7, 8, 9 (inject 9)
+      if (localFirstDigit >= "6" && localFirstDigit <= "9") {
+        digits = `${digits.slice(0, 2)}9${digits.slice(2)}`;
+        return `55${digits}`;
+      }
+      return null;
     }
     return `55${digits}`;
   }

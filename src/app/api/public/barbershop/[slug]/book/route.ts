@@ -39,6 +39,9 @@ import {
   hashPublicBookingPayload,
 } from "@/lib/appointments/idempotency";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
+import { isValidBrazilMobilePhone } from "@/lib/phone-utils";
+import { isCustomerOrPhoneBlocked } from "@/lib/operations/blocked-customers";
+
 
 interface SessionUser {
   id?: string;
@@ -270,6 +273,38 @@ export async function POST(
     return NextResponse.json({ error: "Barbearia nao encontrada." }, { status: 404 });
   }
 
+  // 1. Validação de telefone brasileiro para agendamento público
+  if (!isValidBrazilMobilePhone(customerPhone)) {
+    return NextResponse.json(
+      { error: "INVALID_PHONE", message: "Informe um WhatsApp válido para concluir o agendamento." },
+      { status: 400 }
+    );
+  }
+
+  // 2. Checar bloqueio por barbearia ANTES de criar qualquer usuário ou agendamento
+  let session: Record<string, unknown> | null = null;
+  let sessionUserId: string | null = null;
+  try {
+    session = await getServerSession(authOptions);
+    sessionUserId = (session?.user as SessionUser | undefined)?.id ?? null;
+  } catch {
+    session = null;
+    sessionUserId = null;
+  }
+
+  const isBlocked = await isCustomerOrPhoneBlocked({
+    barbershopId: barbershop.id,
+    phone: customerPhone,
+    userId: sessionUserId,
+  });
+
+  if (isBlocked) {
+    return NextResponse.json(
+      { error: "CUSTOMER_BLOCKED", message: "Não foi possível concluir o agendamento por este canal. Entre em contato com a barbearia." },
+      { status: 403 }
+    );
+  }
+
   // Verificar status de assinatura do tenant
   const subscription = await getTenantSubscription(barbershop.id);
   if (!isSubscriptionActive(subscription)) {
@@ -312,8 +347,6 @@ export async function POST(
   } catch (error) {
     return jsonError(error);
   }
-
-  const session = await getServerSession(authOptions);
 
   try {
     const transactionResult = await runSerializableTransaction(

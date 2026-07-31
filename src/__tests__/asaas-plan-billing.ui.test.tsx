@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -107,11 +107,12 @@ describe("Plano e cobranca Asaas", () => {
 
     render(<PlanoCobrancaPage />);
 
-    await user.type(await screen.findByLabelText(/Nome completo ou razão social/i), "Barbearia Teste Ltda");
-    await user.type(screen.getByLabelText("CPF"), "52998224725");
-    await user.type(screen.getByLabelText(/E-mail financeiro/i), "financeiro@example.com");
-    await user.type(screen.getByLabelText(/Telefone financeiro/i), "11999999999");
-    await user.click(screen.getByRole("button", { name: /Salvar dados de faturamento/i }));
+    const nameInput = await screen.findByLabelText(/Nome completo ou razão social/i);
+    fireEvent.change(nameInput, { target: { value: "Barbearia Teste Ltda" } });
+    fireEvent.change(screen.getByLabelText(/CPF|CNPJ/i), { target: { value: "52998224725" } });
+    fireEvent.change(screen.getByLabelText(/E-mail financeiro/i), { target: { value: "financeiro@example.com" } });
+    fireEvent.change(screen.getByLabelText(/Telefone financeiro/i), { target: { value: "11999999999" } });
+    fireEvent.click(screen.getByRole("button", { name: /Salvar dados de faturamento/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Dados de faturamento salvos/i)).toBeInTheDocument();

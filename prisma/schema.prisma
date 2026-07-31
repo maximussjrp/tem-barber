@@ -42,6 +42,9 @@ model User {
   onlineWaitlistEntries         OnlineWaitlistEntry[]
   comandaReopenAudits           ComandaReopenAudit[]
   comandaCancelAudits           ComandaCancelAudit[]              @relation("ComandaCancelledByUser")
+  blockedCustomers              BarbershopBlockedCustomer[]
+  blockedCustomersByMe          BarbershopBlockedCustomer[]       @relation("BlockedByUser")
+  unblockedCustomersByMe        BarbershopBlockedCustomer[]       @relation("UnblockedByUser")
 
   @@map("users")
 }
@@ -109,6 +112,7 @@ model Barbershop {
   billingProfile              BarbershopBillingProfile?
   comandaReopenAudits         ComandaReopenAudit[]
   comandaCancelAudits         ComandaCancelAudit[]
+  blockedCustomers            BarbershopBlockedCustomer[]
 
   @@map("barbershops")
 }
@@ -167,6 +171,8 @@ model BarbershopMember {
   onlineWaitlistConfig     OnlineWaitlistMemberConfig?
   comandaReopenAudits      ComandaReopenAudit[]
   comandaCancelAudits      ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
+  blockedCustomersByMe     BarbershopBlockedCustomer[] @relation("BlockedByMember")
+  unblockedCustomersByMe   BarbershopBlockedCustomer[] @relation("UnblockedByMember")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -1493,4 +1499,35 @@ model AsaasWebhookEvent {
   @@index([barbershopId])
   @@index([externalReference])
   @@map("asaas_webhook_events")
+}
+
+model BarbershopBlockedCustomer {
+  id                  String    @id @default(uuid())
+  barbershopId        String    @map("barbershop_id")
+  userId              String?   @map("user_id")
+  phoneNormalized     String    @map("phone_normalized")
+  nameSnapshot        String?   @map("name_snapshot")
+  reason              String
+  active              Boolean   @default(true)
+  blockedByUserId     String?   @map("blocked_by_user_id")
+  blockedByMemberId   String?   @map("blocked_by_member_id")
+  blockedAt           DateTime  @default(now()) @map("blocked_at")
+  unblockedByUserId   String?   @map("unblocked_by_user_id")
+  unblockedByMemberId String?   @map("unblocked_by_member_id")
+  unblockedAt         DateTime? @map("unblocked_at")
+  unblockReason       String?   @map("unblock_reason")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  barbershop        Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  blockedByUser     User?             @relation("BlockedByUser", fields: [blockedByUserId], references: [id], onDelete: SetNull)
+  blockedByMember   BarbershopMember? @relation("BlockedByMember", fields: [blockedByMemberId], references: [id], onDelete: SetNull)
+  unblockedByUser   User?             @relation("UnblockedByUser", fields: [unblockedByUserId], references: [id], onDelete: SetNull)
+  unblockedByMember BarbershopMember? @relation("UnblockedByMember", fields: [unblockedByMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([barbershopId, phoneNormalized])
+  @@index([barbershopId, active])
+  @@index([userId])
+  @@map("barbershop_blocked_customers")
 }
