@@ -988,13 +988,25 @@ export async function closeCommissionPeriod(
 
 export async function payCommissionPeriod(
   tx: Prisma.TransactionClient,
-  input: { barbershopId: string; periodId: string; paidByMemberId: string; userId: string }
+  input: { barbershopId: string; periodId: string; paidByMemberId: string; userId: string; role?: string }
 ) {
   const period = await tx.commissionPeriod.findFirst({
     where: { id: input.periodId, barbershopId: input.barbershopId },
   });
   if (!period) throw new CommissionError("PERIOD_NOT_FOUND", "Periodo nao encontrado.", 404);
-  if (period.memberId === input.paidByMemberId) {
+
+  let isAllowedSelfPayment = input.role === "OWNER" || input.role === "SUPER_ADMIN";
+  if (!isAllowedSelfPayment && input.paidByMemberId) {
+    const paidByMember = await tx.barbershopMember.findUnique({
+      where: { id: input.paidByMemberId },
+      select: { role: true },
+    });
+    if (paidByMember?.role === "OWNER") {
+      isAllowedSelfPayment = true;
+    }
+  }
+
+  if (period.memberId === input.paidByMemberId && !isAllowedSelfPayment) {
     throw new CommissionError("SELF_PAYMENT_FORBIDDEN", "Profissional nao pode pagar a propria comissao.", 403);
   }
   if (period.status === CommissionPeriodStatus.PAID) return period;

@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PaymentMethod, Prisma } from "@prisma/client";
+import { PaymentMethod } from "@prisma/client";
 import { requireOperationalSession } from "@/lib/api-auth";
+import { ClubError, registerManualClubSubscriptionPayment } from "@/lib/operations/club";
 import { z } from "zod";
 
 const createPaymentSchema = z.object({
-  amount: z.number().positive(),
+  amount: z.number().positive().optional(),
   paymentMethod: z.nativeEnum(PaymentMethod),
-  competence: z.string().regex(/^\d{4}-\d{2}$/, "Competência deve seguir o formato YYYY-MM"),
-  paidAt: z.string().datetime().optional(),
+  paidAt: z.string().optional(),
 });
 
 export async function GET(
@@ -35,7 +35,7 @@ export async function GET(
     });
 
     return NextResponse.json(payments);
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: "INTERNAL_ERROR", message: "Erro ao buscar pagamentos." }, { status: 500 });
   }
 }
@@ -50,15 +50,6 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const sub = await prisma.customerClubSubscription.findFirst({
-      where: { id, barbershopId: data.barbershopId },
-      include: { clubPlan: true },
-    });
-
-    if (!sub) {
-      return NextResponse.json({ error: "SUBSCRIPTION_NOT_FOUND", message: "Assinatura não encontrada." }, { status: 404 });
-    }
-
     const json = await request.json();
     const result = createPaymentSchema.safeParse(json);
     if (!result.success) {
@@ -67,23 +58,19 @@ export async function POST(
 
     const payData = result.data;
 
-    const payment = await prisma.clubSubscriptionPayment.create({
-      data: {
-        barbershopId: data.barbershopId,
-        subscriptionId: id,
-        customerId: sub.customerId,
-        clubPlanId: sub.clubPlanId,
-        amount: new Prisma.Decimal(payData.amount),
-        paymentMethod: payData.paymentMethod,
-        competence: payData.competence,
-        shopSharePercentSnapshot: sub.clubPlan.shopSharePercent,
-        barberPoolPercentSnapshot: sub.clubPlan.barberPoolPercent,
-        paidAt: payData.paidAt ? new Date(payData.paidAt) : new Date(),
-      },
+    const { payment, subscription } = await registerManualClubSubscriptionPayment({
+      barbershopId: data.barbershopId,
+      subscriptionId: id,
+      paymentMethod: payData.paymentMethod,
+      paidAt: payData.paidAt ? new Date(payData.paidAt) : new Date(),
+      amount: payData.amount,
     });
 
-    return NextResponse.json(payment, { status: 201 });
+    return NextResponse.json({ payment, subscription }, { status: 201 });
   } catch (err) {
+    if (err instanceof ClubError) {
+      return NextResponse.json({ error: err.code, message: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "INTERNAL_ERROR", message: "Erro ao registrar pagamento." }, { status: 500 });
   }
 }

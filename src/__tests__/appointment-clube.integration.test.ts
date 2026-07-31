@@ -162,6 +162,7 @@ describeIf("Agendamento e Integração com Plano Clube (Testes de Integração d
         status: "ACTIVE",
         currentPeriodStart: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 dias atrás
         currentPeriodEnd: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000),  // 25 dias no futuro
+        gracePeriodEnd: new Date(Date.now() + 26 * 24 * 60 * 60 * 1000),
       },
     });
 
@@ -228,6 +229,7 @@ describeIf("Agendamento e Integração com Plano Clube (Testes de Integração d
         status: "ACTIVE",
         currentPeriodStart: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
         currentPeriodEnd: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000),
+        gracePeriodEnd: new Date(Date.now() + 26 * 24 * 60 * 60 * 1000),
       },
     });
 

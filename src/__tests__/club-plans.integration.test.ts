@@ -409,6 +409,7 @@ describeIf("Plano Clube — Configuração Simplificada (Fase 3 Integration)", (
         status: "ACTIVE",
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        gracePeriodEnd: new Date(Date.now() + 31 * 24 * 3600 * 1000),
       }
     });
 
@@ -533,6 +534,7 @@ describeIf("Plano Clube — Configuração Simplificada (Fase 3 Integration)", (
         status: "ACTIVE",
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        gracePeriodEnd: new Date(Date.now() + 31 * 24 * 3600 * 1000),
       }
     });
 
@@ -562,6 +564,7 @@ describeIf("Plano Clube — Configuração Simplificada (Fase 3 Integration)", (
         status: "ACTIVE",
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        gracePeriodEnd: new Date(Date.now() + 31 * 24 * 3600 * 1000),
       }
     });
 

@@ -6,6 +6,7 @@ import {
   ClubPointStatus,
   ClubSettlementStatus,
   ClubBenefitUsageStatus,
+  PaymentMethod,
 } from "@prisma/client";
 import prisma from "../prisma";
 import { fromCents, toCents } from "./money";
@@ -18,6 +19,36 @@ export class ClubError extends Error {
   ) {
     super(message);
   }
+}
+
+export type EffectiveClubSubscriptionStatus =
+  | "ACTIVE"
+  | "GRACE_PERIOD"
+  | "EXPIRED"
+  | "CANCELED"
+  | "SUSPENDED";
+
+export function getEffectiveSubscriptionStatus(
+  subscription: {
+    status: ClubSubscriptionStatus;
+    currentPeriodEnd: Date;
+    gracePeriodEnd: Date;
+  },
+  atDate: Date = new Date()
+): EffectiveClubSubscriptionStatus {
+  if (subscription.status === ClubSubscriptionStatus.CANCELED) {
+    return "CANCELED";
+  }
+  if (subscription.status === ClubSubscriptionStatus.SUSPENDED) {
+    return "SUSPENDED";
+  }
+  if (atDate.getTime() < subscription.currentPeriodEnd.getTime()) {
+    return "ACTIVE";
+  }
+  if (atDate.getTime() < subscription.gracePeriodEnd.getTime()) {
+    return "GRACE_PERIOD";
+  }
+  return "EXPIRED";
 }
 
 /**
@@ -37,9 +68,9 @@ export async function getActiveCustomerClubSubscription(params: {
     where: {
       barbershopId: params.barbershopId,
       customerId: params.customerId,
-      status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
+      status: { notIn: [ClubSubscriptionStatus.CANCELED, ClubSubscriptionStatus.SUSPENDED] },
       currentPeriodStart: { lte: params.atDate },
-      currentPeriodEnd: { gt: params.atDate },
+      gracePeriodEnd: { gt: params.atDate },
     },
     include: {
       clubPlan: true,
@@ -48,15 +79,24 @@ export async function getActiveCustomerClubSubscription(params: {
 
   if (subscriptions.length === 0) return null;
 
+  const usable = subscriptions.filter((sub) => {
+    const eff = getEffectiveSubscriptionStatus(sub, params.atDate);
+    return eff === "ACTIVE" || eff === "GRACE_PERIOD";
+  });
+
+  if (usable.length === 0) return null;
+
   // Sort deterministically in memory:
   // 1. ACTIVE before GRACE_PERIOD
   // 2. clubPlan.isActive desc
   // 3. currentPeriodStart desc
   // 4. createdAt desc
   // 5. updatedAt desc
-  subscriptions.sort((a, b) => {
-    if (a.status === ClubSubscriptionStatus.ACTIVE && b.status === ClubSubscriptionStatus.GRACE_PERIOD) return -1;
-    if (a.status === ClubSubscriptionStatus.GRACE_PERIOD && b.status === ClubSubscriptionStatus.ACTIVE) return 1;
+  usable.sort((a, b) => {
+    const effA = getEffectiveSubscriptionStatus(a, params.atDate);
+    const effB = getEffectiveSubscriptionStatus(b, params.atDate);
+    if (effA === "ACTIVE" && effB === "GRACE_PERIOD") return -1;
+    if (effA === "GRACE_PERIOD" && effB === "ACTIVE") return 1;
 
     if (a.clubPlan.isActive && !b.clubPlan.isActive) return -1;
     if (!a.clubPlan.isActive && b.clubPlan.isActive) return 1;
@@ -74,7 +114,7 @@ export async function getActiveCustomerClubSubscription(params: {
     return bUpdated - aUpdated;
   });
 
-  return subscriptions[0];
+  return usable[0];
 }
 
 /**
@@ -779,6 +819,146 @@ export async function markClubSettlementPaid(params: {
     });
 
     return updated;
+  };
+
+  if (params.tx) {
+    return runInTx(params.tx);
+  } else {
+    return prisma.$transaction(runInTx);
+  }
+}
+
+/**
+ * 9. syncExpiredCustomerClubSubscriptions
+ * Sincroniza assinaturas vencidas para os status GRACE_PERIOD ou PAST_DUE.
+ */
+export async function syncExpiredCustomerClubSubscriptions(params: {
+  barbershopId?: string;
+  atDate?: Date;
+  tx?: Prisma.TransactionClient;
+}) {
+  const client = params.tx ?? prisma;
+  const now = params.atDate ?? new Date();
+
+  // 1. ACTIVE -> GRACE_PERIOD when currentPeriodEnd <= now and gracePeriodEnd > now
+  const toGrace = await client.customerClubSubscription.updateMany({
+    where: {
+      ...(params.barbershopId && { barbershopId: params.barbershopId }),
+      status: ClubSubscriptionStatus.ACTIVE,
+      currentPeriodEnd: { lte: now },
+      gracePeriodEnd: { gt: now },
+    },
+    data: {
+      status: ClubSubscriptionStatus.GRACE_PERIOD,
+    },
+  });
+
+  // 2. ACTIVE / GRACE_PERIOD -> PAST_DUE when gracePeriodEnd <= now
+  const toPastDue = await client.customerClubSubscription.updateMany({
+    where: {
+      ...(params.barbershopId && { barbershopId: params.barbershopId }),
+      status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
+      gracePeriodEnd: { lte: now },
+    },
+    data: {
+      status: ClubSubscriptionStatus.PAST_DUE,
+    },
+  });
+
+  return {
+    movedToGracePeriod: toGrace.count,
+    movedToPastDue: toPastDue.count,
+  };
+}
+
+/**
+ * 10. registerManualClubSubscriptionPayment
+ * Registra o pagamento manual de uma assinatura do clube, renovando o período e status.
+ */
+export async function registerManualClubSubscriptionPayment(params: {
+  barbershopId: string;
+  subscriptionId: string;
+  paymentMethod: PaymentMethod;
+  paidAt?: Date;
+  amount?: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const runInTx = async (tx: Prisma.TransactionClient) => {
+    const sub = await tx.customerClubSubscription.findFirst({
+      where: { id: params.subscriptionId, barbershopId: params.barbershopId },
+      include: { clubPlan: true },
+    });
+
+    if (!sub) {
+      throw new ClubError("SUBSCRIPTION_NOT_FOUND", "Assinatura não encontrada.", 404);
+    }
+
+    if (sub.status === ClubSubscriptionStatus.CANCELED || sub.status === ClubSubscriptionStatus.SUSPENDED) {
+      throw new ClubError("SUBSCRIPTION_NOT_USABLE", "Não é possível registrar pagamento para assinatura cancelada ou suspensa.", 422);
+    }
+
+    const planPrice = Number(sub.clubPlan.monthlyPrice);
+
+    // Requirement 4: Reject divergent amount if passed
+    if (params.amount !== undefined && params.amount !== null) {
+      if (toCents(params.amount) !== toCents(planPrice)) {
+        throw new ClubError(
+          "INVALID_PAYMENT_AMOUNT",
+          `O valor do pagamento deve ser exatamente o valor do plano (R$ ${planPrice.toFixed(2).replace(".", ",")}).`,
+          400
+        );
+      }
+    }
+
+    const paidAt = params.paidAt ?? new Date();
+
+    // Requirement 6: Early renewal vs expired renewal
+    // If current subscription is still active or in grace period (gracePeriodEnd > paidAt),
+    // preserve already paid days: cycleStart = max(paidAt, currentPeriodEnd)
+    let cycleStart: Date;
+    if (sub.gracePeriodEnd.getTime() > paidAt.getTime() && sub.currentPeriodEnd.getTime() > paidAt.getTime()) {
+      cycleStart = sub.currentPeriodEnd;
+    } else {
+      cycleStart = paidAt;
+    }
+
+    const cycleEnd = new Date(cycleStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const graceEnd = new Date(cycleEnd.getTime() + 1 * 24 * 60 * 60 * 1000);
+
+    // Requirement 5: Competence calculated by system (YYYY-MM)
+    const competence = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth() + 1).padStart(2, "0")}`;
+
+    const payment = await tx.clubSubscriptionPayment.create({
+      data: {
+        barbershopId: params.barbershopId,
+        subscriptionId: sub.id,
+        customerId: sub.customerId,
+        clubPlanId: sub.clubPlanId,
+        amount: sub.clubPlan.monthlyPrice,
+        paymentMethod: params.paymentMethod,
+        status: ClubPaymentStatus.PAID,
+        competence,
+        shopSharePercentSnapshot: sub.clubPlan.shopSharePercent,
+        barberPoolPercentSnapshot: sub.clubPlan.barberPoolPercent,
+        paidAt,
+      },
+    });
+
+    const updatedSub = await tx.customerClubSubscription.update({
+      where: { id: sub.id },
+      data: {
+        status: ClubSubscriptionStatus.ACTIVE,
+        currentPeriodStart: cycleStart,
+        currentPeriodEnd: cycleEnd,
+        gracePeriodEnd: graceEnd,
+      },
+      include: { clubPlan: true },
+    });
+
+    return {
+      payment,
+      subscription: updatedSub,
+    };
   };
 
   if (params.tx) {

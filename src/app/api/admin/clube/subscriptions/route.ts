@@ -105,6 +105,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const graceEnd = new Date(newEnd.getTime() + 1 * 24 * 60 * 60 * 1000);
+
     // 4. Criar assinatura com barbershopId do tenant operacional
     const subscription = await prisma.customerClubSubscription.create({
       data: {
@@ -114,6 +116,7 @@ export async function POST(request: NextRequest) {
         status: newStatus,
         currentPeriodStart: newStart,
         currentPeriodEnd: newEnd,
+        gracePeriodEnd: graceEnd,
       },
       include: {
         customer: { select: { id: true, name: true } },

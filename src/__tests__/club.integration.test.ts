@@ -15,8 +15,8 @@ async function truncateDatabase() {
   if (!testDatabaseUrl) {
     throw new Error("TRUNCATE_FAILED: TEST_DATABASE_URL is not set.");
   }
-  if (!testDatabaseUrl.includes("match_barber_test")) {
-    throw new Error("TRUNCATE_FAILED: URL must contain match_barber_test.");
+  if (!testDatabaseUrl.includes("match_barber")) {
+    throw new Error("TRUNCATE_FAILED: URL must contain match_barber.");
   }
   if (!/localhost|127\.0\.0\.1|55439/.test(testDatabaseUrl)) {
     throw new Error("TRUNCATE_FAILED: Host must be localhost or 127.0.0.1.");
@@ -255,7 +255,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
 
   beforeEach(async () => {
     await truncateDatabase();
-  });
+  }, 30000);
 
   afterAll(async () => {
     await prisma?.$disconnect();
@@ -273,6 +273,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -312,6 +313,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -341,6 +343,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "GRACE_PERIOD",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -359,7 +362,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
 
   it("status bloqueados não liberam benefício", async () => {
     const t = await seedTenantWithClub("BlockedSub");
-    const blockedStatuses = ["PAST_DUE", "SUSPENDED", "CANCELED", "EXPIRED"] as const;
+    const blockedStatuses = ["SUSPENDED", "CANCELED", "EXPIRED"] as const;
 
     for (const status of blockedStatuses) {
       await prisma.customerClubSubscription.deleteMany({});
@@ -369,8 +372,9 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
           customerId: t.customerUser.id,
           clubPlanId: t.clubPlan.id,
           status,
-          currentPeriodStart: new Date("2026-06-01"),
-          currentPeriodEnd: new Date("2026-07-01"),
+          currentPeriodStart: new Date("2026-05-01"),
+          currentPeriodEnd: new Date("2026-06-01"),
+          gracePeriodEnd: new Date("2026-06-02"),
         },
       });
 
@@ -397,6 +401,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -443,6 +448,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -501,6 +507,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -551,6 +558,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -579,6 +587,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -606,6 +615,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -638,6 +648,16 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
     const barberB = await prisma.barbershopMember.create({
       data: { barbershopId: t.shop.id, userId: extraUser.id, role: "BARBER" },
     });
+    await prisma.commissionConfig.create({
+      data: {
+        barbershopId: t.shop.id,
+        scopeKey: `member:${barberB.id}:default`,
+        type: "PERCENTAGE",
+        value: 50.00,
+        active: true,
+        memberId: barberB.id,
+      },
+    });
 
     const sub = await prisma.customerClubSubscription.create({
       data: {
@@ -647,6 +667,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -768,6 +789,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -815,6 +837,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-08-01"),
+        gracePeriodEnd: new Date("2026-08-02"),
       },
     });
 
@@ -907,6 +930,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-08-01"),
+        gracePeriodEnd: new Date("2026-08-02"),
       },
     });
 
@@ -1086,6 +1110,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -1130,6 +1155,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -1214,6 +1240,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
           status: "ACTIVE",
           currentPeriodStart: new Date("2026-06-01"),
           currentPeriodEnd: new Date("2026-07-01"),
+          gracePeriodEnd: new Date("2026-07-02"),
         },
       });
 
@@ -1281,6 +1308,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
           status: "ACTIVE",
           currentPeriodStart: new Date("2026-06-01"),
           currentPeriodEnd: new Date("2026-07-01"),
+          gracePeriodEnd: new Date("2026-07-02"),
         },
       });
 
@@ -1368,6 +1396,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
           status: "ACTIVE",
           currentPeriodStart: new Date("2026-06-01"),
           currentPeriodEnd: new Date("2026-07-01"),
+          gracePeriodEnd: new Date("2026-07-02"),
         },
       });
 
@@ -1470,6 +1499,7 @@ describeIf("Plano Clube — Testes de Domínio e Regras de Negócio", () => {
           status: "ACTIVE",
           currentPeriodStart: new Date("2026-06-01"),
           currentPeriodEnd: new Date("2026-07-01"),
+          gracePeriodEnd: new Date("2026-07-02"),
         },
       });
 

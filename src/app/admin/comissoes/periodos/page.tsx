@@ -131,7 +131,11 @@ export default function CommissionPeriodsPage() {
         onClose={() => setConfirmDialog({ isOpen: false, id: "", kind: null })}
         onConfirm={handleConfirm}
         title={confirmDialog.kind === "close" ? "Fechar período" : "Marcar como pago"}
-        description={`Tem certeza que deseja ${confirmDialog.kind === "close" ? "fechar" : "marcar como pago"} este período?`}
+        description={
+          confirmDialog.kind === "close"
+            ? "Tem certeza que deseja fechar este período?"
+            : "Tem certeza que deseja marcar como pago este período de comissão? Se você estiver registrando o pagamento para você mesmo, a ação será registrada e auditada."
+        }
         confirmLabel="Confirmar"
       />
     </div>

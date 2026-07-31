@@ -15,6 +15,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         periodId: id,
         paidByMemberId: data!.memberId!,
         userId: data!.userId,
+        role: data!.role,
       })
     );
     return NextResponse.json(paid);

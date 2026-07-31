@@ -419,6 +419,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -472,6 +473,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -492,7 +494,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
       data: { barbershopId: tA.shop.id, name: "Plan A", monthlyPrice: 100, shopSharePercent: 50, barberPoolPercent: 50 },
     });
     const subA = await prisma.customerClubSubscription.create({
-      data: { barbershopId: tA.shop.id, customerId: tA.customerUser.id, clubPlanId: planA.id, status: "ACTIVE", currentPeriodStart: new Date("2026-06-01"), currentPeriodEnd: new Date("2026-07-01") },
+      data: { barbershopId: tA.shop.id, customerId: tA.customerUser.id, clubPlanId: planA.id, status: "ACTIVE", currentPeriodStart: new Date("2026-06-01"), currentPeriodEnd: new Date("2026-07-01"), gracePeriodEnd: new Date("2026-07-02") },
     });
 
     const comanda = await prisma.comanda.create({
@@ -543,7 +545,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
       data: { barbershopId: t.shop.id, name: "Plan", monthlyPrice: 100, shopSharePercent: 50, barberPoolPercent: 50 },
     });
     const sub = await prisma.customerClubSubscription.create({
-      data: { barbershopId: t.shop.id, customerId: t.customerUser.id, clubPlanId: plan.id, status: "ACTIVE", currentPeriodStart: new Date("2026-06-01"), currentPeriodEnd: new Date("2026-07-01") },
+      data: { barbershopId: t.shop.id, customerId: t.customerUser.id, clubPlanId: plan.id, status: "ACTIVE", currentPeriodStart: new Date("2026-06-01"), currentPeriodEnd: new Date("2026-07-01"), gracePeriodEnd: new Date("2026-07-02") },
     });
 
     await prisma.clubSubscriptionPayment.create({
@@ -677,6 +679,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 

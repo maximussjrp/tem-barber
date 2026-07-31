@@ -221,6 +221,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
         createdAt: new Date("2026-06-01T10:00:00Z"),
         updatedAt: new Date("2026-06-01T10:00:00Z"),
       },
@@ -235,6 +236,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-10"),
         currentPeriodEnd: new Date("2026-07-10"),
+        gracePeriodEnd: new Date("2026-07-11"),
         createdAt: new Date("2026-06-10T10:00:00Z"),
         updatedAt: new Date("2026-06-10T10:00:00Z"),
       },
@@ -261,6 +263,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "GRACE_PERIOD",
         currentPeriodStart: new Date("2026-06-20"),
         currentPeriodEnd: new Date("2026-07-20"),
+        gracePeriodEnd: new Date("2026-07-21"),
         createdAt: new Date("2026-06-20T10:00:00Z"),
       },
     });
@@ -274,6 +277,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
         createdAt: new Date("2026-06-01T10:00:00Z"),
       },
     });
@@ -299,6 +303,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -310,6 +315,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-10"),
         currentPeriodEnd: new Date("2026-07-10"),
+        gracePeriodEnd: new Date("2026-07-11"),
       },
     });
 
@@ -335,6 +341,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01T00:00:00Z"),
         currentPeriodEnd: new Date("2026-06-30T00:00:00Z"),
+        gracePeriodEnd: new Date("2026-07-01T00:00:00Z"),
       },
     });
 
@@ -367,6 +374,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 
@@ -416,6 +424,7 @@ describeIf("Club Deterministic, Duplicity & Preview Integration Tests", () => {
         status: "ACTIVE",
         currentPeriodStart: new Date("2026-06-01"),
         currentPeriodEnd: new Date("2026-07-01"),
+        gracePeriodEnd: new Date("2026-07-02"),
       },
     });
 

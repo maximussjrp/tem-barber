@@ -666,6 +666,7 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
         status: "ACTIVE",
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        gracePeriodEnd: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
       }
     });
 

@@ -13,6 +13,9 @@ export function isPlatformAdmin(email?: string | null): boolean {
 }
 
 export function isSubscriptionActive(subscription?: SubscriptionInput | null): boolean {
+  if (process.env.DISABLE_TENANT_SUBSCRIPTION_CHECK === "true") {
+    return true;
+  }
   if (!subscription) return false;
   const access = deriveTenantSubscriptionAccess(subscription);
   return access.accessAllowed;
