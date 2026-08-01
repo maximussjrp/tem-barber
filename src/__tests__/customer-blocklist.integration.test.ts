@@ -30,6 +30,7 @@ describe("Customer Blocklist Integration", () => {
   let tenantAId: string;
   let tenantBId: string;
   let tenantASlug: string;
+  let tenantBSlug: string;
   let ownerUserId: string;
   let ownerMemberId: string;
   let barberUserId: string;

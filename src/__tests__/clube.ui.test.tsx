@@ -1,6 +1,6 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // ── Pages under test ──────────────────────────────────────────────────────────
 import ClubeDashboardPage from "@/app/admin/clube/page";
@@ -75,10 +75,20 @@ const USAGE = {
   },
 };
 
+const CURRENT_CYCLE_MOCK = {
+  cycle: { since: "2026-06-01T00:00:00.000Z", isFirstCycle: false, hasPoints: true, canClose: true, closedReason: null },
+  totals: { totalRevenue: "360.00", barberPool: "180.00", shopPool: "180.00", totalPoints: "3.0000", totalServicesCount: 1 },
+  barbers: [{ memberId: "bm-1", name: "Carlos", avatarUrl: null, servicesCount: 1, points: "3.0000", sharePercent: "100.00", estimatedAmount: "180.00" }],
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function mockFetch(map: Record<string, unknown>) {
+  const fullMap = {
+    "/api/admin/clube/settlements/current": CURRENT_CYCLE_MOCK,
+    ...map,
+  };
   // Ordena por comprimento decrescente: padrões mais longos (mais específicos) têm prioridade
-  const entries = Object.entries(map).sort((a, b) => b[0].length - a[0].length);
+  const entries = Object.entries(fullMap).sort((a, b) => b[0].length - a[0].length);
   global.fetch = vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     for (const [pattern, data] of entries) {
@@ -251,6 +261,9 @@ describe("Fase 4 — UI do Plano Clube", () => {
     );
     global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("current")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(CURRENT_CYCLE_MOCK) });
+      }
       if (url.includes("/settlements") && !url.includes("calculate") && (!init || init.method !== "POST")) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
       }
