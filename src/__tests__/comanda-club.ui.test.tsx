@@ -103,6 +103,30 @@ describe("ComandaItemCard UI and Club Benefit Toggle Tests", () => {
     });
   });
 
+  it("should render an explicit apply button for eligible club benefits", () => {
+    const onUpdateMock = vi.fn();
+    render(
+      <ComandaItemCard
+        item={defaultItem}
+        busy={false}
+        comandaClosed={false}
+        onConclude={vi.fn()}
+        onCancel={vi.fn()}
+        onUpdate={onUpdateMock}
+        clubBalance={mockClubBalance}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: /Aplicar benefício do clube/i });
+    expect(button).toBeInTheDocument();
+
+    fireEvent.click(button);
+    expect(onUpdateMock).toHaveBeenCalledWith("item-1", {
+      clubBenefitRequested: true,
+      requestedClubPlanBenefitId: "ben-1",
+    });
+  });
+
   it("should disable checkbox when available quantity is 0", () => {
     const exhaustedBalance = {
       ...mockClubBalance,

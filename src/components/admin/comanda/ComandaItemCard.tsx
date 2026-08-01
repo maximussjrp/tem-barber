@@ -25,14 +25,30 @@ type Item = {
   } | null;
 };
 
+type ClubBenefit = {
+  id: string;
+  benefitType: string;
+  serviceId?: string | null;
+  productId?: string | null;
+  isUnlimited?: boolean;
+  availableQty?: number | null;
+  includedQty?: number | null;
+  discountPercent?: number | string | null;
+  canUse?: boolean;
+};
+
+type ClubBalance = {
+  benefits?: ClubBenefit[];
+};
+
 interface Props {
   item: Item;
   busy: boolean;
   comandaClosed: boolean;
   onConclude: (id: string) => void;
   onCancel: (id: string) => void;
-  onUpdate?: (id: string, body: any) => void;
-  clubBalance?: any;
+  onUpdate?: (id: string, body: { clubBenefitRequested: boolean; requestedClubPlanBenefitId: string | null }) => void;
+  clubBalance?: ClubBalance | null;
 }
 
 export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCancel, onUpdate, clubBalance }: Props) {
@@ -57,11 +73,11 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
   const isClubApplied = item.clubBenefitUsage && item.clubBenefitUsage.status === "APPLIED";
   
   // Find simulated benefit from clubBalance if requested and not closed
-  let simulatedBenefit = null;
+  let simulatedBenefit: ClubBenefit | null = null;
   if (!isClubApplied && item.clubBenefitRequested && clubBalance && clubBalance.benefits) {
     simulatedBenefit = clubBalance.benefits.find(
-      (b: any) => b.id === item.requestedClubPlanBenefitId
-    );
+      (b) => b.id === item.requestedClubPlanBenefitId
+    ) ?? null;
   }
 
   const clubCovered = 
@@ -78,7 +94,7 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
   }
 
   // Find matching benefits to allow toggle
-  const matchingBenefits = clubBalance?.benefits?.filter((b: any) => {
+  const matchingBenefits = clubBalance?.benefits?.filter((b) => {
     if (item.type === "SERVICE" && b.serviceId === item.serviceId) return true;
     if (item.type === "PRODUCT" && b.productId === item.productId) return true;
     return false;
@@ -112,35 +128,64 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
             </p>
           )}
           
-          {!comandaClosed && !isCancelled && (item.type === "SERVICE" || item.type === "PRODUCT") && matchingBenefits.map((b: any) => {
-            const isIncluded = b.benefitType === "INCLUDED_SERVICE";
-            const label = isIncluded 
-              ? (b.isUnlimited ? "Usar pelo Clube (Ilimitado)" : `Usar pelo Clube (${b.availableQty} / ${b.includedQty} restantes)`)
-              : `Aplicar Desconto Clube (${b.discountPercent}%)`;
-            const canUse = b.canUse !== undefined ? b.canUse : (b.isUnlimited || (b.availableQty && b.availableQty > 0));
-            const isDisabled = isIncluded && !canUse && !item.clubBenefitRequested;
+          {!comandaClosed && !isCancelled && (item.type === "SERVICE" || item.type === "PRODUCT") && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {matchingBenefits.map((b) => {
+                const isIncluded = b.benefitType === "INCLUDED_SERVICE";
+                const label = isIncluded
+                  ? (b.isUnlimited ? "Usar pelo Clube (Ilimitado)" : `Usar pelo Clube (${b.availableQty} / ${b.includedQty} restantes)`)
+                  : `Aplicar Desconto Clube (${b.discountPercent}%)`;
+                const canUse = b.canUse !== undefined ? b.canUse : (b.isUnlimited || (b.availableQty && b.availableQty > 0));
+                const isDisabled = isIncluded && !canUse && !item.clubBenefitRequested;
+                const isSelected = !!(item.clubBenefitRequested && item.requestedClubPlanBenefitId === b.id);
 
-            return (
-              <label key={b.id} className={`flex items-center gap-2 mt-2 text-xs font-semibold text-[var(--gold)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>
-                <input
-                  type="checkbox"
-                  disabled={isDisabled || busy}
-                  checked={!!(item.clubBenefitRequested && item.requestedClubPlanBenefitId === b.id)}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    if (onUpdate) {
-                      onUpdate(item.id, {
-                        clubBenefitRequested: checked,
-                        requestedClubPlanBenefitId: checked ? b.id : null,
-                      });
-                    }
-                  }}
-                  className="rounded border-[var(--border-subtle)] focus:ring-[var(--gold)]"
-                />
-                <span>{label}</span>
-              </label>
-            );
-          })}
+                return (
+                  <div key={b.id} className="flex items-center gap-2 rounded border border-[var(--gold-border)] bg-[var(--brand-subtle)] px-2 py-1.5">
+                    <label className={`flex items-center gap-2 text-xs font-semibold text-[var(--gold)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>
+                      <input
+                        type="checkbox"
+                        disabled={isDisabled || busy}
+                        checked={isSelected}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          if (onUpdate) {
+                            onUpdate(item.id, {
+                              clubBenefitRequested: checked,
+                              requestedClubPlanBenefitId: checked ? b.id : null,
+                            });
+                          }
+                        }}
+                        className="rounded border-[var(--border-subtle)] focus:ring-[var(--gold)]"
+                      />
+                      <span>{label}</span>
+                    </label>
+                    {!isSelected && !isDisabled && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          if (onUpdate) {
+                            onUpdate(item.id, {
+                              clubBenefitRequested: true,
+                              requestedClubPlanBenefitId: b.id,
+                            });
+                          }
+                        }}
+                        className="rounded bg-[var(--gold)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--text-inverse)] disabled:opacity-50"
+                      >
+                        Aplicar benefício do clube
+                      </button>
+                    )}
+                    {isSelected && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+                        Benefício aplicado
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto">
           <span className="font-bold text-text-primary">
