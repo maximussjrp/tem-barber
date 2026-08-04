@@ -70,7 +70,9 @@ export async function getActiveCustomerClubSubscription(params: {
     where: {
       barbershopId: params.barbershopId,
       customerId: params.customerId,
-      status: { notIn: [ClubSubscriptionStatus.CANCELED, ClubSubscriptionStatus.SUSPENDED] },
+      // Only ACTIVE/GRACE_PERIOD subscriptions grant benefits. PAST_DUE (unpaid)
+      // and EXPIRED must never unlock club benefits.
+      status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
       currentPeriodStart: { lte: params.atDate },
       gracePeriodEnd: { gt: params.atDate },
     },

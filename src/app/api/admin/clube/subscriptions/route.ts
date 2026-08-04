@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const customerId = url.searchParams.get("customerId") || undefined;
     const statusStr = url.searchParams.get("status");
     let status: ClubSubscriptionStatus | undefined;
-    if (statusStr && Object.values(ClubSubscriptionStatus).includes(statusStr as any)) {
+    if (statusStr && Object.values(ClubSubscriptionStatus).includes(statusStr as ClubSubscriptionStatus)) {
       status = statusStr as ClubSubscriptionStatus;
     }
 
@@ -81,28 +81,32 @@ export async function POST(request: NextRequest) {
     // 3. Impedir criar nova assinatura ACTIVE/GRACE_PERIOD sobreposta para o mesmo customerId + barbershopId
     const newStart = new Date(subData.currentPeriodStart);
     const newEnd = new Date(subData.currentPeriodEnd);
-    const newStatus = subData.status ?? ClubSubscriptionStatus.PAST_DUE;
+    // The server never trusts a client-provided ACTIVE/GRACE_PERIOD status: a
+    // brand-new subscription has no confirmed payment yet, so it must start as
+    // PAST_DUE. Activation happens only when a payment is registered.
+    const newStatus = ClubSubscriptionStatus.PAST_DUE;
 
-    if (newStatus === ClubSubscriptionStatus.ACTIVE || newStatus === ClubSubscriptionStatus.GRACE_PERIOD) {
-      const overlapping = await prisma.customerClubSubscription.findFirst({
-        where: {
-          barbershopId: data.barbershopId,
-          customerId: subData.customerId,
-          status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
-          currentPeriodStart: { lt: newEnd },
-          currentPeriodEnd: { gt: newStart },
+    // Regardless of the status assigned to the new subscription, block creation
+    // when the customer already has an ACTIVE/GRACE_PERIOD subscription overlapping
+    // the requested period for this barbershop.
+    const overlapping = await prisma.customerClubSubscription.findFirst({
+      where: {
+        barbershopId: data.barbershopId,
+        customerId: subData.customerId,
+        status: { in: [ClubSubscriptionStatus.ACTIVE, ClubSubscriptionStatus.GRACE_PERIOD] },
+        currentPeriodStart: { lt: newEnd },
+        currentPeriodEnd: { gt: newStart },
+      },
+    });
+
+    if (overlapping) {
+      return NextResponse.json(
+        {
+          error: "OVERLAPPING_ACTIVE_SUBSCRIPTION",
+          message: "O cliente já possui uma assinatura ativa ou em período de graça para esta barbearia neste período.",
         },
-      });
-
-      if (overlapping) {
-        return NextResponse.json(
-          {
-            error: "OVERLAPPING_ACTIVE_SUBSCRIPTION",
-            message: "O cliente já possui uma assinatura ativa ou em período de graça para esta barbearia neste período.",
-          },
-          { status: 400 }
-        );
-      }
+        { status: 400 }
+      );
     }
 
     const graceEnd = new Date(newEnd.getTime() + 1 * 24 * 60 * 60 * 1000);

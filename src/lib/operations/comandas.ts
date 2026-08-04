@@ -161,9 +161,9 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   const comanda = tx.comanda.findUnique
     ? await tx.comanda.findUnique({
         where: { id: comandaId },
-        select: { customerId: true, barbershopId: true, createdAt: true },
+        select: { customerId: true, barbershopId: true, openedAt: true },
       })
-    : { customerId: null, barbershopId: "mock", createdAt: new Date() };
+    : { customerId: null, barbershopId: "mock", openedAt: new Date() };
   if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
 
   const regularItems = items.filter(
@@ -175,19 +175,23 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   // Sum raw subtotal
   const rawSubtotal = regularItems.reduce((sum, item) => sum + toCents(item.total), 0);
 
-  // Load active subscription and benefits balance for preview
+  // Load active subscription and benefits balance for preview.
+  // Club benefits are evaluated at the comanda's opened date so the totals preview
+  // stays consistent with finalization (closeComanda) and with the benefit
+  // resolution performed when the comanda/items were created.
   const { getActiveCustomerClubSubscription, getClubBenefitsBalance } = await import("./club");
+  const clubEvalDate = comanda.openedAt || new Date();
   const activeSub = comanda.customerId ? await getActiveCustomerClubSubscription({
     barbershopId: comanda.barbershopId,
     customerId: comanda.customerId,
-    atDate: comanda.createdAt || new Date(),
+    atDate: clubEvalDate,
     tx,
   }) : null;
 
   const balance = activeSub ? await getClubBenefitsBalance({
     barbershopId: comanda.barbershopId,
     subscriptionId: activeSub.id,
-    atDate: comanda.createdAt || new Date(),
+    atDate: clubEvalDate,
     tx,
   }) : null;
 
