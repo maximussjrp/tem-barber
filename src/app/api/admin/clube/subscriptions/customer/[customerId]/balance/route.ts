@@ -21,7 +21,7 @@ export async function GET(
         customerId,
         status: { in: ["ACTIVE", "GRACE_PERIOD"] },
         currentPeriodStart: { lte: atDate },
-        currentPeriodEnd: { gt: atDate },
+        gracePeriodEnd: { gt: atDate },
       },
       include: { clubPlan: true },
     });

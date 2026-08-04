@@ -914,11 +914,18 @@ export async function registerManualClubSubscriptionPayment(params: {
 
     const paidAt = params.paidAt ?? new Date();
 
-    // Requirement 6: Early renewal vs expired renewal
+    const previousPaymentsCount = await tx.clubSubscriptionPayment.count({
+      where: { subscriptionId: sub.id, status: ClubPaymentStatus.PAID },
+    });
+
+    // Requirement 6: Early renewal vs expired renewal vs first payment
+    // If first payment or subscription was PAST_DUE (unpaid), start cycle at paidAt
     // If current subscription is still active or in grace period (gracePeriodEnd > paidAt),
     // preserve already paid days: cycleStart = max(paidAt, currentPeriodEnd)
     let cycleStart: Date;
-    if (sub.gracePeriodEnd.getTime() > paidAt.getTime() && sub.currentPeriodEnd.getTime() > paidAt.getTime()) {
+    if (previousPaymentsCount === 0 || sub.status === ClubSubscriptionStatus.PAST_DUE) {
+      cycleStart = paidAt;
+    } else if (sub.gracePeriodEnd.getTime() > paidAt.getTime() && sub.currentPeriodEnd.getTime() > paidAt.getTime()) {
       cycleStart = sub.currentPeriodEnd;
     } else {
       cycleStart = paidAt;

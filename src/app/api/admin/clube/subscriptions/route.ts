@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     // 3. Impedir criar nova assinatura ACTIVE/GRACE_PERIOD sobreposta para o mesmo customerId + barbershopId
     const newStart = new Date(subData.currentPeriodStart);
     const newEnd = new Date(subData.currentPeriodEnd);
-    const newStatus = subData.status ?? ClubSubscriptionStatus.ACTIVE;
+    const newStatus = subData.status ?? ClubSubscriptionStatus.PAST_DUE;
 
     if (newStatus === ClubSubscriptionStatus.ACTIVE || newStatus === ClubSubscriptionStatus.GRACE_PERIOD) {
       const overlapping = await prisma.customerClubSubscription.findFirst({
