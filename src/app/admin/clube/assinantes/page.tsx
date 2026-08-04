@@ -33,15 +33,18 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR");
 }
 
-function computeEffectiveStatus(sub: Subscription): string {
-  if (sub.status === "CANCELED") return "CANCELED";
-  if (sub.status === "SUSPENDED") return "SUSPENDED";
-  const now = new Date().getTime();
-  const end = new Date(sub.currentPeriodEnd).getTime();
-  const grace = sub.gracePeriodEnd ? new Date(sub.gracePeriodEnd).getTime() : end + 24 * 60 * 60 * 1000;
-  if (now < end) return "ACTIVE";
-  if (now < grace) return "GRACE_PERIOD";
-  return "EXPIRED";
+function getSubscriptionDisplayStatus(sub: Subscription): string {
+  switch (sub.status) {
+    case "ACTIVE":
+    case "GRACE_PERIOD":
+    case "PAST_DUE":
+    case "SUSPENDED":
+    case "CANCELED":
+    case "EXPIRED":
+      return sub.status;
+    default:
+      return "ACTIVE";
+  }
 }
 
 const STATUS_OPTIONS = [
@@ -364,7 +367,7 @@ export default function AssinantesPage() {
       ) : (
         <div className="grid gap-3">
           {subscriptions.map((sub) => {
-            const effStatus = computeEffectiveStatus(sub);
+            const effStatus = getSubscriptionDisplayStatus(sub);
             return (
               <div key={sub.id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)]">
                 <div

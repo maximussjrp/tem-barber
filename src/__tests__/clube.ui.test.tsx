@@ -41,6 +41,14 @@ const SUBSCRIPTION = {
   clubPlan:           { id: "plan-123", name: "Plano Ouro", monthlyPrice: "120.00", shopSharePercent: "50", barberPoolPercent: "50" },
 };
 
+const PAST_DUE_SUBSCRIPTION = {
+  ...SUBSCRIPTION,
+  id: "sub-past-due",
+  status: "PAST_DUE",
+  customer: { id: "cust-2", name: "Maria Souza", phone: "11988888888" },
+  clubPlan: { ...SUBSCRIPTION.clubPlan, name: "Plano Bronze" },
+};
+
 const SETTLEMENT = {
   id: "settle-1",
   competence: "2026-06",
@@ -188,6 +196,21 @@ describe("Fase 4 — UI do Plano Clube", () => {
     const ativos = screen.getAllByText("Ativo");
     const badge = ativos.find((el) => el.tagName.toUpperCase() === "SPAN" && (el.classList.contains("badge") || el.className.includes("badge")));
     expect(badge || ativos.length > 0).toBeTruthy();
+  });
+
+  it("5b. exibe 'Em atraso' para assinatura PAST_DUE sem derivar para ATIVO", async () => {
+    mockFetch({
+      "/api/admin/clube/subscriptions": [PAST_DUE_SUBSCRIPTION],
+      "/api/admin/clube/plans":         [PLAN],
+    });
+
+    render(<AssinantesPage />);
+
+    expect(await screen.findByText("Maria Souza")).toBeInTheDocument();
+    const labels = screen.getAllByText("Em atraso");
+    expect(labels.length).toBeGreaterThan(0);
+    const badge = labels.find((el) => el.tagName.toUpperCase() === "SPAN");
+    expect(badge).toBeTruthy();
   });
 
   // 6. Abre modal de vincular cliente
