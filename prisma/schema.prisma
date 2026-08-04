@@ -547,6 +547,8 @@ enum FinancialEntryType {
   REFUND
   MANUAL_IN
   MANUAL_OUT
+  CLUB_REVENUE
+  CLUB_BARBER_PAYOUT
 }
 
 model Comanda {
@@ -780,23 +782,30 @@ model CashMovement {
 }
 
 model FinancialEntry {
-  id           String             @id @default(uuid())
-  barbershopId String             @map("barbershop_id")
-  type         FinancialEntryType
-  category     String
-  amount       Decimal            @db.Decimal(10, 2)
-  description  String
-  entryDate    DateTime           @default(now()) @map("entry_date")
-  userId       String?            @map("user_id")
-  comandaId    String?            @map("comanda_id")
-  paymentId    String?            @map("payment_id")
-  createdAt    DateTime           @default(now()) @map("created_at")
+  id                        String             @id @default(uuid())
+  barbershopId              String             @map("barbershop_id")
+  type                      FinancialEntryType
+  category                  String
+  amount                    Decimal            @db.Decimal(10, 2)
+  description               String
+  entryDate                 DateTime           @default(now()) @map("entry_date")
+  userId                    String?            @map("user_id")
+  comandaId                 String?            @map("comanda_id")
+  paymentId                 String?            @map("payment_id")
+  clubSubscriptionPaymentId String?            @unique @map("club_subscription_payment_id")
+  settlementId              String?            @map("settlement_id")
+  settlementMemberId        String?            @unique @map("settlement_member_id")
+  createdAt                 DateTime           @default(now()) @map("created_at")
 
-  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  payment    Payment?   @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  barbershop              Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  payment                 Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  clubSubscriptionPayment ClubSubscriptionPayment? @relation(fields: [clubSubscriptionPaymentId], references: [id], onDelete: SetNull)
+  settlement              ClubSettlement?          @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+  settlementMember        ClubSettlementMember?    @relation(fields: [settlementMemberId], references: [id], onDelete: SetNull)
 
   @@index([barbershopId, entryDate])
   @@index([barbershopId, type])
+  @@index([settlementId])
   @@map("financial_entries")
 }
 
@@ -1130,10 +1139,11 @@ model ClubSubscriptionPayment {
   paidAt                    DateTime          @map("paid_at")
   createdAt                 DateTime          @default(now()) @map("created_at")
 
-  barbershop   Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  subscription CustomerClubSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  customer     User                     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  clubPlan     ClubPlan                 @relation(fields: [clubPlanId], references: [id])
+  barbershop     Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  subscription   CustomerClubSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  customer       User                     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  clubPlan       ClubPlan                 @relation(fields: [clubPlanId], references: [id])
+  financialEntry FinancialEntry?
 
   @@index([barbershopId, subscriptionId])
   @@index([customerId])
@@ -1221,9 +1231,10 @@ model ClubSettlement {
   createdAt   DateTime             @default(now()) @map("created_at")
   updatedAt   DateTime             @updatedAt @map("updated_at")
 
-  barbershop   Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  members      ClubSettlementMember[]
-  pointEntries ClubPointEntry[]
+  barbershop       Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  members          ClubSettlementMember[]
+  pointEntries     ClubPointEntry[]
+  financialEntries FinancialEntry[]
 
   @@unique([barbershopId, competence])
   @@map("club_settlements")
@@ -1237,8 +1248,9 @@ model ClubSettlementMember {
   amount       Decimal   @db.Decimal(10, 2)
   paidAt       DateTime? @map("paid_at")
 
-  settlement ClubSettlement   @relation(fields: [settlementId], references: [id], onDelete: Cascade)
-  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  settlement     ClubSettlement   @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  member         BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  financialEntry FinancialEntry?
 
   @@unique([settlementId, memberId])
   @@map("club_settlement_members")

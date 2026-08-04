@@ -53,6 +53,9 @@ let commissionOps: typeof import("@/lib/operations/commissions");
 async function truncateDatabase() {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
+      "financial_entries",
+      "cash_movements",
+      "cash_sessions",
       "club_settlement_members",
       "club_settlements",
       "club_point_entries",
@@ -230,7 +233,7 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
       const now = new Date();
 
       // Expired subscription
-      const expiredSub = await prisma.customerClubSubscription.create({
+      await prisma.customerClubSubscription.create({
         data: {
           barbershopId: shop.id,
           customerId: customer.id,
@@ -585,6 +588,175 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
           })
         )
       ).rejects.toThrow(/pagar a propria comissao/i);
+    });
+  });
+
+  describe("LOTE B — Entrada Financeira e Caixa do Clube (FT1-FT9, FT14-FT15)", () => {
+    it("FT1-FT4, FT9, FT14: Pagamento PIX cria exatamente 1 FinancialEntry CLUB_REVENUE com valor, data e id corretos sem CashMovement ou Payout", async () => {
+      const { shop, clubPlan, customer } = await createTestFixtures();
+
+      const sub = await prisma.customerClubSubscription.create({
+        data: {
+          barbershopId: shop.id,
+          customerId: customer.id,
+          clubPlanId: clubPlan.id,
+          status: "ACTIVE",
+          currentPeriodStart: new Date("2026-07-01T00:00:00Z"),
+          currentPeriodEnd: new Date("2026-07-31T23:59:59Z"),
+          gracePeriodEnd: new Date("2026-08-01T23:59:59Z"),
+        },
+      });
+
+      const paidAt = new Date("2026-07-15T14:30:00Z");
+
+      const result = await clubOps.registerManualClubSubscriptionPayment({
+        barbershopId: shop.id,
+        subscriptionId: sub.id,
+        paymentMethod: PaymentMethod.PIX,
+        paidAt,
+      });
+
+      expect(result.payment).toBeDefined();
+      expect(result.payment.paymentMethod).toBe("PIX");
+
+      // FT1: exatamente 1 FinancialEntry
+      const entries = await prisma.financialEntry.findMany({
+        where: { barbershopId: shop.id },
+      });
+      expect(entries).toHaveLength(1);
+
+      const entry = entries[0];
+      // FT1: type = CLUB_REVENUE
+      expect(entry.type).toBe("CLUB_REVENUE");
+      // FT2: Valor da FinancialEntry = valor bruto pago (R$ 100.00)
+      expect(Number(entry.amount)).toBe(100.0);
+      // FT3: entryDate = paidAt
+      expect(entry.entryDate.getTime()).toBe(paidAt.getTime());
+      // FT4: clubSubscriptionPaymentId preenchido
+      expect(entry.clubSubscriptionPaymentId).toBe(result.payment.id);
+      expect(entry.category).toBe("PIX");
+
+      // FT9: PIX não cria CashMovement
+      const movements = await prisma.cashMovement.findMany({
+        where: { barbershopId: shop.id },
+      });
+      expect(movements).toHaveLength(0);
+
+      // FT14: nenhum CLUB_BARBER_PAYOUT criado no LOTE B
+      const payouts = await prisma.financialEntry.findMany({
+        where: { type: "CLUB_BARBER_PAYOUT" },
+      });
+      expect(payouts).toHaveLength(0);
+    });
+
+    it("FT5 & FT6: unique clubSubscriptionPaymentId impede criação de FinancialEntry duplicada", async () => {
+      const { shop, clubPlan, customer } = await createTestFixtures();
+
+      const sub = await prisma.customerClubSubscription.create({
+        data: {
+          barbershopId: shop.id,
+          customerId: customer.id,
+          clubPlanId: clubPlan.id,
+          status: "ACTIVE",
+          currentPeriodStart: new Date("2026-07-01T00:00:00Z"),
+          currentPeriodEnd: new Date("2026-07-31T23:59:59Z"),
+          gracePeriodEnd: new Date("2026-08-01T23:59:59Z"),
+        },
+      });
+
+      const result = await clubOps.registerManualClubSubscriptionPayment({
+        barbershopId: shop.id,
+        subscriptionId: sub.id,
+        paymentMethod: PaymentMethod.PIX,
+      });
+
+      // Tentativa de duplicar FinancialEntry com o mesmo clubSubscriptionPaymentId lança erro de chave única
+      await expect(
+        prisma.financialEntry.create({
+          data: {
+            barbershopId: shop.id,
+            type: "CLUB_REVENUE",
+            category: "PIX",
+            amount: 100.0,
+            description: "Duplicado",
+            clubSubscriptionPaymentId: result.payment.id,
+          },
+        })
+      ).rejects.toThrow();
+    });
+
+    it("FT7: CASH sem caixa aberto falha com CASH_SESSION_REQUIRED e não cria nada no banco", async () => {
+      const { shop, clubPlan, customer } = await createTestFixtures();
+
+      const sub = await prisma.customerClubSubscription.create({
+        data: {
+          barbershopId: shop.id,
+          customerId: customer.id,
+          clubPlanId: clubPlan.id,
+          status: "ACTIVE",
+          currentPeriodStart: new Date("2026-07-01T00:00:00Z"),
+          currentPeriodEnd: new Date("2026-07-31T23:59:59Z"),
+          gracePeriodEnd: new Date("2026-08-01T23:59:59Z"),
+        },
+      });
+
+      await expect(
+        clubOps.registerManualClubSubscriptionPayment({
+          barbershopId: shop.id,
+          subscriptionId: sub.id,
+          paymentMethod: PaymentMethod.CASH,
+        })
+      ).rejects.toThrow(/caixa aberto/i);
+
+      // Aborda a transação inteira: 0 pagamentos, 0 lançamentos financeiros, 0 movimentos de caixa
+      expect(await prisma.clubSubscriptionPayment.count()).toBe(0);
+      expect(await prisma.financialEntry.count()).toBe(0);
+      expect(await prisma.cashMovement.count()).toBe(0);
+    });
+
+    it("FT8: CASH com caixa aberto cria ClubSubscriptionPayment, FinancialEntry CLUB_REVENUE e CashMovement positivo", async () => {
+      const { shop, clubPlan, customer, ownerUser } = await createTestFixtures();
+
+      const cashSession = await prisma.cashSession.create({
+        data: {
+          barbershopId: shop.id,
+          openedById: ownerUser.id,
+          openingAmount: 50.0,
+          expectedAmount: 50.0,
+          status: "OPEN",
+        },
+      });
+
+      const sub = await prisma.customerClubSubscription.create({
+        data: {
+          barbershopId: shop.id,
+          customerId: customer.id,
+          clubPlanId: clubPlan.id,
+          status: "ACTIVE",
+          currentPeriodStart: new Date("2026-07-01T00:00:00Z"),
+          currentPeriodEnd: new Date("2026-07-31T23:59:59Z"),
+          gracePeriodEnd: new Date("2026-08-01T23:59:59Z"),
+        },
+      });
+
+      const result = await clubOps.registerManualClubSubscriptionPayment({
+        barbershopId: shop.id,
+        subscriptionId: sub.id,
+        paymentMethod: PaymentMethod.CASH,
+      });
+
+      expect(result.payment).toBeDefined();
+
+      const entries = await prisma.financialEntry.findMany({ where: { barbershopId: shop.id } });
+      expect(entries).toHaveLength(1);
+      expect(entries[0].type).toBe("CLUB_REVENUE");
+
+      const movements = await prisma.cashMovement.findMany({ where: { cashSessionId: cashSession.id } });
+      expect(movements).toHaveLength(1);
+      expect(Number(movements[0].amount)).toBe(100.0);
+
+      const updatedSession = await prisma.cashSession.findUnique({ where: { id: cashSession.id } });
+      expect(Number(updatedSession?.expectedAmount)).toBe(150.0); // 50 + 100
     });
   });
 });

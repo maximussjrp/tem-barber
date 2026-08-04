@@ -7,9 +7,11 @@ import {
   ClubSettlementStatus,
   ClubBenefitUsageStatus,
   PaymentMethod,
+  FinancialEntryType,
 } from "@prisma/client";
 import prisma from "../prisma";
 import { fromCents, toCents } from "./money";
+import { syncCashSessionExpectedAmount } from "./cash";
 
 export class ClubError extends Error {
   constructor(
@@ -928,6 +930,18 @@ export async function registerManualClubSubscriptionPayment(params: {
     // Requirement 5: Competence calculated by system (YYYY-MM)
     const competence = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth() + 1).padStart(2, "0")}`;
 
+    // Check cash session requirement if CASH payment method
+    let cashSessionId: string | null = null;
+    if (params.paymentMethod === PaymentMethod.CASH) {
+      const cashSession = await tx.cashSession.findFirst({
+        where: { barbershopId: params.barbershopId, status: "OPEN" },
+      });
+      if (!cashSession) {
+        throw new ClubError("CASH_SESSION_REQUIRED", "Pagamento em dinheiro exige caixa aberto.", 422);
+      }
+      cashSessionId = cashSession.id;
+    }
+
     const payment = await tx.clubSubscriptionPayment.create({
       data: {
         barbershopId: params.barbershopId,
@@ -943,6 +957,32 @@ export async function registerManualClubSubscriptionPayment(params: {
         paidAt,
       },
     });
+
+    // Create 1 FinancialEntry with type CLUB_REVENUE
+    await tx.financialEntry.create({
+      data: {
+        barbershopId: params.barbershopId,
+        type: FinancialEntryType.CLUB_REVENUE,
+        category: params.paymentMethod,
+        amount: sub.clubPlan.monthlyPrice,
+        description: `Pagamento de assinatura do clube - ${sub.clubPlan.name}`,
+        entryDate: paidAt,
+        clubSubscriptionPaymentId: payment.id,
+      },
+    });
+
+    // If CASH, log CashMovement and sync expected amount
+    if (cashSessionId) {
+      await tx.cashMovement.create({
+        data: {
+          barbershopId: params.barbershopId,
+          cashSessionId,
+          amount: sub.clubPlan.monthlyPrice,
+          description: `Pagamento em dinheiro da assinatura do clube - ${sub.clubPlan.name}`,
+        },
+      });
+      await syncCashSessionExpectedAmount(tx, cashSessionId);
+    }
 
     const updatedSub = await tx.customerClubSubscription.update({
       where: { id: sub.id },

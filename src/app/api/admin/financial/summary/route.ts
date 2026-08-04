@@ -107,12 +107,12 @@ export async function GET(request: NextRequest) {
         },
       }),
 
-      // Manual entries in period
+      // Manual and club entries in period
       prisma.financialEntry.findMany({
         where: {
           barbershopId,
           entryDate: { gte: start, lt: endExclusive },
-          type: { in: ["MANUAL_IN", "MANUAL_OUT"] },
+          type: { in: ["MANUAL_IN", "MANUAL_OUT", "CLUB_REVENUE"] },
         },
       }),
 
@@ -266,15 +266,18 @@ export async function GET(request: NextRequest) {
       count: data.count,
     }));
 
-    // 4. Manual entries
+    // 4. Manual and club entries
     const manualIncomeCents = financialEntries
       .filter((entry) => entry.type === "MANUAL_IN")
       .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
     const manualExpenseCents = financialEntries
       .filter((entry) => entry.type === "MANUAL_OUT")
       .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
+    const clubRevenueCents = financialEntries
+      .filter((entry) => entry.type === "CLUB_REVENUE")
+      .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
     const totalExpensesCents = manualExpenseCents;
-    const totalReceivedCents = commandReceivedCents + manualIncomeCents;
+    const totalReceivedCents = commandReceivedCents + manualIncomeCents + clubRevenueCents;
 
     // 5. Commissions
     let releasedCommissionsCents = 0;
@@ -334,6 +337,7 @@ export async function GET(request: NextRequest) {
         commandReceived: money(commandReceivedCents),
         manualIncome: money(manualIncomeCents),
         manualExpenses: money(manualExpenseCents),
+        clubRevenue: money(clubRevenueCents),
         totalReceived: money(totalReceivedCents),
         totalReceivable: money(totalReceivableCents),
         totalExpenses: money(totalExpensesCents),

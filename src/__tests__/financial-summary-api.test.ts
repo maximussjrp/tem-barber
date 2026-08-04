@@ -903,4 +903,68 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     expect(body.topServices[0].netRevenue).toBe(80);
     expect(body.topProfessionals[0].netRevenue).toBe(80);
   });
+
+  it("27. LOTE B: inclui clubRevenue no resumo financeiro de forma separada sem duplicação (FT10, FT11)", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+
+    (mockedComanda.findMany as any).mockImplementation((args: any) => {
+      if (args?.where?.status === "CLOSED") {
+        return Promise.resolve([
+          {
+            id: "c-closed",
+            subtotal: new Prisma.Decimal("100.00"),
+            discountTotal: new Prisma.Decimal("0.00"),
+            surchargeTotal: new Prisma.Decimal("0.00"),
+            total: new Prisma.Decimal("100.00"),
+            items: [],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    mockedPayment.findMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        barbershopId: barbershopId1,
+        method: "PIX",
+        amount: new Prisma.Decimal("100.00"),
+        status: "PAID",
+        paidAt: new Date("2026-07-15T10:00:00Z"),
+      } as any,
+    ]);
+
+    mockedFinancialEntry.findMany.mockResolvedValue([
+      {
+        id: "fe-manual",
+        barbershopId: barbershopId1,
+        type: "MANUAL_IN",
+        category: "SUPPLY",
+        amount: new Prisma.Decimal("50.00"),
+        entryDate: new Date("2026-07-15T12:00:00Z"),
+      } as any,
+      {
+        id: "fe-club",
+        barbershopId: barbershopId1,
+        type: "CLUB_REVENUE",
+        category: "PIX",
+        amount: new Prisma.Decimal("120.00"),
+        entryDate: new Date("2026-07-15T14:00:00Z"),
+      } as any,
+    ]);
+
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.totals.commandReceived).toBe(100);
+    expect(body.totals.manualIncome).toBe(50);
+    expect(body.totals.clubRevenue).toBe(120);
+    expect(body.totals.totalReceived).toBe(270);
+  });
 });
