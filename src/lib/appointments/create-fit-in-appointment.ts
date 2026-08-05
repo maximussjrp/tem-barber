@@ -39,7 +39,7 @@ export interface CreateFitInAppointmentInput {
   durationMin: number;
   services: AppointmentServiceInput[];
   notes?: string | null;
-  fitInReason: string;
+  fitInReason?: string | null;
   fitInCreatedById: string;
 }
 
@@ -100,7 +100,7 @@ export async function createFitInAppointmentWithScheduleLock(
       durationMin: input.durationMin,
       status: "CONFIRMED",
       bookingMode: "FIT_IN",
-      fitInReason: input.fitInReason,
+      fitInReason: input.fitInReason ?? null,
       fitInCreatedById: input.fitInCreatedById,
       fitInCreatedAt: new Date(),
       conflictSnapshot: conflictSnapshotJson,

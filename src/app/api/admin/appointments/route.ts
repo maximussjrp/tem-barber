@@ -373,10 +373,7 @@ export async function POST(request: NextRequest) {
           throw new FitInNotAllowedError();
         }
 
-        const normalizedFitInReason = fitInReason?.trim() ?? "";
-        if (requestedBookingMode === "FIT_IN" && !normalizedFitInReason) {
-          throw new FitInReasonRequiredError();
-        }
+        const normalizedFitInReason = fitInReason?.trim() || null;
 
         const { services } = await validateProfessionalServiceCapability(tx, {
           barbershopId,

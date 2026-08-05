@@ -264,6 +264,96 @@ function minutesToLocalInput(dateStr: string, minutes: number) {
   return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+export interface AppointmentLayout {
+  appointment: Appointment;
+  top: number;
+  height: number;
+  leftPct: number;
+  widthPct: number;
+}
+
+export function computeAppointmentLayouts(appointments: Appointment[]): AppointmentLayout[] {
+  if (!appointments || appointments.length === 0) return [];
+
+  const sorted = [...appointments].sort((a, b) => {
+    const startA = isoToMinutes(a.dateTime);
+    const startB = isoToMinutes(b.dateTime);
+    if (startA !== startB) return startA - startB;
+    if (a.durationMin !== b.durationMin) return b.durationMin - a.durationMin;
+    return a.id.localeCompare(b.id);
+  });
+
+  const clusters: Appointment[][] = [];
+  let currentCluster: Appointment[] = [];
+  let clusterMaxEnd = -1;
+
+  for (const app of sorted) {
+    const startMin = isoToMinutes(app.dateTime);
+    const endMin = startMin + app.durationMin;
+
+    if (currentCluster.length === 0) {
+      currentCluster.push(app);
+      clusterMaxEnd = endMin;
+    } else if (startMin < clusterMaxEnd) {
+      currentCluster.push(app);
+      clusterMaxEnd = Math.max(clusterMaxEnd, endMin);
+    } else {
+      clusters.push(currentCluster);
+      currentCluster = [app];
+      clusterMaxEnd = endMin;
+    }
+  }
+  if (currentCluster.length > 0) {
+    clusters.push(currentCluster);
+  }
+
+  const results: AppointmentLayout[] = [];
+
+  for (const cluster of clusters) {
+    const colEnds: number[] = [];
+    const clusterPlacements: { app: Appointment; colIndex: number }[] = [];
+
+    for (const app of cluster) {
+      const startMin = isoToMinutes(app.dateTime);
+      const endMin = startMin + app.durationMin;
+
+      let placedCol = -1;
+      for (let i = 0; i < colEnds.length; i++) {
+        if (colEnds[i] <= startMin) {
+          placedCol = i;
+          colEnds[i] = endMin;
+          break;
+        }
+      }
+      if (placedCol === -1) {
+        placedCol = colEnds.length;
+        colEnds.push(endMin);
+      }
+      clusterPlacements.push({ app, colIndex: placedCol });
+    }
+
+    const totalCols = Math.max(1, colEnds.length);
+    const widthPct = 100 / totalCols;
+
+    for (const { app, colIndex } of clusterPlacements) {
+      const startMin = isoToMinutes(app.dateTime);
+      const top = minutesToTop(startMin);
+      const height = Math.max(minutesToHeight(app.durationMin), ROW_HEIGHT);
+      const leftPct = colIndex * widthPct;
+
+      results.push({
+        appointment: app,
+        top,
+        height,
+        leftPct,
+        widthPct,
+      });
+    }
+  }
+
+  return results;
+}
+
 const clubBalanceCache: Record<string, ClubBalance | null> = {};
 if (typeof window !== "undefined") {
   window.__clubBalanceCache = clubBalanceCache;
@@ -518,10 +608,7 @@ export function AppointmentModal({
         }
       }
     }
-    if (!isEdit && bookingMode === "FIT_IN" && !fitInReason.trim()) {
-      setError("Informe o motivo do encaixe.");
-      return;
-    }
+
     setSaving(true);
     try {
       let res: Response;
@@ -665,11 +752,11 @@ export function AppointmentModal({
 
           {!isEdit && bookingMode === "FIT_IN" && (
             <div className="space-y-2 rounded-xl border border-orange-500/30 bg-orange-500/5 p-3">
-              <label className={LABEL_INPUT}>Motivo do Encaixe</label>
+              <label className={LABEL_INPUT}>Motivo do Encaixe (opcional)</label>
               <textarea
                 value={fitInReason}
                 onChange={(e) => setFitInReason(e.target.value)}
-                placeholder="Explique por que este encaixe esta sendo feito..."
+                placeholder="Explique por que este encaixe esta sendo feito (opcional)..."
                 className={`${INPUT_CLASS} min-h-[80px]`}
               />
               <p className="text-xs text-orange-200/80">
@@ -1508,6 +1595,7 @@ export function AppointmentBlock({
   isOpen,
   onToggleOpen,
   barbershopName,
+  style,
 }: {
   appointment: Appointment;
   onEdit: (a: Appointment) => void;
@@ -1519,6 +1607,7 @@ export function AppointmentBlock({
   isOpen: boolean;
   onToggleOpen: (open: boolean) => void;
   barbershopName: string;
+  style?: React.CSSProperties;
 }) {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const router = useRouter();
@@ -1731,8 +1820,15 @@ export function AppointmentBlock({
     }
   };
 
+  const computedTop = style?.top ?? top;
+  const computedHeight = style?.height ?? height;
+  const hasCustomLeft = style?.left !== undefined;
+
   return (
-    <div className={`absolute left-1 right-1 ${isOpen ? "z-50" : "z-10"}`} style={{ top, height }}>
+    <div
+      className={`absolute ${hasCustomLeft ? "" : "left-1 right-1"} ${isOpen ? "z-50" : "z-10"}`}
+      style={{ top: computedTop, height: computedHeight, ...style }}
+    >
       {/* Block */}
       <button
         onClick={() => onToggleOpen(!isOpen)}
@@ -2274,7 +2370,7 @@ function CalendarGrid({
                     );
                   })}
 
-                  {(byMember[m.id] ?? []).map((a) => (
+                  {computeAppointmentLayouts(byMember[m.id] ?? []).map(({ appointment: a, top, height, leftPct, widthPct }) => (
                     <AppointmentBlock
                       key={a.id}
                       appointment={a}
@@ -2287,6 +2383,12 @@ function CalendarGrid({
                       isOpen={activeBlockId === a.id}
                       onToggleOpen={(open) => setActiveBlockId(open ? a.id : null)}
                       barbershopName={barbershopName}
+                      style={{
+                        top,
+                        height,
+                        left: `calc(${leftPct}% + 2px)`,
+                        width: `calc(${widthPct}% - 4px)`,
+                      }}
                     />
                   ))}
                 </div>

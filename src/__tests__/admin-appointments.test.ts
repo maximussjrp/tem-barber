@@ -316,18 +316,29 @@ describe("agendamento administrativo", () => {
     );
   });
 
-  it("rejeita encaixe sem motivo", async () => {
+  it("permite criar encaixe sem motivo (motivo opcional)", async () => {
+    prismaMock.appointment.create.mockResolvedValue({
+      id: "appt-fitin-no-reason",
+      bookingMode: "FIT_IN",
+      fitInReason: null,
+    } as any);
+
     const response = await POST(
       jsonRequest({
         ...body,
         bookingMode: "FIT_IN",
       })
     );
-    const data = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("FIT_IN_REASON_REQUIRED");
-    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(prismaMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          bookingMode: "FIT_IN",
+          fitInReason: null,
+        }),
+      })
+    );
   });
 
   it("rejeita encaixe para SUPER_ADMIN sem papel operacional no tenant", async () => {
