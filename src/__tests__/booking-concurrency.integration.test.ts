@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
+import { validTestPhone } from "./helpers/integration-fixtures";
 
 type PublicPost = typeof import("@/app/api/public/barbershop/[slug]/book/route").POST;
 type AdminPost = typeof import("@/app/api/admin/appointments/route").POST;
@@ -54,7 +55,7 @@ async function seedTenant(label: string) {
     data: {
       name: `Barbearia ${label}`,
       slug: `shop-${label}`,
-      phone: `110000000${label.charCodeAt(0)}`,
+      phone: validTestPhone(label, "shop"),
       zipCode: "00000-000",
       street: "Rua Teste",
       number: "1",
@@ -86,13 +87,13 @@ async function seedTenant(label: string) {
   });
 
   const admin = await prisma.user.create({
-    data: { name: `Admin ${label}`, phone: `119900000${label.charCodeAt(0)}` },
+    data: { name: `Admin ${label}`, phone: validTestPhone(label, "admin") },
   });
   const barberUser = await prisma.user.create({
-    data: { name: `Barbeiro ${label}`, phone: `119911000${label.charCodeAt(0)}` },
+    data: { name: `Barbeiro ${label}`, phone: validTestPhone(label, "barber") },
   });
   const customer = await prisma.user.create({
-    data: { name: `Cliente ${label}`, phone: `119922000${label.charCodeAt(0)}` },
+    data: { name: `Cliente ${label}`, phone: validTestPhone(label, "customer") },
   });
   const member = await prisma.barbershopMember.create({
     data: { barbershopId: shop.id, userId: barberUser.id, role: "BARBER" },
@@ -190,7 +191,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
   it("duas chaves diferentes para o mesmo intervalo geram uma reserva e um 409", async () => {
     const tenant = await seedTenant("a");
     const customer2 = await prisma.user.create({
-      data: { name: "Cliente B", phone: "11992200099" },
+      data: { name: "Cliente B", phone: validTestPhone("booking", "customer-2") },
     });
     const body1 = {
       memberId: tenant.member.id,
@@ -225,7 +226,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const tenantA = await seedTenant("a");
     const tenantB = await seedTenant("b");
     const secondBarberUser = await prisma.user.create({
-      data: { name: "Barbeiro extra", phone: "11993300000" },
+      data: { name: "Barbeiro extra", phone: validTestPhone("booking", "extra-barber") },
     });
     const secondMember = await prisma.barbershopMember.create({
       data: { barbershopId: tenantA.shop.id, userId: secondBarberUser.id, role: "BARBER" },
@@ -234,10 +235,10 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       data: { barberId: secondMember.id, serviceId: tenantA.service.id },
     });
 
-    const cust1 = await prisma.user.create({ data: { name: "Cust 1", phone: "11992200001" } });
-    const cust2 = await prisma.user.create({ data: { name: "Cust 2", phone: "11992200002" } });
-    const cust3 = await prisma.user.create({ data: { name: "Cust 3", phone: "11992200003" } });
-    const cust4 = await prisma.user.create({ data: { name: "Cust 4", phone: "11992200004" } });
+    const cust1 = await prisma.user.create({ data: { name: "Cust 1", phone: validTestPhone("booking", "cust-1") } });
+    const cust2 = await prisma.user.create({ data: { name: "Cust 2", phone: validTestPhone("booking", "cust-2") } });
+    const cust3 = await prisma.user.create({ data: { name: "Cust 3", phone: validTestPhone("booking", "cust-3") } });
+    const cust4 = await prisma.user.create({ data: { name: "Cust 4", phone: validTestPhone("booking", "cust-4") } });
 
     const responses = await Promise.all([
       publicBook(

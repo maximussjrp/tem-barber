@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient, ClubSubscriptionStatus, PaymentMethod } from "@prisma/client";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PrismaClient, ClubPaymentStatus, ClubSubscriptionStatus, PaymentMethod } from "@prisma/client";
 
 const { getAdminSessionMock } = vi.hoisted(() => ({
   getAdminSessionMock: vi.fn(),
@@ -83,9 +83,15 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
   });
 
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
     await truncateDatabase();
     vi.clearAllMocks();
   }, 30000);
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   async function createTestFixtures() {
     const shop = await prisma.barbershop.create({
@@ -336,6 +342,21 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
           currentPeriodStart: new Date("2026-06-20T10:00:00Z"),
           currentPeriodEnd: currentEnd,
           gracePeriodEnd: new Date("2026-07-21T10:00:00Z"),
+        },
+      });
+      await prisma.clubSubscriptionPayment.create({
+        data: {
+          barbershopId: shop.id,
+          subscriptionId: sub.id,
+          customerId: customer.id,
+          clubPlanId: clubPlan.id,
+          amount: clubPlan.monthlyPrice,
+          paymentMethod: PaymentMethod.PIX,
+          status: ClubPaymentStatus.PAID,
+          competence: "2026-06",
+          shopSharePercentSnapshot: clubPlan.shopSharePercent,
+          barberPoolPercentSnapshot: clubPlan.barberPoolPercent,
+          paidAt: new Date("2026-06-20T10:00:00Z"),
         },
       });
 

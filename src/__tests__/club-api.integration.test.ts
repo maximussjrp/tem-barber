@@ -434,7 +434,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
     const res = await paymentsRoute.POST(req, { params: Promise.resolve({ id: sub.id }) });
 
     expect(res.status).toBe(201);
-    const payment = await res.json();
+    const { payment } = await res.json();
     expect(payment.id).toBeDefined();
     // Validar snapshots corretos baseados no plano
     expect(Number(payment.shopSharePercentSnapshot)).toBe(70.00);
@@ -693,7 +693,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
     const reqCredit = createReq(`http://localhost/api/admin/clube/subscriptions/${sub.id}/payments`, "POST", payloadCredit);
     const resCredit = await paymentsRoute.POST(reqCredit, { params: Promise.resolve({ id: sub.id }) });
     expect(resCredit.status).toBe(201);
-    const paymentCredit = await resCredit.json();
+    const { payment: paymentCredit } = await resCredit.json();
     expect(paymentCredit.paymentMethod).toBe("CREDIT");
     expect(Number(paymentCredit.shopSharePercentSnapshot)).toBe(70.00);
 
@@ -707,7 +707,7 @@ describeIf("Plano Clube — Testes de Integração de Rotas API (Fase 3)", () =>
     const reqDebit = createReq(`http://localhost/api/admin/clube/subscriptions/${sub.id}/payments`, "POST", payloadDebit);
     const resDebit = await paymentsRoute.POST(reqDebit, { params: Promise.resolve({ id: sub.id }) });
     expect(resDebit.status).toBe(201);
-    const paymentDebit = await resDebit.json();
+    const { payment: paymentDebit } = await resDebit.json();
     expect(paymentDebit.paymentMethod).toBe("DEBIT");
 
     // 3. CREDIT_CARD antigo deve ser rejeitado (400)

@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
+import { createActiveTenantSubscription, validTestPhone } from "./helpers/integration-fixtures";
 
 type PublicBook = typeof import("@/app/api/public/barbershop/[slug]/book/route").POST;
 type Availability = typeof import("@/app/api/public/barbershop/[slug]/availability/route").GET;
@@ -85,7 +86,7 @@ async function seedTenant(label: string) {
     data: {
       name: `Shop ${label}`,
       slug: `shop-${label}`,
-      phone: `11000000${label.charCodeAt(0)}`,
+      phone: validTestPhone(label, "shop"),
       zipCode: "00000-000",
       street: "Rua Teste",
       number: "1",
@@ -95,36 +96,19 @@ async function seedTenant(label: string) {
     },
   });
 
-  const plan = await prisma.plan.create({
-    data: {
-      name: `Plano ${label}`,
-      price: "49.90",
-      maxMembers: 10,
-      isActive: true,
-    },
-  });
-
-  await prisma.tenantSubscription.create({
-    data: {
-      barbershopId: shop.id,
-      planId: plan.id,
-      status: "ACTIVE",
-      currentPeriodStart: new Date("2026-07-01T00:00:00.000Z"),
-      currentPeriodEnd: new Date("2026-08-01T00:00:00.000Z"),
-    },
-  });
+  await createActiveTenantSubscription(prisma, shop.id, { label });
 
   const adminUser = await prisma.user.create({
-    data: { name: `Admin ${label}`, phone: `11910000${label.charCodeAt(0)}` },
+    data: { name: `Admin ${label}`, phone: validTestPhone(label, "admin") },
   });
   const owner = await prisma.barbershopMember.create({
     data: { barbershopId: shop.id, userId: adminUser.id, role: "OWNER" },
   });
 
   const [joaoUser, pedroUser, anaUser] = await Promise.all([
-    prisma.user.create({ data: { name: `Joao ${label}`, phone: `11920000${label.charCodeAt(0)}` } }),
-    prisma.user.create({ data: { name: `Pedro ${label}`, phone: `11930000${label.charCodeAt(0)}` } }),
-    prisma.user.create({ data: { name: `Ana ${label}`, phone: `11940000${label.charCodeAt(0)}` } }),
+    prisma.user.create({ data: { name: `Joao ${label}`, phone: validTestPhone(label, "joao") } }),
+    prisma.user.create({ data: { name: `Pedro ${label}`, phone: validTestPhone(label, "pedro") } }),
+    prisma.user.create({ data: { name: `Ana ${label}`, phone: validTestPhone(label, "ana") } }),
   ]);
 
   const [joao, pedro, ana] = await Promise.all([
@@ -165,7 +149,7 @@ async function seedTenant(label: string) {
   });
 
   const customer = await prisma.user.create({
-    data: { name: `Cliente ${label}`, phone: `11950000${label.charCodeAt(0)}` },
+    data: { name: `Cliente ${label}`, phone: validTestPhone(label, "customer") },
   });
 
   return { shop, adminUser, owner, joao, pedro, ana, cut, beard, customer };
@@ -173,7 +157,7 @@ async function seedTenant(label: string) {
 
 async function makeCustomer(phoneSuffix: string) {
   return prisma.user.create({
-    data: { name: `Cliente ${phoneSuffix}`, phone: `1199${phoneSuffix.padStart(7, "0")}` },
+    data: { name: `Cliente ${phoneSuffix}`, phone: validTestPhone("professional-service", phoneSuffix) },
   });
 }
 
@@ -191,9 +175,15 @@ describeIf("P1 professional service capability com PostgreSQL", () => {
   });
 
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
     await truncateDatabase();
     getServerSessionMock.mockResolvedValue(null);
     getAdminSessionMock.mockResolvedValue({ error: null, data: null });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   afterAll(async () => {

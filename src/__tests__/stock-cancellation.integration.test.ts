@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { PrismaClient, ComandaStatus, ComandaItemStatus } from "@prisma/client";
+import { createActiveTenantSubscription, validTestPhone } from "./helpers/integration-fixtures";
 
 const { getServerSessionMock } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -69,7 +70,7 @@ async function seedTenant(label: string) {
     data: {
       name: `Barbearia ${label}`,
       slug: `stock-${label}`,
-      phone: `11990${label.charCodeAt(0)}`,
+      phone: validTestPhone(label, "shop"),
       zipCode: "00000-000",
       street: "Rua Teste",
       number: "1",
@@ -79,14 +80,15 @@ async function seedTenant(label: string) {
     },
   });
   const ownerUser = await prisma.user.create({
-    data: { name: `Owner ${label}`, phone: `11991${label.charCodeAt(0)}` },
+    data: { name: `Owner ${label}`, phone: validTestPhone(label, "owner") },
   });
   const barberUser = await prisma.user.create({
-    data: { name: `Barber ${label}`, phone: `11992${label.charCodeAt(0)}` },
+    data: { name: `Barber ${label}`, phone: validTestPhone(label, "barber") },
   });
   const customer = await prisma.user.create({
-    data: { name: `Cliente ${label}`, phone: `11993${label.charCodeAt(0)}` },
+    data: { name: `Cliente ${label}`, phone: validTestPhone(label, "customer") },
   });
+  await createActiveTenantSubscription(prisma, shop.id, { label });
   const owner = await prisma.barbershopMember.create({
     data: { barbershopId: shop.id, userId: ownerUser.id, role: "OWNER" },
   });
@@ -275,6 +277,10 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    await prisma.comandaItem.updateMany({
+      where: { comandaId: comanda.id, type: "SERVICE" },
+      data: { status: ComandaItemStatus.DONE, completedAt: new Date() },
+    });
 
     // Fechar
     const finalizeRes = await finalizeRoute.POST(
@@ -804,6 +810,10 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    await prisma.comandaItem.updateMany({
+      where: { comandaId: comanda.id, type: "SERVICE" },
+      data: { status: ComandaItemStatus.DONE, completedAt: new Date() },
+    });
     // Finalizar comanda pagando R$ 30
     const finalizeRes = await finalizeRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, {

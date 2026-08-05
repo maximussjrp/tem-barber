@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
+import { createIncludedServiceClubBenefit } from "./helpers/integration-fixtures";
 
 const { getServerSessionMock } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -204,6 +205,12 @@ describe("Gate P0 comandas e financeiro com PostgreSQL", () => {
     if (!canRunIntegration) return;
     const tenantA = await seedTenant("a");
     const tenantB = await seedTenant("b");
+    await createIncludedServiceClubBenefit(prisma, {
+      barbershopId: tenantA.shop.id,
+      customerId: tenantA.customer.id,
+      serviceId: tenantA.cut.id,
+      label: "p0-fit-in",
+    });
     await seedWaitlistEntry(tenantA, 1);
 
     const result = await callNextWaitlistEntry({
