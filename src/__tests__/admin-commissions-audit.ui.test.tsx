@@ -13,20 +13,47 @@ vi.mock("next/link", () => ({
 
 describe("P1 Comissão — Auditoria por Comanda e Item", () => {
   it("carrega a lista de comissões e ao clicar em Auditar envia o memberId correto para /api/admin/commissions/detail", async () => {
-    const mockPeriods = [
-      {
-        id: "period-123", // CommissionPeriod id
-        memberId: "member-barber-456", // Actual BarbershopMember id
-        competence: "2026-08",
-        status: "OPEN",
-        generatedAmount: "70.00",
-        releasedAmount: "52.50",
-        paidAmount: "0.00",
-        reversedAmount: "0.00",
-        balanceAmount: "52.50",
-        member: { id: "member-barber-456", user: { name: "Max Victor Guarinieri" } },
+    const mockReport = {
+      summary: {
+        grossServiceAmount: "70.00",
+        grossProductAmount: "0.00",
+        discountAmount: "0.00",
+        netBaseAmount: "70.00",
+        generatedCommission: "35.00",
+        releasedCommission: "35.00",
+        paidCommission: "0.00",
+        reversedCommission: "0.00",
+        balanceAmount: "35.00",
+        barbershopNetAmount: "35.00",
+        commandCount: 1,
+        serviceCount: 1,
+        productCount: 0,
+        averageTicket: "70.00",
+        effectiveCommissionRate: "50.00",
       },
-    ];
+      members: [
+        {
+          memberId: "member-barber-456",
+          memberName: "Max Victor Guarinieri",
+          grossServiceAmount: "70.00",
+          grossProductAmount: "0.00",
+          discountAmount: "0.00",
+          netBaseAmount: "70.00",
+          generatedCommission: "35.00",
+          releasedCommission: "35.00",
+          paidCommission: "0.00",
+          reversedCommission: "0.00",
+          balanceAmount: "35.00",
+          barbershopNetAmount: "35.00",
+          commandCount: 1,
+          serviceCount: 1,
+          productCount: 0,
+          averageTicket: "70.00",
+          effectiveCommissionRate: "50.00",
+        },
+      ],
+      period: { startDate: "2026-08-01", endDate: "2026-08-31", type: "MONTHLY" },
+    };
 
     const mockDetail = {
       summary: {
@@ -81,10 +108,10 @@ describe("P1 Comissão — Auditoria por Comanda e Item", () => {
           json: () => Promise.resolve(mockDetail),
         });
       }
-      if (url.includes("/api/admin/commissions")) {
+      if (url.includes("/api/admin/commissions/report")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve(mockPeriods),
+          json: () => Promise.resolve(mockReport),
         });
       }
       return Promise.reject(new Error("Unknown route"));
@@ -94,11 +121,12 @@ describe("P1 Comissão — Auditoria por Comanda e Item", () => {
 
     // Aguardar carregamento da tabela principal
     await waitFor(() => {
-      expect(screen.getByText("Max Victor Guarinieri")).toBeInTheDocument();
+      expect(screen.getAllByText("Max Victor Guarinieri").length).toBeGreaterThan(0);
     });
 
     // Clicar na linha para abrir auditoria
-    fireEvent.click(screen.getByText("Max Victor Guarinieri"));
+    const row = screen.getAllByText("Max Victor Guarinieri").find((el) => el.closest("tr"))!.closest("tr")!;
+    fireEvent.click(row);
 
     // Verificar se o endpoint de auditoria foi chamado com memberId="member-barber-456" e NÃO "period-123"
     await waitFor(() => {

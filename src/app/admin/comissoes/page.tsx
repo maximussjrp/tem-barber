@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 type Period = {
   id: string;
@@ -16,20 +16,60 @@ type Period = {
   member: { id?: string; user: { name: string } };
 };
 
+type ReportSummary = {
+  grossServiceAmount: string;
+  grossProductAmount: string;
+  discountAmount: string;
+  netBaseAmount: string;
+  generatedCommission: string;
+  releasedCommission: string;
+  paidCommission: string;
+  reversedCommission: string;
+  balanceAmount: string;
+  barbershopNetAmount: string;
+  commandCount: number;
+  serviceCount: number;
+  productCount: number;
+  averageTicket: string;
+  effectiveCommissionRate: string;
+};
+
+type ReportMember = ReportSummary & {
+  memberId: string;
+  memberName: string;
+};
+
+type ReportData = {
+  summary: ReportSummary;
+  members: ReportMember[];
+  period: { startDate: string; endDate: string; type: string };
+};
+
 function brl(value: string | number) {
   return Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function getWeekRange() {
-  const now = new Date();
-  const day = now.getDay();
+function pct(value: string | number) {
+  const n = Number(value);
+  return isNaN(n) || n === 0 ? "0%" : `${n.toFixed(1)}%`;
+}
+
+function getWeekRangeFromRef(refDateStr: string) {
+  const [y, m, d] = refDateStr.split("-").map(Number);
+  const ref = new Date(y, m - 1, d);
+  const day = ref.getDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+  const monday = new Date(y, m - 1, d + diffToMonday);
   const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-  return {
-    start: monday.toISOString().slice(0, 10),
-    end: sunday.toISOString().slice(0, 10),
-  };
+  const fmt = (dt: Date) =>
+    `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  return { start: fmt(monday), end: fmt(sunday) };
+}
+
+function shiftWeek(refDateStr: string, weeks: number) {
+  const [y, m, d] = refDateStr.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + weeks * 7);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 function getBiweeklyRange(fortnight: "first" | "second", monthString: string) {
@@ -51,15 +91,34 @@ function getBiweeklyRange(fortnight: "first" | "second", monthString: string) {
   }
 }
 
+function formatDateBR(dateStr: string) {
+  const [y, m, d] = dateStr.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+const WEEKDAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function weekLabel(startStr: string, endStr: string) {
+  return `${formatDateBR(startStr)} — ${formatDateBR(endStr)}`;
+}
+
 export default function AdminComissoesPage() {
   const [filterType, setFilterType] = useState<"MONTHLY" | "WEEKLY" | "BIWEEKLY" | "CUSTOM">("MONTHLY");
   const [competence, setCompetence] = useState(new Date().toISOString().slice(0, 7));
   const [fortnight, setFortnight] = useState<"first" | "second">("first");
-  
-  const [customStart, setCustomStart] = useState(new Date().toISOString().slice(0, 10));
-  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10));
-  
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const [weekRefDate, setWeekRefDate] = useState(todayStr);
+
+  const [customStart, setCustomStart] = useState(todayStr);
+  const [customEnd, setCustomEnd] = useState(todayStr);
+
   const [status, setStatus] = useState("");
+  const [memberFilter, setMemberFilter] = useState("");
+  const [availableMembers, setAvailableMembers] = useState<{ id: string; name: string }[]>([]);
+
+  const [reportData, setReportData] = useState<ReportData | null>(null);
+  // Keep periods for MONTHLY backward compat (period management uses the old endpoint)
   const [periods, setPeriods] = useState<Period[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,33 +128,59 @@ export default function AdminComissoesPage() {
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [activeTab, setActiveTab] = useState<"ENTRIES" | "OPEN_COMANDAS" | "CLOSED_COMANDAS" | "ADJUSTMENTS">("ENTRIES");
 
-  useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    
+  // Build date params for current filter
+  const getDateParams = useCallback(() => {
+    const params: Record<string, string> = {};
     if (filterType === "MONTHLY") {
-      params.set("competence", competence);
-      if (status) params.set("status", status);
+      params.type = "MONTHLY";
+      params.competence = competence;
+      if (status) params.status = status;
     } else if (filterType === "WEEKLY") {
-      const range = getWeekRange();
-      params.set("startDate", range.start);
-      params.set("endDate", range.end);
+      params.type = "WEEKLY";
+      params.weekRefDate = weekRefDate;
     } else if (filterType === "BIWEEKLY") {
       const range = getBiweeklyRange(fortnight, competence);
-      params.set("startDate", range.start);
-      params.set("endDate", range.end);
+      params.type = "BIWEEKLY";
+      params.competence = competence;
+      params.startDate = range.start;
+      params.endDate = range.end;
     } else if (filterType === "CUSTOM") {
-      params.set("startDate", customStart);
-      params.set("endDate", customEnd);
+      params.type = "CUSTOM";
+      params.startDate = customStart;
+      params.endDate = customEnd;
     }
+    if (memberFilter) params.memberId = memberFilter;
+    return params;
+  }, [filterType, competence, fortnight, weekRefDate, customStart, customEnd, status, memberFilter]);
 
-    fetch(`/api/admin/commissions?${params}`)
-      .then((res) => res.json())
-      .then(setPeriods)
-      .catch(() => setError("Erro ao carregar comissões."))
+  // Fetch report data from new endpoint
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    const dateParams = getDateParams();
+    const params = new URLSearchParams(dateParams);
+
+    fetch(`/api/admin/commissions/report?${params}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Erro ao carregar relatório");
+        return res.json();
+      })
+      .then((data: ReportData) => {
+        setReportData(data);
+        // Build available members for filter dropdown
+        const members = data.members.map((m) => ({ id: m.memberId, name: m.memberName }));
+        setAvailableMembers((prev) => {
+          // Merge with previous to keep full list even when filtered
+          const map = new Map(prev.map((p) => [p.id, p]));
+          members.forEach((m) => map.set(m.id, m));
+          return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+        });
+      })
+      .catch(() => setError("Erro ao carregar relatório de comissões."))
       .finally(() => setLoading(false));
-  }, [filterType, competence, fortnight, customStart, customEnd, status]);
+  }, [getDateParams]);
 
+  // Fetch audit data when member selected (uses existing detail endpoint)
   useEffect(() => {
     if (!selectedMember) {
       setAuditData(null);
@@ -108,7 +193,7 @@ export default function AdminComissoesPage() {
     if (filterType === "MONTHLY") {
       params.set("competence", competence);
     } else if (filterType === "WEEKLY") {
-      const range = getWeekRange();
+      const range = getWeekRangeFromRef(weekRefDate);
       params.set("startDate", range.start);
       params.set("endDate", range.end);
     } else if (filterType === "BIWEEKLY") {
@@ -125,21 +210,15 @@ export default function AdminComissoesPage() {
       .then(setAuditData)
       .catch(() => setError("Erro ao carregar auditoria."))
       .finally(() => setLoadingAudit(false));
-  }, [selectedMember, filterType, competence, fortnight, customStart, customEnd]);
+  }, [selectedMember, filterType, competence, fortnight, weekRefDate, customStart, customEnd]);
 
-  const totals = periods.reduce(
-    (acc, row) => ({
-      generated: acc.generated + Number(row.generatedAmount),
-      released: acc.released + Number(row.releasedAmount),
-      paid: acc.paid + Number(row.paidAmount),
-      reversed: acc.reversed + Number(row.reversedAmount),
-      balance: acc.balance + Number(row.balanceAmount),
-    }),
-    { generated: 0, released: 0, paid: 0, reversed: 0, balance: 0 }
-  );
+  const summary = reportData?.summary;
+  const members = reportData?.members || [];
 
   const openEntries = auditData?.entries?.filter((e: any) => e.comandaStatus === "OPEN") || [];
   const closedEntries = auditData?.entries?.filter((e: any) => e.comandaStatus === "CLOSED") || [];
+
+  const weekRange = filterType === "WEEKLY" ? getWeekRangeFromRef(weekRefDate) : null;
 
   return (
     <div className="p-4 md:p-6 space-y-5 relative min-h-screen">
@@ -202,9 +281,29 @@ export default function AdminComissoesPage() {
             </>
           )}
 
-          {filterType === "WEEKLY" && (
-            <div className="text-xs text-[var(--text-secondary)] font-medium">
-              Mostrando semana atual: <span className="text-[var(--gold)] font-bold">{getWeekRange().start}</span> até <span className="text-[var(--gold)] font-bold">{getWeekRange().end}</span>
+          {filterType === "WEEKLY" && weekRange && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setWeekRefDate(shiftWeek(weekRefDate, -1))}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--surface-raised)] border border-[var(--border-subtle)] text-[var(--text-secondary)] text-sm hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+              >
+                Semana anterior
+              </button>
+              <div className="text-xs text-[var(--text-secondary)] font-medium px-2">
+                <span className="text-[var(--gold)] font-bold">{weekLabel(weekRange.start, weekRange.end)}</span>
+              </div>
+              <button
+                onClick={() => setWeekRefDate(shiftWeek(weekRefDate, 1))}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--surface-raised)] border border-[var(--border-subtle)] text-[var(--text-secondary)] text-sm hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+              >
+                Próxima semana
+              </button>
+              <button
+                onClick={() => setWeekRefDate(todayStr)}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--brand-subtle)] border border-[var(--gold-border)] text-[var(--gold)] text-xs font-semibold hover:bg-[var(--gold)] hover:text-[var(--text-inverse)] transition-colors cursor-pointer"
+              >
+                Semana atual
+              </button>
             </div>
           )}
 
@@ -244,37 +343,78 @@ export default function AdminComissoesPage() {
               />
             </div>
           )}
+
+          {/* Barber filter */}
+          <select
+            value={memberFilter}
+            onChange={(e) => setMemberFilter(e.target.value)}
+            className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--gold)]"
+          >
+            <option value="">Todos os barbeiros</option>
+            {availableMembers.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
-          <p className="text-xs text-[var(--text-muted)]">Total Gerado</p>
-          <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(totals.generated)}</p>
+      {/* Summary Cards */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Produção Total</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">
+              {brl(Number(summary.grossServiceAmount) + Number(summary.grossProductAmount))}
+            </p>
+            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+              {Number(summary.commandCount)} comandas · {Number(summary.serviceCount)} serviços
+              {Number(summary.productCount) > 0 && ` · ${Number(summary.productCount)} produtos`}
+            </p>
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Comissão Gerada</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(summary.generatedCommission)}</p>
+            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">% efetivo: {pct(summary.effectiveCommissionRate)}</p>
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Liberado</p>
+            <p className="text-lg font-serif font-bold text-emerald-400 mt-1">{brl(summary.releasedCommission)}</p>
+            {Number(summary.paidCommission) > 0 && (
+              <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Pago: {brl(summary.paidCommission)}</p>
+            )}
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Saldo a Pagar</p>
+            <p className="text-lg font-serif font-bold text-[var(--gold)] mt-1">{brl(summary.balanceAmount)}</p>
+            {Number(summary.reversedCommission) > 0 && (
+              <p className="text-[10px] text-red-400 mt-0.5">Revertido: {brl(summary.reversedCommission)}</p>
+            )}
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Líquido estimado da barbearia</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(summary.barbershopNetAmount)}</p>
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Ticket Médio</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(summary.averageTicket)}</p>
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Descontos</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(summary.discountAmount)}</p>
+          </div>
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
+            <p className="text-xs text-[var(--text-muted)]">Pago aos Barbeiros</p>
+            <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(summary.paidCommission)}</p>
+          </div>
         </div>
-        <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
-          <p className="text-xs text-[var(--text-muted)]">Liberado Proporcional</p>
-          <p className="text-lg font-serif font-bold text-emerald-400 mt-1">{brl(totals.released)}</p>
-        </div>
-        <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
-          <p className="text-xs text-[var(--text-muted)] font-medium">Pago</p>
-          <p className="text-lg font-serif font-bold text-[var(--text-primary)] mt-1">{brl(totals.paid)}</p>
-        </div>
-        <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-3.5 rounded-xl">
-          <p className="text-xs text-[var(--text-muted)] font-medium">Revertido</p>
-          <p className="text-lg font-serif font-bold text-red-400 mt-1">{brl(totals.reversed)}</p>
-        </div>
-        <div className="bg-[var(--surface)] border border-[var(--gold-border)] p-3.5 rounded-xl col-span-2 sm:col-span-1 bg-gradient-to-br from-[var(--surface)] to-[var(--brand-subtle)]/20">
-          <p className="text-xs text-[var(--text-secondary)] font-semibold">Saldo Líquido</p>
-          <p className="text-lg font-serif font-bold text-[var(--gold)] mt-1">{brl(totals.balance)}</p>
-        </div>
-      </div>
+      )}
 
+      {/* Members Table */}
       {loading ? (
         <div className="flex items-center justify-center py-16 text-[var(--text-muted)] text-sm">Carregando comissões...</div>
       ) : error ? (
         <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-center text-red-400 text-sm">{error}</div>
-      ) : periods.length === 0 ? (
+      ) : members.length === 0 ? (
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-8 text-center text-[var(--text-muted)]">
           Nenhuma comissão encontrada para os filtros aplicados.
         </div>
@@ -283,51 +423,41 @@ export default function AdminComissoesPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-[var(--surface-raised)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
               <tr>
-                {["Profissional", "Período / Filtro", "Gerado", "Liberado", "Pago", "Revertido", "Saldo a Pagar", "Status"].map((head) => (
-                  <th key={head} className="px-4 py-3 text-left font-medium">{head}</th>
+                {["Profissional", "Comandas", "Serviços", "Produção", "Base Líquida", "Gerado", "Liberado", "Saldo", "Ticket Médio", "% Efetivo", ""].map((head) => (
+                  <th key={head || "action"} className="px-3 py-3 text-left font-medium text-xs whitespace-nowrap">{head}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--surface)]/40">
-              {periods.map((period) => {
-                const targetMemberId = period.memberId || (period.member as any)?.id || period.id;
-                return (
-                  <tr
-                    key={period.id}
-                    onClick={() => setSelectedMember({ id: targetMemberId, name: period.member.user.name })}
-                    className="text-[var(--text-primary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors"
-                  >
-                    <td className="px-4 py-3 font-medium flex items-center gap-2">
-                      {period.member.user.name}
-                      <span className="text-[10px] text-[var(--text-muted)] font-normal hover:text-[var(--gold)]">🔍 Auditar</span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-[var(--text-secondary)]">{period.competence}</td>
-                    <td className="px-4 py-3 font-serif">{brl(period.generatedAmount)}</td>
-                    <td className="px-4 py-3 text-emerald-400 font-serif font-medium">{brl(period.releasedAmount)}</td>
-                    <td className="px-4 py-3 font-serif">{brl(period.paidAmount)}</td>
-                    <td className="px-4 py-3 text-red-400 font-serif">{brl(period.reversedAmount)}</td>
-                    <td className="px-4 py-3 text-[var(--gold)] font-serif font-bold">{brl(period.balanceAmount)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                          period.status === "PAID"
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                            : period.status === "CLOSED"
-                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                            : "bg-[var(--surface-raised)] text-[var(--text-secondary)] border-[var(--border-subtle)]"
-                        }`}
-                      >
-                        {period.status === "PAID" ? "PAGO" : period.status === "CLOSED" ? "FECHADO" : "ABERTO"}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+              {members.map((m) => (
+                <tr
+                  key={m.memberId}
+                  className="text-[var(--text-primary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors"
+                  onClick={() => setSelectedMember({ id: m.memberId, name: m.memberName })}
+                >
+                  <td className="px-3 py-3 font-medium whitespace-nowrap">{m.memberName}</td>
+                  <td className="px-3 py-3 text-center">{m.commandCount}</td>
+                  <td className="px-3 py-3 text-center">{m.serviceCount}</td>
+                  <td className="px-3 py-3 font-serif whitespace-nowrap">
+                    {brl(Number(m.grossServiceAmount) + Number(m.grossProductAmount))}
+                  </td>
+                  <td className="px-3 py-3 font-serif whitespace-nowrap">{brl(m.netBaseAmount)}</td>
+                  <td className="px-3 py-3 font-serif whitespace-nowrap">{brl(m.generatedCommission)}</td>
+                  <td className="px-3 py-3 text-emerald-400 font-serif font-medium whitespace-nowrap">{brl(m.releasedCommission)}</td>
+                  <td className="px-3 py-3 text-[var(--gold)] font-serif font-bold whitespace-nowrap">{brl(m.balanceAmount)}</td>
+                  <td className="px-3 py-3 font-serif whitespace-nowrap">{brl(m.averageTicket)}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">{pct(m.effectiveCommissionRate)}</td>
+                  <td className="px-3 py-3">
+                    <span className="text-[10px] text-[var(--text-muted)] font-normal hover:text-[var(--gold)]">🔍 Auditar</span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
+      {/* Audit Drawer */}
       {selectedMember && (
         <div className="fixed inset-0 z-[100] flex justify-end">
           <div
@@ -341,7 +471,7 @@ export default function AdminComissoesPage() {
                   <span>Auditoria: {selectedMember.name}</span>
                 </h2>
                 <p className="text-xs text-[var(--text-muted)]">
-                  Filtro: {filterType === "MONTHLY" ? `Competência ${competence}` : "Intervalo personalizado"}
+                  Filtro: {filterType === "MONTHLY" ? `Competência ${competence}` : filterType === "WEEKLY" && weekRange ? weekLabel(weekRange.start, weekRange.end) : "Intervalo personalizado"}
                 </p>
               </div>
               <button
@@ -359,6 +489,41 @@ export default function AdminComissoesPage() {
                 <div className="flex items-center justify-center py-20 text-[var(--text-muted)] text-sm">Nenhum registro encontrado.</div>
               ) : (
                 <>
+                  {/* Drawer mini summary from report data */}
+                  {(() => {
+                    const memberReport = members.find((m) => m.memberId === selectedMember.id);
+                    if (!memberReport) return null;
+                    return (
+                      <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--border-subtle)]">
+                          <p className="text-[var(--text-muted)]">Produção</p>
+                          <p className="font-semibold font-serif">{brl(Number(memberReport.grossServiceAmount) + Number(memberReport.grossProductAmount))}</p>
+                        </div>
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--border-subtle)]">
+                          <p className="text-[var(--text-muted)]">Comandas</p>
+                          <p className="font-semibold">{memberReport.commandCount}</p>
+                        </div>
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--border-subtle)]">
+                          <p className="text-[var(--text-muted)]">Serviços</p>
+                          <p className="font-semibold">{memberReport.serviceCount}</p>
+                        </div>
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--border-subtle)]">
+                          <p className="text-[var(--text-muted)]">Ticket Médio</p>
+                          <p className="font-semibold font-serif">{brl(memberReport.averageTicket)}</p>
+                        </div>
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--border-subtle)]">
+                          <p className="text-[var(--text-muted)]">% Efetivo</p>
+                          <p className="font-semibold">{pct(memberReport.effectiveCommissionRate)}</p>
+                        </div>
+                        <div className="bg-[var(--surface-raised)] p-2 rounded-lg border border-[var(--gold-border)]">
+                          <p className="text-[var(--text-muted)]">Saldo</p>
+                          <p className="font-semibold font-serif text-[var(--gold)]">{brl(memberReport.balanceAmount)}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Existing audit detail cards */}
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="bg-[var(--surface-raised)] p-2.5 rounded-lg border border-[var(--border-subtle)]">
                       <p className="text-[var(--text-muted)]">Bruto Serviços</p>
@@ -423,12 +588,16 @@ export default function AdminComissoesPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {auditData.adjustments.map((adj: any) => (
-                        <div key={adj.id} className="bg-[var(--surface-raised)]/40 p-3.5 rounded-xl border border-[var(--border-subtle)]">
-                          <p className="text-xs font-bold">{adj.description}</p>
-                          <p className="text-sm font-serif font-bold text-[var(--gold)]">{brl(adj.amount)}</p>
-                        </div>
-                      ))}
+                      {auditData.adjustments.length === 0 ? (
+                        <p className="text-xs text-[var(--text-muted)] text-center py-10">Nenhum ajuste ou estorno.</p>
+                      ) : (
+                        auditData.adjustments.map((adj: any) => (
+                          <div key={adj.id} className="bg-[var(--surface-raised)]/40 p-3.5 rounded-xl border border-[var(--border-subtle)]">
+                            <p className="text-xs font-bold">{adj.description}</p>
+                            <p className="text-sm font-serif font-bold text-[var(--gold)]">{brl(adj.amount)}</p>
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
                 </>
