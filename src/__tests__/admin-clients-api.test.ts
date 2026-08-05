@@ -233,7 +233,7 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     const okData = await ok.json();
     expect(ok.status).toBe(200);
     expect(okData.history).toEqual([]);
-    expect(okData.contactHistoryConfigured).toBe(false);
+    expect(okData.contactHistoryConfigured).toBe(true);
 
     prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce(null);
     prismaMock.appointment.count.mockResolvedValueOnce(0);

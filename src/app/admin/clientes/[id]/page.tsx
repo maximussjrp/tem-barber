@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 
 type TemplateKey = "invite" | "week" | "return" | "feedback";
+type ContactChannel = "WHATSAPP" | "PHONE" | "IN_PERSON" | "EMAIL" | "OTHER";
+type ContactTemplateKey = "APPOINTMENT_INVITE" | "WEEK_OPEN" | "RETURN_REMINDER" | "POST_SERVICE_FEEDBACK" | "CUSTOM";
 
 interface ClientData {
   id: string;
@@ -66,12 +68,50 @@ interface ClientData {
   }>;
 }
 
+interface ContactLog {
+  id: string;
+  channel: ContactChannel;
+  templateKey: ContactTemplateKey;
+  templateLabel: string;
+  note: string | null;
+  contactedAt: string;
+  createdBy: {
+    userId: string;
+    name: string;
+    memberId: string | null;
+    memberName: string | null;
+  };
+}
+
 const TEMPLATE_LABELS: Record<TemplateKey, string> = {
   invite: "Convite/agendamento",
   week: "Agenda da semana",
   return: "Cliente sem retorno",
   feedback: "Pós-atendimento/feedback",
 };
+
+const CONTACT_CHANNEL_LABELS: Record<ContactChannel, string> = {
+  WHATSAPP: "WhatsApp",
+  PHONE: "Telefone",
+  IN_PERSON: "Presencial",
+  EMAIL: "E-mail",
+  OTHER: "Outro",
+};
+
+const CONTACT_TEMPLATE_BY_WHATSAPP_TEMPLATE: Record<TemplateKey, ContactTemplateKey> = {
+  invite: "APPOINTMENT_INVITE",
+  week: "WEEK_OPEN",
+  return: "RETURN_REMINDER",
+  feedback: "POST_SERVICE_FEEDBACK",
+};
+
+const CONTACT_TEMPLATE_OPTIONS: Array<{ value: ContactTemplateKey; label: string }> = [
+  { value: "APPOINTMENT_INVITE", label: "Convite/agendamento" },
+  { value: "WEEK_OPEN", label: "Agenda da semana aberta" },
+  { value: "RETURN_REMINDER", label: "Lembrete de retorno" },
+  { value: "POST_SERVICE_FEEDBACK", label: "PÃ³s-atendimento/feedback" },
+  { value: "CUSTOM", label: "Personalizado" },
+];
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pendente",
@@ -119,6 +159,11 @@ function formatDateTime(iso: string) {
   return `${date} às ${time}`;
 }
 
+function toDatetimeLocalValue(date = new Date()) {
+  const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+}
+
 export default function Cliente360Page() {
   const params = useParams();
   const id = params.id as string;
@@ -132,6 +177,29 @@ export default function Cliente360Page() {
   const [submittingBlock, setSubmittingBlock] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateKey>("invite");
   const [copyNotice, setCopyNotice] = useState("");
+  const [contactLogs, setContactLogs] = useState<ContactLog[]>([]);
+  const [loadingContactLogs, setLoadingContactLogs] = useState(false);
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [contactChannel, setContactChannel] = useState<ContactChannel>("WHATSAPP");
+  const [contactTemplateKey, setContactTemplateKey] = useState<ContactTemplateKey>("APPOINTMENT_INVITE");
+  const [contactNote, setContactNote] = useState("");
+  const [contactedAt, setContactedAt] = useState(() => toDatetimeLocalValue());
+  const [contactError, setContactError] = useState("");
+  const [submittingContact, setSubmittingContact] = useState(false);
+
+  const loadContactLogs = useCallback(async () => {
+    setLoadingContactLogs(true);
+    try {
+      const res = await fetch(`/api/admin/clients/${id}/contact-logs`);
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? "Erro ao carregar historico de contato.");
+      setContactLogs(payload.logs ?? []);
+    } catch {
+      setContactLogs([]);
+    } finally {
+      setLoadingContactLogs(false);
+    }
+  }, [id]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -141,12 +209,13 @@ export default function Cliente360Page() {
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error ?? "Erro ao carregar dados do cliente.");
       setData(payload);
+      await loadContactLogs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, loadContactLogs]);
 
   useEffect(() => {
     loadData();
@@ -202,6 +271,41 @@ export default function Cliente360Page() {
     await navigator.clipboard.writeText(data.whatsapp.messages[selectedTemplate]);
     setCopyNotice("Mensagem copiada.");
     window.setTimeout(() => setCopyNotice(""), 2500);
+  };
+
+  const openContactModal = () => {
+    setContactChannel("WHATSAPP");
+    setContactTemplateKey(CONTACT_TEMPLATE_BY_WHATSAPP_TEMPLATE[selectedTemplate]);
+    setContactNote("");
+    setContactedAt(toDatetimeLocalValue());
+    setContactError("");
+    setShowContactModal(true);
+  };
+
+  const submitContactLog = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSubmittingContact(true);
+    setContactError("");
+    try {
+      const res = await fetch(`/api/admin/clients/${id}/contact-logs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel: contactChannel,
+          templateKey: contactTemplateKey,
+          note: contactNote || undefined,
+          contactedAt: contactedAt ? new Date(contactedAt).toISOString() : undefined,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.message ?? payload.error ?? "Erro ao registrar contato.");
+      setShowContactModal(false);
+      await loadContactLogs();
+    } catch (err) {
+      setContactError(err instanceof Error ? err.message : "Erro ao registrar contato.");
+    } finally {
+      setSubmittingContact(false);
+    }
   };
 
   if (loading) {
@@ -350,8 +454,44 @@ export default function Cliente360Page() {
       </div>
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg p-6">
-        <h2 className="text-base font-bold text-stone-200 mb-2">Histórico de contato</h2>
-        <p className="text-sm text-stone-500">Histórico de contato ainda não configurado.</p>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <div>
+            <h2 className="text-base font-bold text-stone-200">Histórico de contato</h2>
+          </div>
+          <button
+            type="button"
+            onClick={openContactModal}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
+          >
+            Registrar contato feito
+          </button>
+        </div>
+
+        {loadingContactLogs ? (
+          <p className="text-sm text-stone-500">Carregando histórico de contato...</p>
+        ) : contactLogs.length === 0 ? (
+          <p className="text-sm text-stone-500">Nenhum contato registrado ainda.</p>
+        ) : (
+          <div className="divide-y divide-stone-800/60">
+            {contactLogs.map((log) => (
+              <div key={log.id} className="py-3 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-stone-200">{formatDateTime(log.contactedAt)}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-stone-800 text-stone-300 text-[10px] font-bold">
+                      {CONTACT_CHANNEL_LABELS[log.channel] ?? log.channel}
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-400">{log.templateLabel}</p>
+                  {log.note && <p className="text-sm text-stone-300">{log.note}</p>}
+                </div>
+                <p className="text-xs text-stone-500 sm:text-right">
+                  Registrado por {log.createdBy.memberName ?? log.createdBy.name}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg overflow-hidden">
@@ -433,6 +573,86 @@ export default function Cliente360Page() {
                   className="px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-bold hover:bg-red-600 disabled:opacity-50 transition-colors"
                 >
                   {submittingBlock ? "Bloqueando..." : "Confirmar Bloqueio"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showContactModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-lg p-6 max-w-md w-full space-y-4">
+            <h3 className="text-lg font-bold text-stone-100">Registrar contato feito</h3>
+            <form onSubmit={submitContactLog} className="space-y-4">
+              <div>
+                <label htmlFor="contact-channel" className="block text-xs font-semibold text-stone-400 mb-1">Canal</label>
+                <select
+                  id="contact-channel"
+                  value={contactChannel}
+                  onChange={(e) => setContactChannel(e.target.value as ContactChannel)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                >
+                  {Object.entries(CONTACT_CHANNEL_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="contact-template" className="block text-xs font-semibold text-stone-400 mb-1">Template</label>
+                <select
+                  id="contact-template"
+                  value={contactTemplateKey}
+                  onChange={(e) => setContactTemplateKey(e.target.value as ContactTemplateKey)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                >
+                  {CONTACT_TEMPLATE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="contacted-at" className="block text-xs font-semibold text-stone-400 mb-1">Data e hora</label>
+                <input
+                  id="contacted-at"
+                  type="datetime-local"
+                  value={contactedAt}
+                  onChange={(e) => setContactedAt(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="contact-note" className="block text-xs font-semibold text-stone-400 mb-1">Observação opcional</label>
+                <textarea
+                  id="contact-note"
+                  value={contactNote}
+                  onChange={(e) => setContactNote(e.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              {contactError && (
+                <p className="text-xs text-red-400 bg-red-950/30 p-2.5 rounded-lg border border-red-900/50">
+                  {contactError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowContactModal(false)}
+                  className="px-4 py-2 rounded-lg bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingContact}
+                  className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 disabled:opacity-50"
+                >
+                  {submittingContact ? "Salvando..." : "Salvar"}
                 </button>
               </div>
             </form>

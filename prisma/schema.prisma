@@ -45,6 +45,8 @@ model User {
   blockedCustomers              BarbershopBlockedCustomer[]
   blockedCustomersByMe          BarbershopBlockedCustomer[]       @relation("BlockedByUser")
   unblockedCustomersByMe        BarbershopBlockedCustomer[]       @relation("UnblockedByUser")
+  customerContactLogs           CustomerContactLog[]              @relation("CustomerContactLogs")
+  createdCustomerContactLogs    CustomerContactLog[]              @relation("CreatedCustomerContactLogs")
 
   @@map("users")
 }
@@ -113,6 +115,7 @@ model Barbershop {
   comandaReopenAudits         ComandaReopenAudit[]
   comandaCancelAudits         ComandaCancelAudit[]
   blockedCustomers            BarbershopBlockedCustomer[]
+  customerContactLogs         CustomerContactLog[]
 
   @@map("barbershops")
 }
@@ -173,6 +176,7 @@ model BarbershopMember {
   comandaCancelAudits      ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
   blockedCustomersByMe     BarbershopBlockedCustomer[] @relation("BlockedByMember")
   unblockedCustomersByMe   BarbershopBlockedCustomer[] @relation("UnblockedByMember")
+  createdCustomerContactLogs CustomerContactLog[]       @relation("MemberCreatedCustomerContactLogs")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -384,6 +388,33 @@ model CustomerBarbershopLink {
   @@unique([barbershopId, customerId])
   @@index([barbershopId, customerId])
   @@map("customer_barbershop_links")
+}
+
+model CustomerContactLog {
+  id                String   @id @default(uuid())
+  barbershopId      String   @map("barbershop_id")
+  customerId        String   @map("customer_id")
+  channel           String   @db.VarChar(32)
+  templateKey       String   @map("template_key") @db.VarChar(64)
+  templateLabel     String   @map("template_label") @db.VarChar(120)
+  note              String?  @db.VarChar(500)
+  contactedAt       DateTime @map("contacted_at")
+  createdByUserId   String   @map("created_by_user_id")
+  createdByMemberId String?  @map("created_by_member_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  barbershop      Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer        User              @relation("CustomerContactLogs", fields: [customerId], references: [id], onDelete: Cascade)
+  createdByUser   User              @relation("CreatedCustomerContactLogs", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByMember BarbershopMember? @relation("MemberCreatedCustomerContactLogs", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, customerId, contactedAt])
+  @@index([barbershopId, contactedAt])
+  @@index([customerId])
+  @@index([createdByUserId])
+  @@index([createdByMemberId])
+  @@map("customer_contact_logs")
 }
 
 // Serviços atrelados ao agendamento (suporta múltiplos serviços no mesmo slot)

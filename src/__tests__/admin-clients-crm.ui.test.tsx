@@ -148,17 +148,19 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("contact"));
   });
 
-  it("ficha mostra WhatsApp manual e ausência de histórico de contato", async () => {
+  it("ficha mostra WhatsApp manual e estado vazio de histórico de contato", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => detailPayload,
+      json: async () => ({ ...detailPayload, logs: [] }),
     }) as unknown as typeof fetch;
 
     render(<ClienteDetailPage />);
 
     expect(await screen.findByText("Ana Manual")).toBeInTheDocument();
     expect(screen.getByText("WhatsApp manual")).toBeInTheDocument();
-    expect(screen.getByText("Histórico de contato ainda não configurado.")).toBeInTheDocument();
+    expect(screen.queryByText("Histórico de contato ainda não configurado.")).not.toBeInTheDocument();
+    expect(screen.getByText("Nenhum contato registrado ainda.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar contato feito" })).toBeInTheDocument();
     expect(screen.getByText("Abrir WhatsApp ou copiar mensagem não registra contato automaticamente.")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Copiar mensagem" }));

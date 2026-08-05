@@ -187,7 +187,7 @@ export async function GET(
     createdAt: user.createdAt.toISOString(),
     barbershopName: barbershop?.name ?? "Barbearia",
     bookingUrl,
-    contactHistoryConfigured: false,
+    contactHistoryConfigured: true,
     isBlocked: Boolean(activeBlock),
     blockRecord: activeBlock
       ? {
