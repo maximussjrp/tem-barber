@@ -3,6 +3,21 @@ import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
 import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
+const ORIGIN_LABELS: Record<string, string> = {
+  MEMBER_SERVICE: "Profissional + Serviço",
+  MEMBER_CATEGORY: "Profissional + Categoria",
+  MEMBER_DEFAULT: "Profissional Padrão",
+  SERVICE_CAREER_LEVEL: "Matriz Serviço x Nível",
+  SERVICE_DEFAULT: "Serviço Geral",
+  CATEGORY_DEFAULT: "Categoria Geral",
+  MEMBER_PRODUCT: "Profissional + Produto",
+  MEMBER_PRODUCT_DEFAULT: "Profissional + Produto Padrão",
+  PRODUCT: "Produto Geral",
+  PRODUCT_DEFAULT: "Produto Padrão Geral",
+  CAREER_LEVEL_DEFAULT: "Nível de Carreira Padrão",
+  BARBERSHOP_DEFAULT: "Padrão da Barbearia",
+};
+
 function competenceToDates(competence: string) {
   const [year, month] = competence.split("-").map(Number);
   const start = new Date(Date.UTC(year, month - 1, 1, 3, 0, 0, 0)); // 00:00 local America/Sao_Paulo (UTC-3)
@@ -74,6 +89,8 @@ export async function GET(request: NextRequest) {
               id: true,
               customerName: true,
               closedAt: true,
+              status: true,
+              appointmentId: true,
             },
           },
         },
@@ -163,19 +180,37 @@ export async function GET(request: NextRequest) {
       manualAdjustments: manualAdjustments / 100,
       balance: balance / 100,
     },
-    entries: entries.map((entry) => ({
-      id: entry.id,
-      type: entry.type,
-      description: entry.comandaItem.description,
-      customerName: entry.comandaItem.comanda.customerName,
-      date: entry.comandaItem.comanda.closedAt || entry.createdAt,
-      baseAmount: Number(entry.baseAmount),
-      generatedAmount: Number(entry.generatedAmount),
-      releasedAmount: Number(entry.releasedAmount),
-      paidAmount: Number(entry.paidAmount),
-      reversedAmount: Number(entry.reversedAmount),
-      status: entry.status,
-    })),
+    entries: entries.map((entry) => {
+      const snapshot = (entry.configSnapshot as any) || {};
+      const origin = snapshot.origin || "BARBERSHOP_DEFAULT";
+      const ruleType = snapshot.type || "PERCENTAGE";
+      const ruleValue = snapshot.value !== undefined ? Number(snapshot.value) : 0;
+
+      return {
+        id: entry.id,
+        type: entry.type,
+        description: entry.comandaItem.description,
+        customerName: entry.comandaItem.comanda.customerName,
+        comandaId: entry.comandaItem.comanda.id,
+        comandaStatus: entry.comandaItem.comanda.status,
+        appointmentId: entry.comandaItem.comanda.appointmentId,
+        itemStatus: entry.comandaItem.status,
+        quantity: Number(entry.comandaItem.quantity),
+        unitPrice: Number(entry.comandaItem.unitPrice),
+        total: Number(entry.comandaItem.total),
+        date: entry.comandaItem.comanda.closedAt || entry.createdAt,
+        baseAmount: Number(entry.baseAmount),
+        generatedAmount: Number(entry.generatedAmount),
+        releasedAmount: Number(entry.releasedAmount),
+        paidAmount: Number(entry.paidAmount),
+        reversedAmount: Number(entry.reversedAmount),
+        status: entry.status,
+        ruleOrigin: origin,
+        ruleOriginLabel: ORIGIN_LABELS[origin] || "Padrão da Barbearia",
+        ruleType,
+        ruleValue,
+      };
+    }),
     adjustments: adjustments.map((adj) => ({
       id: adj.id,
       type: adj.type,
