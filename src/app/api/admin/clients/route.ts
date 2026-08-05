@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
+import {
+  createManualBarbershopClient,
+  listBarbershopClients,
+  type AdminClientFilter,
+} from "@/lib/customers";
 
-// GET /api/admin/clients
-// Lista todos os clientes que têm agendamentos nesta barbearia
-// Isolado por barbershopId — sem vazamento entre tenants
 export async function GET(request: NextRequest) {
   const { error, data } = await getAdminSession();
   if (error) return error;
@@ -18,125 +20,46 @@ export async function GET(request: NextRequest) {
   const search = sp.get("search")?.trim() ?? "";
   const page = Math.max(1, parseInt(sp.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, parseInt(sp.get("pageSize") ?? "30")));
+  const filter = (sp.get("filter") ?? "all") as AdminClientFilter;
 
-  // 1. Otimização P0: Filtro direto via relação Prisma sem carregar todos os IDs em memória
-  const userWhere = {
-    appointments: {
-      some: {
-        barbershopId,
-      },
-    },
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: "insensitive" as const } },
-            { phone: { contains: search.replace(/\D/g, "") } },
-          ],
-        }
-      : {}),
-  };
+  const result = await listBarbershopClients(prisma, {
+    barbershopId,
+    search,
+    filter,
+    page,
+    pageSize,
+  });
 
-  const [totalCount, users] = await Promise.all([
-    prisma.user.count({ where: userWhere }),
-    prisma.user.findMany({
-      where: userWhere,
-      orderBy: { name: "asc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: {
-        id: true,
-        name: true,
-        phone: true,
-        createdAt: true,
-      },
-    }),
-  ]);
+  return NextResponse.json(result);
+}
 
-  if (users.length === 0) {
-    return NextResponse.json({ clients: [], total: 0, page, pageSize });
+export async function POST(request: NextRequest) {
+  const { error, data } = await getAdminSession();
+  if (error) return error;
+
+  const barbershopId = data!.barbershopId;
+  if (!barbershopId) {
+    return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 403 });
   }
 
-  // 2. Buscar dados brutos dos agendamentos e comandas para os usuários paginados
-  const userIds = users.map((u) => u.id);
-  const [appointments, comandas] = await Promise.all([
-    prisma.appointment.findMany({
-      where: {
-        barbershopId,
-        customerId: { in: userIds },
-      },
-      select: {
-        customerId: true,
-        status: true,
-        dateTime: true,
-      },
-    }),
-    prisma.comanda.findMany({
-      where: {
-        barbershopId,
-        customerId: { in: userIds },
-        status: { not: "CANCELLED" },
-        paidTotal: { gt: 0 },
-      },
-      select: {
-        customerId: true,
-        paidTotal: true,
-      },
-    }),
-  ]);
-
-  // 3. Agregar estatísticas por cliente de acordo com as novas regras
-  const statsMap: Record<
-    string,
-    { total: number; completed: number; cancelled: number; noShows: number; totalSpent: number; lastVisit: string | null }
-  > = {};
-
-  for (const u of users) {
-    statsMap[u.id] = {
-      total: 0,
-      completed: 0,
-      cancelled: 0,
-      noShows: 0,
-      totalSpent: 0,
-      lastVisit: null,
-    };
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Body inválido." }, { status: 400 });
   }
 
-  // Agregar agendamentos
-  for (const appt of appointments) {
-    const s = statsMap[appt.customerId];
-    if (!s) continue;
-    s.total += 1;
+  const payload = body as { name?: string; phone?: string; email?: string };
+  const result = await createManualBarbershopClient(prisma, barbershopId, {
+    name: payload.name,
+    phone: payload.phone,
+    email: payload.email,
+  });
 
-    if (appt.status === "COMPLETED") {
-      s.completed += 1;
-      // Última visita baseia-se apenas em atendimentos concluídos
-      const dt = appt.dateTime.toISOString();
-      if (!s.lastVisit || dt > s.lastVisit) {
-        s.lastVisit = dt;
-      }
-    } else if (appt.status === "CANCELLED") {
-      s.cancelled += 1;
-    } else if (appt.status === "NO_SHOW") {
-      s.noShows += 1;
-    }
+  if ("error" in result) {
+    const status = result.error === "CUSTOMER_BLOCKED" ? 409 : 400;
+    return NextResponse.json({ error: result.error, message: result.message }, { status });
   }
 
-  // Agregar faturamento das comandas válidas
-  for (const cmd of comandas) {
-    if (!cmd.customerId) continue;
-    const s = statsMap[cmd.customerId];
-    if (s) {
-      s.totalSpent += Number(cmd.paidTotal);
-    }
-  }
-
-  const clients = users.map((u) => ({
-    id: u.id,
-    name: u.name,
-    phone: u.phone,
-    createdAt: u.createdAt,
-    stats: statsMap[u.id],
-  }));
-
-  return NextResponse.json({ clients, total: totalCount, page, pageSize });
+  return NextResponse.json(result.client, { status: 201 });
 }

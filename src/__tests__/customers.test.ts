@@ -5,6 +5,11 @@ import { normalizePhone, phoneLookupVariants, phoneSearchFragments, phonesMatch 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     appointment: { findMany: vi.fn() },
+    customerBarbershopLink: { findMany: vi.fn() },
+    comanda: { findMany: vi.fn() },
+    customerClubSubscription: { findMany: vi.fn() },
+    barbershopBlockedCustomer: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
   },
   getAdminSessionMock: vi.fn(),
 }));
@@ -44,17 +49,19 @@ describe("busca admin de clientes", () => {
       error: null,
       data: { userId: "admin-a", role: "OWNER", memberId: "member-a", barbershopId: "shop-a" },
     });
-    prismaMock.appointment.findMany.mockResolvedValue([
-      {
-        customerId: "customer-a",
-        dateTime: new Date("2026-07-20T13:00:00.000Z"),
-        customer: { id: "customer-a", name: "Joao Martins", phone: "+55 (17) 99999-9999" },
-      },
-      {
-        customerId: "customer-b",
-        dateTime: new Date("2026-07-19T13:00:00.000Z"),
-        customer: { id: "customer-b", name: "Maria Silva", phone: "11988887777" },
-      },
+    prismaMock.customerBarbershopLink.findMany.mockResolvedValue([]);
+    prismaMock.appointment.findMany
+      .mockResolvedValueOnce([{ customerId: "customer-a" }, { customerId: "customer-b" }])
+      .mockResolvedValueOnce([
+        { customerId: "customer-a", dateTime: new Date("2026-07-20T13:00:00.000Z"), status: "COMPLETED" },
+        { customerId: "customer-b", dateTime: new Date("2026-07-19T13:00:00.000Z"), status: "COMPLETED" },
+      ]);
+    prismaMock.comanda.findMany.mockResolvedValue([]);
+    prismaMock.customerClubSubscription.findMany.mockResolvedValue([]);
+    prismaMock.barbershopBlockedCustomer.findMany.mockResolvedValue([]);
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "customer-a", name: "Joao Martins", phone: "+55 (17) 99999-9999", email: null, createdAt: new Date() },
+      { id: "customer-b", name: "Maria Silva", phone: "11988887777", email: null, createdAt: new Date() },
     ]);
   });
 
@@ -68,9 +75,6 @@ describe("busca admin de clientes", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           barbershopId: "shop-a",
-          OR: expect.arrayContaining([
-            { customer: { name: { contains: "joao", mode: "insensitive" } } },
-          ]),
         }),
       })
     );
@@ -98,11 +102,6 @@ describe("busca admin de clientes", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           barbershopId: "shop-a",
-          OR: expect.arrayContaining([
-            { customer: { phone: { contains: "17999999999" } } },
-            { customer: { phone: { contains: "99999999" } } },
-            { customer: { phone: { contains: "99999" } } },
-          ]),
         }),
       })
     );

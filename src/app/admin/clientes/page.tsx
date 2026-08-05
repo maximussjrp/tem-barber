@@ -1,32 +1,56 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+type ClientFilter = "all" | "with_appointment" | "without_appointment" | "upcoming" | "open_comanda" | "club" | "blocked";
 
 interface ClientStats {
   total: number;
   completed: number;
   cancelled: number;
+  noShows: number;
   totalSpent: number;
   lastVisit: string | null;
+  nextAppointmentAt: string | null;
+  openComandas: number;
+  closedComandas: number;
+  hasClubSubscription: boolean;
+  isBlocked: boolean;
 }
 
 interface Client {
   id: string;
   name: string;
+  email: string | null;
   phone: string;
   createdAt: string;
   stats: ClientStats;
+  sources: {
+    link: boolean;
+    appointment: boolean;
+    comanda: boolean;
+    club: boolean;
+  };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 30;
+
+const FILTERS: Array<{ value: ClientFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "with_appointment", label: "Com agendamento" },
+  { value: "without_appointment", label: "Sem agendamento" },
+  { value: "upcoming", label: "Próximo agendamento" },
+  { value: "open_comanda", label: "Comanda aberta" },
+  { value: "club", label: "Clube" },
+  { value: "blocked", label: "Bloqueados" },
+];
 
 function formatPhone(phone: string) {
   const d = phone.replace(/\D/g, "");
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  const local = d.startsWith("55") ? d.slice(2) : d;
+  if (local.length === 11) return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;
+  if (local.length === 10) return `(${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`;
   return phone;
 }
 
@@ -34,7 +58,8 @@ function formatCurrency(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function formatDate(iso: string) {
+function formatDate(iso: string | null) {
+  if (!iso) return "-";
   return new Date(iso).toLocaleDateString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -43,40 +68,36 @@ function formatDate(iso: string) {
   });
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function buildWhatsappMessage(client: Client) {
+  return `Oi, ${client.name}, aqui e da barbearia. Quer agendar seu horario?`;
+}
 
-interface BlockedItem {
-  id: string;
-  nameSnapshot: string;
-  phoneSanitized: string;
-  reason: string;
-  active: boolean;
-  blockedAt: string;
-  unblockedAt: string | null;
-  unblockReason: string | null;
+function whatsappLink(phone: string, message: string) {
+  const digits = phone.replace(/\D/g, "");
+  const intl = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
 }
 
 export default function ClientesPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"all" | "blocked">("all");
   const [clients, setClients] = useState<Client[]>([]);
-  const [blockedList, setBlockedList] = useState<BlockedItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<ClientFilter>("all");
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 30;
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [submittingCreate, setSubmittingCreate] = useState(false);
+  const [copyNotice, setCopyNotice] = useState("");
 
-  const [showManualModal, setShowManualModal] = useState(false);
-  const [manualPhone, setManualPhone] = useState("");
-  const [manualReason, setManualReason] = useState("");
-  const [manualError, setManualError] = useState("");
-  const [submittingManual, setSubmittingManual] = useState(false);
-
-  const fetchClients = useCallback(async (q: string, p: number) => {
+  const fetchClients = useCallback(async (q: string, p: number, f: ClientFilter) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(p), pageSize: String(PAGE_SIZE) });
+      const params = new URLSearchParams({ page: String(p), pageSize: String(PAGE_SIZE), filter: f });
       if (q) params.set("search", q);
       const res = await fetch(`/api/admin/clients?${params}`);
       const data = await res.json();
@@ -87,261 +108,237 @@ export default function ClientesPage() {
     }
   }, []);
 
-  const fetchBlocked = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/customers/blocked`);
-      const data = await res.json();
-      setBlockedList(data.blocks ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchClients(search, page, filter);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search, page, filter, fetchClients]);
 
   useEffect(() => {
-    if (tab === "all") {
-      const timer = setTimeout(() => {
-        fetchClients(search, page);
-      }, 300);
-      return () => clearTimeout(timer);
-    } else {
-      const timer = setTimeout(() => {
-        fetchBlocked();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [search, page, fetchClients, fetchBlocked, tab]);
-
-  const handleManualBlock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualPhone || !manualReason || manualReason.trim().length < 5) {
-      setManualError("Informe o telefone e um motivo com no mínimo 5 caracteres.");
-      return;
-    }
-    setSubmittingManual(true);
-    setManualError("");
-    try {
-      const res = await fetch("/api/admin/customers/block", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: manualPhone, reason: manualReason }),
-      });
-      const payload = await res.json();
-      if (!res.ok) throw new Error(payload.message || payload.error || "Erro ao bloquear número.");
-      setShowManualModal(false);
-      setManualPhone("");
-      setManualReason("");
-      if (tab === "blocked") fetchBlocked();
-      else fetchClients(search, page);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao bloquear número.";
-      setManualError(msg);
-    } finally {
-      setSubmittingManual(false);
-    }
-  };
-
-  const handleUnblock = async (blockId: string) => {
-    const reason = prompt("Motivo do desbloqueio (mínimo 5 caracteres):");
-    if (!reason || reason.trim().length < 5) return;
-
-    try {
-      const res = await fetch("/api/admin/customers/unblock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blockId, reason }),
-      });
-      const payload = await res.json();
-      if (!res.ok) throw new Error(payload.message || payload.error || "Erro ao desbloquear número.");
-      fetchBlocked();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao desbloquear número.";
-      alert(msg);
-    }
-  };
+    setPage(1);
+  }, [search, filter]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
+  const metrics = useMemo(() => ({
+    total,
+    manual: clients.filter((client) => !client.sources.appointment).length,
+    upcoming: clients.filter((client) => client.stats.nextAppointmentAt).length,
+    openComandas: clients.filter((client) => client.stats.openComandas > 0).length,
+  }), [clients, total]);
+
+  const submitCreate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSubmittingCreate(true);
+    setCreateError("");
+    try {
+      const res = await fetch("/api/admin/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          phone: newPhone,
+          email: newEmail || undefined,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.message ?? payload.error ?? "Erro ao cadastrar cliente.");
+      }
+      setShowCreateModal(false);
+      setNewName("");
+      setNewPhone("");
+      setNewEmail("");
+      await fetchClients(search, page, filter);
+      router.push(`/admin/clientes/${payload.id}`);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Erro ao cadastrar cliente.");
+    } finally {
+      setSubmittingCreate(false);
+    }
+  };
+
+  const copyMessage = async (client: Client) => {
+    const message = buildWhatsappMessage(client);
+    await navigator.clipboard.writeText(message);
+    setCopyNotice(`Mensagem copiada para ${client.name}.`);
+    window.setTimeout(() => setCopyNotice(""), 2500);
+  };
+
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-5xl">
-      {/* Header */}
+    <div className="p-6 md:p-8 space-y-6 max-w-6xl">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-stone-100">Clientes</h1>
           <p className="text-stone-500 text-sm mt-1">
-            Gestão de clientes e controle de bloqueios de números suspeitos.
+            CRM base com clientes vinculados, legados e cadastro manual.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-stone-900 border border-stone-800 rounded-xl p-1">
-            <button
-              type="button"
-              onClick={() => setTab("all")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                tab === "all" ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"
-              }`}
-            >
-              Todos os Clientes
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("blocked")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                tab === "blocked" ? "bg-red-500/20 text-red-300 border border-red-500/30" : "text-stone-400 hover:text-stone-200"
-              }`}
-            >
-              Bloqueados ({blockedList.filter((b) => b.active).length})
-            </button>
-          </div>
+        <button
+          type="button"
+          onClick={() => setShowCreateModal(true)}
+          className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
+        >
+          Novo cliente
+        </button>
+      </div>
 
-          <button
-            type="button"
-            onClick={() => setShowManualModal(true)}
-            className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold hover:bg-red-500/20 transition-colors"
-          >
-            + Bloquear Telefone
-          </button>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Clientes</p>
+          <p className="text-xl font-bold text-stone-100">{metrics.total}</p>
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Sem agendamento</p>
+          <p className="text-xl font-bold text-amber-400">{metrics.manual}</p>
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Futuros</p>
+          <p className="text-xl font-bold text-blue-400">{metrics.upcoming}</p>
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Comanda aberta</p>
+          <p className="text-xl font-bold text-emerald-400">{metrics.openComandas}</p>
         </div>
       </div>
 
-      {/* Search */}
-      <div>
+      <div className="flex flex-col gap-3">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por nome ou telefone..."
+          placeholder="Buscar por nome, telefone ou e-mail..."
           title="Buscar clientes"
-          className="w-full max-w-sm bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-2.5 text-stone-100 placeholder-stone-600 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
+          className="w-full max-w-md bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-2.5 text-stone-100 placeholder-stone-600 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
         />
+        <div className="flex flex-wrap gap-2">
+          {FILTERS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => setFilter(item.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                filter === item.value
+                  ? "bg-amber-500 text-stone-950 border-amber-500"
+                  : "bg-stone-900 text-stone-400 border-stone-800 hover:text-stone-200"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+      {copyNotice && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
+          {copyNotice}
+        </div>
+      )}
+
+      <div className="bg-stone-900 border border-stone-800 rounded-lg overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16 text-stone-600 text-sm">
             Carregando...
           </div>
-        ) : tab === "blocked" ? (
-          blockedList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-2">
-              <p className="text-stone-500">Nenhum telefone ou cliente bloqueado nesta barbearia.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-stone-800/60">
-              <div className="hidden sm:grid grid-cols-[1fr_160px_1fr_120px_100px] gap-3 px-5 py-3 border-b border-stone-800 text-[10px] uppercase tracking-wider text-stone-600 font-semibold">
-                <span>Cliente / Nome</span>
-                <span>Telefone</span>
-                <span>Motivo</span>
-                <span>Status</span>
-                <span className="text-right">Ação</span>
-              </div>
-              {blockedList.map((b) => (
-                <div key={b.id} className="px-5 py-4 flex flex-col sm:grid sm:grid-cols-[1fr_160px_1fr_120px_100px] gap-3 items-center">
-                  <div>
-                    <p className="text-sm font-semibold text-stone-200">{b.nameSnapshot}</p>
-                    <p className="text-[10px] text-stone-500">Bloqueado em {formatDate(b.blockedAt)}</p>
-                  </div>
-                  <p className="text-xs font-mono text-amber-400">{b.phoneSanitized}</p>
-                  <p className="text-xs text-stone-400 truncate max-w-xs">{b.reason}</p>
-                  <div>
-                    {b.active ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
-                        Ativo
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-stone-800 text-stone-500">
-                        Desbloqueado
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    {b.active && (
-                      <button
-                        type="button"
-                        onClick={() => handleUnblock(b.id)}
-                        className="px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold hover:bg-emerald-500/20 transition-colors"
-                      >
-                        Desbloquear
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )
         ) : clients.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-2">
-            <p className="text-stone-500">
-              {search ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente ainda."}
+          <div className="flex flex-col items-center justify-center py-16 gap-2 text-center px-4">
+            <p className="text-stone-400 font-semibold">Nenhum cliente encontrado.</p>
+            <p className="text-xs text-stone-600">
+              Cadastre um cliente manualmente ou ajuste a busca e os filtros.
             </p>
-            {!search && (
-              <p className="text-xs text-stone-600">
-                Os clientes aparecem aqui automaticamente quando fazem um agendamento.
-              </p>
-            )}
           </div>
         ) : (
           <>
-            {/* Header row */}
-            <div className="hidden sm:grid grid-cols-[1fr_140px_100px_160px_100px_44px] gap-3 px-5 py-3 border-b border-stone-800 text-[10px] uppercase tracking-wider text-stone-600 font-semibold">
+            <div className="hidden lg:grid grid-cols-[1fr_130px_120px_110px_110px_230px] gap-3 px-5 py-3 border-b border-stone-800 text-[10px] uppercase tracking-wider text-stone-600 font-semibold">
               <span>Cliente</span>
-              <span>Último agendamento</span>
-              <span className="text-right">Agendamentos</span>
-              <span className="text-right">Atendimentos concluídos</span>
+              <span>Última visita</span>
+              <span>Próximo</span>
               <span className="text-right">Total gasto</span>
-              <span />
+              <span>Status</span>
+              <span className="text-right">Ações</span>
             </div>
-
-            {/* Rows */}
             <div className="divide-y divide-stone-800/60">
-              {clients.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => router.push(`/admin/clientes/${c.id}`)}
-                  className="w-full text-left px-5 py-4 hover:bg-stone-800/30 transition-colors"
-                >
-                  <div className="flex items-center gap-3 sm:grid sm:grid-cols-[1fr_140px_100px_160px_100px_44px]">
-                    {/* Name + phone */}
-                    <div className="flex items-center gap-3 min-w-0">
+              {clients.map((client) => {
+                const message = buildWhatsappMessage(client);
+                const wa = whatsappLink(client.phone, message);
+                return (
+                  <div
+                    key={client.id}
+                    className="px-5 py-4 flex flex-col lg:grid lg:grid-cols-[1fr_130px_120px_110px_110px_230px] gap-3 lg:items-center hover:bg-stone-800/20 transition-colors"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/admin/clientes/${client.id}`)}
+                      className="text-left flex items-center gap-3 min-w-0"
+                    >
                       <div className="shrink-0 w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-xs font-bold text-amber-400">
-                        {c.name.charAt(0).toUpperCase()}
+                        {client.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold text-stone-200 truncate">{c.name}</p>
-                        <p className="text-xs text-stone-500">{formatPhone(c.phone)}</p>
+                        <p className="text-sm font-semibold text-stone-200 truncate">{client.name}</p>
+                        <p className="text-xs text-stone-500">{formatPhone(client.phone)}</p>
+                        {client.email && <p className="text-[11px] text-stone-600 truncate">{client.email}</p>}
                       </div>
+                    </button>
+
+                    <p className="text-xs text-stone-500">{formatDate(client.stats.lastVisit)}</p>
+                    <p className="text-xs text-stone-500">{formatDate(client.stats.nextAppointmentAt)}</p>
+                    <p className="text-sm font-semibold text-amber-400 lg:text-right">
+                      {formatCurrency(client.stats.totalSpent)}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {!client.sources.appointment && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-stone-800 text-stone-400">
+                          Manual
+                        </span>
+                      )}
+                      {client.stats.openComandas > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
+                          Comanda
+                        </span>
+                      )}
+                      {client.stats.hasClubSubscription && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400">
+                          Clube
+                        </span>
+                      )}
+                      {client.stats.isBlocked && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400">
+                          Bloqueado
+                        </span>
+                      )}
                     </div>
-
-                    {/* Last visit */}
-                    <p className="hidden sm:block text-xs text-stone-500">
-                      {c.stats.lastVisit ? formatDate(c.stats.lastVisit) : "—"}
-                    </p>
-
-                    {/* Total Appointments */}
-                    <p className="hidden sm:block text-sm font-semibold text-stone-300 text-right">
-                      {c.stats.total}
-                    </p>
-
-                    {/* Completed Visits */}
-                    <p className="hidden sm:block text-sm font-semibold text-emerald-400 text-right">
-                      {c.stats.completed}
-                    </p>
-
-                    {/* Spent */}
-                    <p className="hidden sm:block text-sm font-semibold text-amber-400 text-right">
-                      {formatCurrency(c.stats.totalSpent)}
-                    </p>
-
-                    {/* Arrow */}
-                    <p className="hidden sm:block text-stone-600 text-right">›</p>
+                    <div className="flex flex-wrap justify-start lg:justify-end gap-2">
+                      <a
+                        href={wa}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-[#25D366]/10 text-[#25D366] border border-[#25D366]/20 text-xs font-bold hover:bg-[#25D366]/20"
+                      >
+                        WhatsApp
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => copyMessage(client)}
+                        className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-300 border border-stone-700 text-xs font-bold hover:bg-stone-700"
+                      >
+                        Copiar mensagem
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/admin/clientes/${client.id}`)}
+                        className="px-3 py-1.5 rounded-lg bg-stone-950 text-stone-300 border border-stone-800 text-xs font-bold hover:bg-stone-800"
+                      >
+                        Ficha
+                      </button>
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+              })}
             </div>
 
-            {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-5 py-4 border-t border-stone-800">
                 <p className="text-xs text-stone-600">
@@ -349,18 +346,20 @@ export default function ClientesPage() {
                 </p>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page === 1}
                     className="px-3 py-1.5 rounded-lg border border-stone-800 text-stone-400 hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
                   >
-                    ←
+                    Anterior
                   </button>
                   <button
+                    type="button"
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page === totalPages}
                     className="px-3 py-1.5 rounded-lg border border-stone-800 text-stone-400 hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
                   >
-                    →
+                    Próxima
                   </button>
                 </div>
               </div>
@@ -369,63 +368,65 @@ export default function ClientesPage() {
         )}
       </div>
 
-      {/* Manual Block Modal */}
-      {showManualModal && (
+      {showCreateModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 max-w-md w-full space-y-4">
-            <h3 className="text-lg font-bold text-stone-100">Bloquear Telefone Suspeito</h3>
-            <p className="text-xs text-stone-400">
-              O número informado não conseguirá realizar novos agendamentos públicos nesta barbearia.
-            </p>
-            <form onSubmit={handleManualBlock} className="space-y-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-lg p-6 max-w-md w-full space-y-4">
+            <h3 className="text-lg font-bold text-stone-100">Novo cliente</h3>
+            <form onSubmit={submitCreate} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-stone-400 mb-1">
-                  Telefone <span className="text-red-400">*</span>
-                </label>
+                <label htmlFor="new-client-name" className="block text-xs font-semibold text-stone-400 mb-1">Nome</label>
                 <input
+                  id="new-client-name"
                   type="text"
-                  value={manualPhone}
-                  onChange={(e) => setManualPhone(e.target.value)}
-                  placeholder="Ex: 1818999943"
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-100 text-sm focus:border-red-500 focus:outline-none font-mono"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
                   required
                 />
               </div>
-
               <div>
-                <label className="block text-xs font-semibold text-stone-400 mb-1">
-                  Motivo do bloqueio <span className="text-red-400">*</span>
-                </label>
-                <textarea
-                  value={manualReason}
-                  onChange={(e) => setManualReason(e.target.value)}
-                  placeholder="Motivo (mínimo 5 caracteres)..."
-                  rows={3}
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-stone-100 text-sm focus:border-red-500 focus:outline-none"
+                <label htmlFor="new-client-phone" className="block text-xs font-semibold text-stone-400 mb-1">WhatsApp</label>
+                <input
+                  id="new-client-phone"
+                  type="text"
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(e.target.value)}
+                  placeholder="Ex: (17) 99108-9190"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
                   required
                 />
               </div>
+              <div>
+                <label htmlFor="new-client-email" className="block text-xs font-semibold text-stone-400 mb-1">E-mail opcional</label>
+                <input
+                  id="new-client-email"
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
 
-              {manualError && (
+              {createError && (
                 <p className="text-xs text-red-400 bg-red-950/30 p-2.5 rounded-lg border border-red-900/50">
-                  {manualError}
+                  {createError}
                 </p>
               )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowManualModal(false)}
-                  className="px-4 py-2 rounded-xl bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-700 transition-colors"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 rounded-lg bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-700"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={submittingManual}
-                  className="px-4 py-2 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 disabled:opacity-50 transition-colors"
+                  disabled={submittingCreate}
+                  className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 disabled:opacity-50"
                 >
-                  {submittingManual ? "Bloqueando..." : "Confirmar Bloqueio"}
+                  {submittingCreate ? "Salvando..." : "Salvar cliente"}
                 </button>
               </div>
             </form>

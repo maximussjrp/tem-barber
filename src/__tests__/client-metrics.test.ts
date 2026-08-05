@@ -10,11 +10,25 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    customerBarbershopLink: {
+      findUnique: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
+    barbershop: {
+      findUnique: vi.fn(),
+    },
     comanda: {
+      count: vi.fn(),
       findMany: vi.fn(),
+    },
+    customerClubSubscription: {
+      count: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    barbershopBlockedCustomer: {
+      findFirst: vi.fn(),
     },
     review: {
       findMany: vi.fn(),
