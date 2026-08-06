@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { normalizePhone, phoneLookupVariants, phoneSearchFragments, phonesMatch } from "@/lib/customers";
+import { normalizePhone, phoneLookupVariants, phoneSearchFragments, phonesMatch, getClientFirstName, buildClientWhatsappMessage } from "@/lib/customers";
 
 const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -117,5 +117,65 @@ describe("busca admin de clientes", () => {
 
     expect(data.clients).toEqual([]);
     expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("primeiro nome e templates de whatsapp", () => {
+  it("extrai primeiro nome corretamente tratando sufixos e numeros", () => {
+    expect(getClientFirstName("Carlos cliente")).toBe("Carlos");
+    expect(getClientFirstName("Carlos cl")).toBe("Carlos");
+    expect(getClientFirstName("Carlos 9190")).toBe("Carlos");
+    expect(getClientFirstName("9190 Carlos")).toBe("Carlos");
+    expect(getClientFirstName("Cliente Carlos")).toBe("Carlos");
+    expect(getClientFirstName("João Silva")).toBe("João");
+    expect(getClientFirstName("  João   Silva")).toBe("João");
+    expect(getClientFirstName("junin")).toBe("junin");
+    expect(getClientFirstName("")).toBe(null);
+    expect(getClientFirstName(null)).toBe(null);
+    expect(getClientFirstName(undefined)).toBe(null);
+  });
+
+  it("gera APPOINTMENT_DIRECT com link absoluto e primeiro nome", () => {
+    const msg = buildClientWhatsappMessage({
+      template: "APPOINTMENT_DIRECT",
+      customerName: "Carlos cliente",
+      barbershopName: "Dom Brio",
+      bookingUrl: "https://app.tembarber.com.br/don-brio/agendar"
+    });
+    expect(msg).toContain("Oi, Carlos.");
+    expect(msg).toContain("https://app.tembarber.com.br/don-brio/agendar");
+    expect(msg).not.toContain("Carlos cliente");
+    expect(msg).not.toContain("Agendamento: /");
+  });
+
+  it("gera template fallback sem nome quando nome e vazio/null", () => {
+    const msg = buildClientWhatsappMessage({
+      template: "APPOINTMENT_DIRECT",
+      customerName: "",
+      barbershopName: "Dom Brio",
+      bookingUrl: "https://app.tembarber.com.br/don-brio/agendar"
+    });
+    expect(msg).toContain("Oi, tudo bem?");
+    expect(msg).toContain("https://app.tembarber.com.br/don-brio/agendar");
+  });
+
+  it("preserva aliases legados invite/week/return/feedback", () => {
+    const msgInvite = buildClientWhatsappMessage({
+      template: "invite",
+      customerName: "Carlos cliente",
+      barbershopName: "Dom Brio",
+      bookingUrl: "https://app.tembarber.com.br/don-brio/agendar"
+    });
+    expect(msgInvite).toContain("Oi, Carlos.");
+    expect(msgInvite).toContain("https://app.tembarber.com.br/don-brio/agendar");
+
+    const msgFeedback = buildClientWhatsappMessage({
+      template: "feedback",
+      customerName: "Adriano Guarinieri",
+      barbershopName: "Dom Brio",
+      bookingUrl: "https://app.tembarber.com.br/don-brio/agendar"
+    });
+    expect(msgFeedback).toContain("Oi, Adriano.");
+    expect(msgFeedback).toContain("Passando para saber se ficou tudo certo");
   });
 });

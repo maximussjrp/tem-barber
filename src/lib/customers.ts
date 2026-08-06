@@ -4,6 +4,9 @@ import {
   validateBrazilianMobilePhone,
   getBrazilianPhoneVariants,
 } from "./phone/br-phone";
+import { buildClientWhatsappMessage as canonicalBuildMessage, getClientFirstName } from "./customer-whatsapp-templates";
+
+export { getClientFirstName };
 
 export type CustomerLookupResult = {
   id: string;
@@ -135,22 +138,12 @@ function emptyContactMetrics() {
 }
 
 export function buildClientWhatsappMessage(input: {
-  template: "invite" | "week" | "return" | "feedback";
+  template: string;
   customerName: string;
   barbershopName: string;
   bookingUrl?: string | null;
 }) {
-  const bookingLine = input.bookingUrl ? `\n\nAgendamento: ${input.bookingUrl}` : "";
-  if (input.template === "week") {
-    return `Oi, ${input.customerName}, aqui e da ${input.barbershopName}. Nossa agenda da semana esta aberta. Quer garantir seu horario?${bookingLine}`;
-  }
-  if (input.template === "return") {
-    return `Oi, ${input.customerName}, aqui e da ${input.barbershopName}. Ja faz um tempo desde seu ultimo atendimento. Quer marcar seu retorno?${bookingLine}`;
-  }
-  if (input.template === "feedback") {
-    return `Oi, ${input.customerName}, aqui e da ${input.barbershopName}. Como foi seu atendimento? Seu feedback ajuda a gente a melhorar.`;
-  }
-  return `Oi, ${input.customerName}, aqui e da ${input.barbershopName}. Quer agendar seu horario?${bookingLine}`;
+  return canonicalBuildMessage(input);
 }
 
 export function buildClientWhatsappLink(phone: string, message: string) {

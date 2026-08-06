@@ -8,6 +8,7 @@ import {
   buildClientWhatsappMessage,
   phoneLookupVariants,
 } from "@/lib/customers";
+import { WHATSAPP_TEMPLATES } from "@/lib/customer-whatsapp-templates";
 
 function phoneBlockVariants(phone: string) {
   const variants = phoneLookupVariants(phone);
@@ -154,32 +155,28 @@ export async function GET(
 
   const baseUrl = getPublicAppUrl(request);
   const bookingUrl = barbershop?.slug ? `${baseUrl}/${barbershop.slug}/agendar` : null;
-  const whatsappMessages = {
-    invite: buildClientWhatsappMessage({
-      template: "invite",
+  const whatsappMessages: Record<string, string> = {};
+
+  // Legacy
+  const legacyKeys = ["invite", "week", "return", "feedback"];
+  for (const k of legacyKeys) {
+    whatsappMessages[k] = buildClientWhatsappMessage({
+      template: k,
       customerName: user.name,
       barbershopName: barbershop?.name ?? "barbearia",
       bookingUrl,
-    }),
-    week: buildClientWhatsappMessage({
-      template: "week",
+    });
+  }
+
+  // LOTE B3A templates
+  for (const t of WHATSAPP_TEMPLATES) {
+    whatsappMessages[t.key] = buildClientWhatsappMessage({
+      template: t.key,
       customerName: user.name,
       barbershopName: barbershop?.name ?? "barbearia",
       bookingUrl,
-    }),
-    return: buildClientWhatsappMessage({
-      template: "return",
-      customerName: user.name,
-      barbershopName: barbershop?.name ?? "barbearia",
-      bookingUrl,
-    }),
-    feedback: buildClientWhatsappMessage({
-      template: "feedback",
-      customerName: user.name,
-      barbershopName: barbershop?.name ?? "barbearia",
-      bookingUrl,
-    }),
-  };
+    });
+  }
 
   return NextResponse.json({
     id: user.id,

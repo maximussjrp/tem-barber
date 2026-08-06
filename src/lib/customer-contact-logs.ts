@@ -2,11 +2,32 @@ import { Prisma } from "@prisma/client";
 
 export const CONTACT_CHANNELS = ["WHATSAPP", "PHONE", "IN_PERSON", "EMAIL", "OTHER"] as const;
 export const CONTACT_TEMPLATE_LABELS = {
-  APPOINTMENT_INVITE: "Convite/agendamento",
+  // LOTE B3A Canônicos
+  APPOINTMENT_DIRECT: "Agendamento direto",
+  APPOINTMENT_BEST_TIMES: "Garantir melhores horários",
   WEEK_OPEN: "Agenda da semana aberta",
+  WEEK_SCARCITY: "Poucos horários na semana",
   RETURN_REMINDER: "Lembrete de retorno",
+  RETURN_FREQUENCY: "Manter frequência",
+  INACTIVE_CLIENT: "Cliente parado",
+  COMEBACK_LIGHT: "Volta leve",
   POST_SERVICE_FEEDBACK: "Pós-atendimento/feedback",
+  POST_SERVICE_NEXT: "Pós-atendimento com próximo horário",
+  CLUB_ACTIVE: "Cliente clube ativo",
+  CLUB_VALUE: "Reforço de benefício do clube",
+  AUTHORITY_CARE: "Cuidado profissional",
+  AUTHORITY_PRESENCE: "Presença e imagem",
+  WEEKEND_READY: "Final de semana chegando",
+  SPECIAL_DATE: "Data especial",
+  CUSTOM_BASE: "Personalizado",
+
+  // Compatibilidade/Legados
+  APPOINTMENT_INVITE: "Convite/agendamento",
   CUSTOM: "Personalizado",
+  invite: "Agendamento direto",
+  week: "Agenda da semana aberta",
+  return: "Lembrete de retorno",
+  feedback: "Pós-atendimento/feedback",
 } as const;
 
 export type ContactChannel = (typeof CONTACT_CHANNELS)[number];

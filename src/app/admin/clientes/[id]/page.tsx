@@ -4,9 +4,53 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
-type TemplateKey = "invite" | "week" | "return" | "feedback";
+type TemplateKey =
+  | "APPOINTMENT_DIRECT"
+  | "APPOINTMENT_BEST_TIMES"
+  | "WEEK_OPEN"
+  | "WEEK_SCARCITY"
+  | "RETURN_REMINDER"
+  | "RETURN_FREQUENCY"
+  | "INACTIVE_CLIENT"
+  | "COMEBACK_LIGHT"
+  | "POST_SERVICE_FEEDBACK"
+  | "POST_SERVICE_NEXT"
+  | "CLUB_ACTIVE"
+  | "CLUB_VALUE"
+  | "AUTHORITY_CARE"
+  | "AUTHORITY_PRESENCE"
+  | "WEEKEND_READY"
+  | "SPECIAL_DATE"
+  | "CUSTOM_BASE"
+  | "invite"
+  | "week"
+  | "return"
+  | "feedback";
 type ContactChannel = "WHATSAPP" | "PHONE" | "IN_PERSON" | "EMAIL" | "OTHER";
-type ContactTemplateKey = "APPOINTMENT_INVITE" | "WEEK_OPEN" | "RETURN_REMINDER" | "POST_SERVICE_FEEDBACK" | "CUSTOM";
+type ContactTemplateKey =
+  | "APPOINTMENT_DIRECT"
+  | "APPOINTMENT_BEST_TIMES"
+  | "WEEK_OPEN"
+  | "WEEK_SCARCITY"
+  | "RETURN_REMINDER"
+  | "RETURN_FREQUENCY"
+  | "INACTIVE_CLIENT"
+  | "COMEBACK_LIGHT"
+  | "POST_SERVICE_FEEDBACK"
+  | "POST_SERVICE_NEXT"
+  | "CLUB_ACTIVE"
+  | "CLUB_VALUE"
+  | "AUTHORITY_CARE"
+  | "AUTHORITY_PRESENCE"
+  | "WEEKEND_READY"
+  | "SPECIAL_DATE"
+  | "CUSTOM_BASE"
+  | "APPOINTMENT_INVITE"
+  | "CUSTOM"
+  | "invite"
+  | "week"
+  | "return"
+  | "feedback";
 
 interface ClientData {
   id: string;
@@ -84,11 +128,67 @@ interface ContactLog {
 }
 
 const TEMPLATE_LABELS: Record<TemplateKey, string> = {
+  APPOINTMENT_DIRECT: "Agendamento direto",
+  APPOINTMENT_BEST_TIMES: "Garantir melhores horários",
+  WEEK_OPEN: "Agenda da semana aberta",
+  WEEK_SCARCITY: "Poucos horários na semana",
+  RETURN_REMINDER: "Lembrete de retorno",
+  RETURN_FREQUENCY: "Manter frequência",
+  INACTIVE_CLIENT: "Cliente parado",
+  COMEBACK_LIGHT: "Volta leve",
+  POST_SERVICE_FEEDBACK: "Pós-atendimento/feedback",
+  POST_SERVICE_NEXT: "Pós-atendimento com próximo horário",
+  CLUB_ACTIVE: "Cliente clube ativo",
+  CLUB_VALUE: "Reforço de benefício do clube",
+  AUTHORITY_CARE: "Cuidado profissional",
+  AUTHORITY_PRESENCE: "Presença e imagem",
+  WEEKEND_READY: "Final de semana chegando",
+  SPECIAL_DATE: "Data especial",
+  CUSTOM_BASE: "Personalizado",
   invite: "Convite/agendamento",
   week: "Agenda da semana",
   return: "Cliente sem retorno",
   feedback: "Pós-atendimento/feedback",
 };
+
+const TEMPLATE_CATEGORIES = [
+  {
+    name: "Agendamento",
+    keys: ["APPOINTMENT_DIRECT", "APPOINTMENT_BEST_TIMES"] as const,
+  },
+  {
+    name: "Agenda da semana",
+    keys: ["WEEK_OPEN", "WEEK_SCARCITY"] as const,
+  },
+  {
+    name: "Lembrete de retorno",
+    keys: ["RETURN_REMINDER", "RETURN_FREQUENCY"] as const,
+  },
+  {
+    name: "Cliente parado",
+    keys: ["INACTIVE_CLIENT", "COMEBACK_LIGHT"] as const,
+  },
+  {
+    name: "Pós-atendimento",
+    keys: ["POST_SERVICE_FEEDBACK", "POST_SERVICE_NEXT"] as const,
+  },
+  {
+    name: "Cliente clube",
+    keys: ["CLUB_ACTIVE", "CLUB_VALUE"] as const,
+  },
+  {
+    name: "Autoridade/profissionalismo",
+    keys: ["AUTHORITY_CARE", "AUTHORITY_PRESENCE"] as const,
+  },
+  {
+    name: "Ocasiões especiais",
+    keys: ["WEEKEND_READY", "SPECIAL_DATE"] as const,
+  },
+  {
+    name: "Personalizado",
+    keys: ["CUSTOM_BASE"] as const,
+  },
+];
 
 const CONTACT_CHANNEL_LABELS: Record<ContactChannel, string> = {
   WHATSAPP: "WhatsApp",
@@ -99,18 +199,53 @@ const CONTACT_CHANNEL_LABELS: Record<ContactChannel, string> = {
 };
 
 const CONTACT_TEMPLATE_BY_WHATSAPP_TEMPLATE: Record<TemplateKey, ContactTemplateKey> = {
-  invite: "APPOINTMENT_INVITE",
+  APPOINTMENT_DIRECT: "APPOINTMENT_DIRECT",
+  APPOINTMENT_BEST_TIMES: "APPOINTMENT_BEST_TIMES",
+  WEEK_OPEN: "WEEK_OPEN",
+  WEEK_SCARCITY: "WEEK_SCARCITY",
+  RETURN_REMINDER: "RETURN_REMINDER",
+  RETURN_FREQUENCY: "RETURN_FREQUENCY",
+  INACTIVE_CLIENT: "INACTIVE_CLIENT",
+  COMEBACK_LIGHT: "COMEBACK_LIGHT",
+  POST_SERVICE_FEEDBACK: "POST_SERVICE_FEEDBACK",
+  POST_SERVICE_NEXT: "POST_SERVICE_NEXT",
+  CLUB_ACTIVE: "CLUB_ACTIVE",
+  CLUB_VALUE: "CLUB_VALUE",
+  AUTHORITY_CARE: "AUTHORITY_CARE",
+  AUTHORITY_PRESENCE: "AUTHORITY_PRESENCE",
+  WEEKEND_READY: "WEEKEND_READY",
+  SPECIAL_DATE: "SPECIAL_DATE",
+  CUSTOM_BASE: "CUSTOM_BASE",
+  invite: "APPOINTMENT_DIRECT",
   week: "WEEK_OPEN",
   return: "RETURN_REMINDER",
   feedback: "POST_SERVICE_FEEDBACK",
 };
 
 const CONTACT_TEMPLATE_OPTIONS: Array<{ value: ContactTemplateKey; label: string }> = [
-  { value: "APPOINTMENT_INVITE", label: "Convite/agendamento" },
+  { value: "APPOINTMENT_DIRECT", label: "Agendamento direto" },
+  { value: "APPOINTMENT_BEST_TIMES", label: "Garantir melhores horários" },
   { value: "WEEK_OPEN", label: "Agenda da semana aberta" },
+  { value: "WEEK_SCARCITY", label: "Poucos horários na semana" },
   { value: "RETURN_REMINDER", label: "Lembrete de retorno" },
+  { value: "RETURN_FREQUENCY", label: "Manter frequência" },
+  { value: "INACTIVE_CLIENT", label: "Cliente parado" },
+  { value: "COMEBACK_LIGHT", label: "Volta leve" },
   { value: "POST_SERVICE_FEEDBACK", label: "Pós-atendimento/feedback" },
+  { value: "POST_SERVICE_NEXT", label: "Pós-atendimento com próximo horário" },
+  { value: "CLUB_ACTIVE", label: "Cliente clube ativo" },
+  { value: "CLUB_VALUE", label: "Reforço de benefício do clube" },
+  { value: "AUTHORITY_CARE", label: "Cuidado profissional" },
+  { value: "AUTHORITY_PRESENCE", label: "Presença e imagem" },
+  { value: "WEEKEND_READY", label: "Final de semana chegando" },
+  { value: "SPECIAL_DATE", label: "Data especial" },
+  { value: "CUSTOM_BASE", label: "Personalizado" },
+  { value: "APPOINTMENT_INVITE", label: "Convite/agendamento" },
   { value: "CUSTOM", label: "Personalizado" },
+  { value: "invite", label: "Agendamento direto" },
+  { value: "week", label: "Agenda da semana aberta" },
+  { value: "return", label: "Lembrete de retorno" },
+  { value: "feedback", label: "Pós-atendimento/feedback" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -175,13 +310,13 @@ export default function Cliente360Page() {
   const [blockReason, setBlockReason] = useState("");
   const [blockError, setBlockError] = useState("");
   const [submittingBlock, setSubmittingBlock] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateKey>("invite");
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateKey>("APPOINTMENT_DIRECT");
   const [copyNotice, setCopyNotice] = useState("");
   const [contactLogs, setContactLogs] = useState<ContactLog[]>([]);
   const [loadingContactLogs, setLoadingContactLogs] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
   const [contactChannel, setContactChannel] = useState<ContactChannel>("WHATSAPP");
-  const [contactTemplateKey, setContactTemplateKey] = useState<ContactTemplateKey>("APPOINTMENT_INVITE");
+  const [contactTemplateKey, setContactTemplateKey] = useState<ContactTemplateKey>("APPOINTMENT_DIRECT");
   const [contactNote, setContactNote] = useState("");
   const [contactedAt, setContactedAt] = useState(() => toDatetimeLocalValue());
   const [contactError, setContactError] = useState("");
@@ -442,8 +577,14 @@ export default function Cliente360Page() {
             onChange={(e) => setSelectedTemplate(e.target.value as TemplateKey)}
             className="bg-stone-950 border border-stone-800 rounded-lg px-3 py-2 text-sm text-stone-200 focus:border-amber-500 focus:outline-none"
           >
-            {Object.entries(TEMPLATE_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
+            {TEMPLATE_CATEGORIES.map((cat) => (
+              <optgroup key={cat.name} label={cat.name}>
+                {cat.keys.map((key) => (
+                  <option key={key} value={key}>
+                    {TEMPLATE_LABELS[key]}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>

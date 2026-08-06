@@ -23,6 +23,11 @@ const detailPayload = {
   whatsapp: {
     link: "https://wa.me/5517991089190?text=Oi",
     messages: {
+      APPOINTMENT_DIRECT: "Oi, Ana. Aqui é da Barbearia A. Vi que você ainda não tem horário marcado essa semana.",
+      WEEK_OPEN: "Oi, Ana. Aqui é da Barbearia A. A agenda da semana já está aberta.",
+      RETURN_REMINDER: "Oi, Ana. Tudo certo? Já faz um tempo desde seu último atendimento aqui na Barbearia A.",
+      POST_SERVICE_FEEDBACK: "Oi, Ana. Aqui é da Barbearia A. Passando para saber se ficou tudo certo com seu atendimento.",
+      // legacy support
       invite: "Oi, Ana Manual, aqui e da Barbearia A. Quer agendar seu horario?",
       week: "Oi, Ana Manual, agenda da semana aberta.",
       return: "Oi, Ana Manual, quer marcar seu retorno?",
@@ -121,11 +126,11 @@ describe("P1 Clientes/CRM LOTE B1 contact logs UI", () => {
     expect(postCall[1]).toMatchObject({ method: "POST" });
     expect(JSON.parse(postCall[1].body)).toMatchObject({
       channel: "WHATSAPP",
-      templateKey: "APPOINTMENT_INVITE",
+      templateKey: "APPOINTMENT_DIRECT",
       note: "Cliente respondeu que vai verificar horario",
     });
-    expect(await screen.findByText("Agenda da semana aberta")).toBeInTheDocument();
-    expect(screen.getByText("Cliente respondeu que vai verificar horario")).toBeInTheDocument();
+    expect(await screen.findByText("Cliente respondeu que vai verificar horario")).toBeInTheDocument();
+    expect(screen.getAllByText("Agenda da semana aberta").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Registrado por Operador")).toBeInTheDocument();
   });
 
@@ -139,7 +144,7 @@ describe("P1 Clientes/CRM LOTE B1 contact logs UI", () => {
     render(<ClienteDetailPage />);
 
     await screen.findByText("Ana Manual");
-    await userEvent.selectOptions(screen.getByDisplayValue("Convite/agendamento"), "week");
+    await userEvent.selectOptions(screen.getByDisplayValue("Agendamento direto"), "WEEK_OPEN");
     await userEvent.click(screen.getByRole("button", { name: "Registrar contato feito" }));
 
     expect(screen.getByLabelText("Template")).toHaveValue("WEEK_OPEN");
@@ -155,7 +160,7 @@ describe("P1 Clientes/CRM LOTE B1 contact logs UI", () => {
     render(<ClienteDetailPage />);
 
     await screen.findByText("Ana Manual");
-    await userEvent.selectOptions(screen.getByDisplayValue("Convite/agendamento"), "feedback");
+    await userEvent.selectOptions(screen.getByDisplayValue("Agendamento direto"), "POST_SERVICE_FEEDBACK");
     await userEvent.click(screen.getByRole("button", { name: "Registrar contato feito" }));
 
     expect(screen.getAllByRole("option", { name: "Pós-atendimento/feedback" }).length).toBeGreaterThanOrEqual(2);

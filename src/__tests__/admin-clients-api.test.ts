@@ -400,7 +400,8 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(data.clubSubscription.planName).toBe("Gold");
     expect(data.isBlocked).toBe(true);
     expect(data.whatsapp.link).toContain("https://wa.me/5517991089190");
-    expect(data.whatsapp.messages.invite).toContain("Cliente Completo");
+    expect(data.whatsapp.messages.invite).toContain("Completo");
+    expect(data.whatsapp.messages.invite).not.toContain("Cliente Completo");
     expect(prismaMock.customerContactLog.groupBy).not.toHaveBeenCalled();
   });
 });

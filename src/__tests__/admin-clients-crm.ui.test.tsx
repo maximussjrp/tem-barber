@@ -63,6 +63,11 @@ const detailPayload = {
   whatsapp: {
     link: "https://wa.me/5517991089190?text=Oi",
     messages: {
+      APPOINTMENT_DIRECT: "Oi, Ana. Aqui é da Barbearia A. Vi que você ainda não tem horário marcado essa semana.",
+      WEEK_OPEN: "Oi, Ana. Aqui é da Barbearia A. A agenda da semana já está aberta.",
+      RETURN_REMINDER: "Oi, Ana. Tudo certo? Já faz um tempo desde seu último atendimento aqui na Barbearia A.",
+      POST_SERVICE_FEEDBACK: "Oi, Ana. Aqui é da Barbearia A. Passando para saber se ficou tudo certo com seu atendimento.",
+      // legacy support
       invite: "Oi, Ana Manual, aqui e da Barbearia A. Quer agendar seu horario?",
       week: "Oi, Ana Manual, agenda da semana aberta.",
       return: "Oi, Ana Manual, quer marcar seu retorno?",
