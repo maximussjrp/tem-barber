@@ -135,4 +135,21 @@ describe("P1 Clientes/CRM LOTE B1 contact logs UI", () => {
 
     expect(screen.getByLabelText("Template")).toHaveValue("WEEK_OPEN");
   });
+
+  it("mostra o label acentuado de pos-atendimento no seletor de template", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => detailPayload })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ logs: [] }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<ClienteDetailPage />);
+
+    await screen.findByText("Ana Manual");
+    await userEvent.selectOptions(screen.getByDisplayValue("Convite/agendamento"), "feedback");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar contato feito" }));
+
+    expect(screen.getAllByRole("option", { name: "Pós-atendimento/feedback" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByLabelText("Template")).toHaveValue("POST_SERVICE_FEEDBACK");
+  });
 });

@@ -109,7 +109,7 @@ const CONTACT_TEMPLATE_OPTIONS: Array<{ value: ContactTemplateKey; label: string
   { value: "APPOINTMENT_INVITE", label: "Convite/agendamento" },
   { value: "WEEK_OPEN", label: "Agenda da semana aberta" },
   { value: "RETURN_REMINDER", label: "Lembrete de retorno" },
-  { value: "POST_SERVICE_FEEDBACK", label: "PÃ³s-atendimento/feedback" },
+  { value: "POST_SERVICE_FEEDBACK", label: "Pós-atendimento/feedback" },
   { value: "CUSTOM", label: "Personalizado" },
 ];
 

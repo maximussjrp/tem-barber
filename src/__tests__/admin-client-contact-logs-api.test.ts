@@ -185,6 +185,36 @@ describe("P1 Clientes/CRM LOTE B1 contact logs API", () => {
     );
   });
 
+  it("POST deriva label acentuado de pos-atendimento sem aceitar label adulterado", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T21:30:00.000Z"));
+    linkedCustomer();
+    prismaMock.customerContactLog.create.mockResolvedValueOnce(createdLog({
+      templateKey: "POST_SERVICE_FEEDBACK",
+      templateLabel: "Pós-atendimento/feedback",
+    }));
+
+    const response = await POST(req("http://localhost/api/admin/clients/client-1/contact-logs", "POST", {
+      channel: "WHATSAPP",
+      templateKey: "POST_SERVICE_FEEDBACK",
+      templateLabel: "Label adulterado",
+    }), {
+      params: Promise.resolve({ id: "client-1" }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.templateLabel).toBe("Pós-atendimento/feedback");
+    expect(prismaMock.customerContactLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          templateKey: "POST_SERVICE_FEEDBACK",
+          templateLabel: "Pós-atendimento/feedback",
+        }),
+      })
+    );
+  });
+
   it("POST valida note, channel, templateKey e contactedAt futuro", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-05T21:30:00.000Z"));

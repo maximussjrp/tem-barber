@@ -8,6 +8,7 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     customerBarbershopLink: { findMany: vi.fn() },
     comanda: { findMany: vi.fn() },
     customerClubSubscription: { findMany: vi.fn() },
+    customerContactLog: { groupBy: vi.fn() },
     barbershopBlockedCustomer: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
   },
@@ -58,6 +59,7 @@ describe("busca admin de clientes", () => {
       ]);
     prismaMock.comanda.findMany.mockResolvedValue([]);
     prismaMock.customerClubSubscription.findMany.mockResolvedValue([]);
+    prismaMock.customerContactLog.groupBy.mockResolvedValue([]);
     prismaMock.barbershopBlockedCustomer.findMany.mockResolvedValue([]);
     prismaMock.user.findMany.mockResolvedValue([
       { id: "customer-a", name: "Joao Martins", phone: "+55 (17) 99999-9999", email: null, createdAt: new Date() },

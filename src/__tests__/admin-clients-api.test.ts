@@ -30,6 +30,9 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    customerContactLog: {
+      groupBy: vi.fn(),
+    },
     barbershop: {
       findUnique: vi.fn(),
     },
@@ -67,6 +70,7 @@ function emptyStatsQueries() {
   prismaMock.comanda.findMany.mockResolvedValueOnce([]);
   prismaMock.customerClubSubscription.findMany.mockResolvedValueOnce([]);
   prismaMock.barbershopBlockedCustomer.findMany.mockResolvedValueOnce([]);
+  prismaMock.customerContactLog.groupBy.mockResolvedValueOnce([]);
 }
 
 describe("P1 Clientes/CRM LOTE A API", () => {
@@ -117,6 +121,108 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     );
     expect(data.clients).toHaveLength(1);
     expect(data.clients[0].id).toBe("manual-a");
+  });
+
+  it("retorna dados e métricas de contato sem N+1 e preserva filtros antigos", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T12:00:00.000Z"));
+    prismaMock.customerBarbershopLink.findMany.mockResolvedValueOnce([
+      { customerId: "never" },
+      { customerId: "old" },
+      { customerId: "recent" },
+    ]);
+    prismaMock.appointment.findMany.mockResolvedValueOnce([{ customerId: "recent" }]);
+    prismaMock.comanda.findMany.mockResolvedValueOnce([]);
+    prismaMock.customerClubSubscription.findMany.mockResolvedValueOnce([]);
+    prismaMock.user.findMany.mockResolvedValueOnce([
+      { id: "never", name: "Nunca", phone: "5517991089190", email: null, createdAt: new Date() },
+      { id: "old", name: "Antigo", phone: "5517991089191", email: null, createdAt: new Date() },
+      { id: "recent", name: "Recente", phone: "5517991089192", email: null, createdAt: new Date() },
+    ]);
+    prismaMock.appointment.findMany.mockResolvedValueOnce([
+      { customerId: "recent", status: "CONFIRMED", dateTime: new Date("2026-08-10T12:00:00.000Z") },
+    ]);
+    prismaMock.comanda.findMany.mockResolvedValueOnce([]);
+    prismaMock.customerClubSubscription.findMany.mockResolvedValueOnce([]);
+    prismaMock.barbershopBlockedCustomer.findMany.mockResolvedValueOnce([]);
+    prismaMock.customerContactLog.groupBy.mockResolvedValueOnce([
+      { customerId: "old", _max: { contactedAt: new Date("2026-06-01T12:00:00.000Z") }, _count: { _all: 2 } },
+      { customerId: "recent", _max: { contactedAt: new Date("2026-08-03T12:00:00.000Z") }, _count: { _all: 1 } },
+    ]);
+
+    const response = await listClients(req("http://localhost/api/admin/clients"));
+    const data = await response.json();
+
+    expect(data.clients.find((c: { id: string }) => c.id === "never").stats).toMatchObject({
+      lastContactedAt: null,
+      contactLogCount: 0,
+    });
+    expect(data.clients.find((c: { id: string }) => c.id === "old").stats).toMatchObject({
+      lastContactedAt: "2026-06-01T12:00:00.000Z",
+      contactLogCount: 2,
+    });
+    expect(data.contactMetrics).toEqual({
+      neverContacted: 1,
+      noContact30: 2,
+      recentlyContacted: 1,
+    });
+    expect(prismaMock.customerContactLog.groupBy).toHaveBeenCalledTimes(1);
+    expect(prismaMock.customerContactLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ["customerId"],
+        where: { barbershopId: "shop-a", customerId: { in: ["never", "old", "recent"] } },
+      })
+    );
+    expect(data.clients.find((c: { id: string }) => c.id === "recent").stats.nextAppointmentAt).toBe("2026-08-10T12:00:00.000Z");
+    vi.useRealTimers();
+  });
+
+  it("filtra clientes por status de contato usando logs do tenant da sessão", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T12:00:00.000Z"));
+
+    async function runFilter(filter: string) {
+      prismaMock.customerBarbershopLink.findMany.mockResolvedValueOnce([
+        { customerId: "never" },
+        { customerId: "old30" },
+        { customerId: "old60" },
+        { customerId: "old90" },
+        { customerId: "recent" },
+      ]);
+      prismaMock.appointment.findMany.mockResolvedValueOnce([]);
+      prismaMock.comanda.findMany.mockResolvedValueOnce([]);
+      prismaMock.customerClubSubscription.findMany.mockResolvedValueOnce([]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        { id: "never", name: "Nunca", phone: "5517991089190", email: null, createdAt: new Date() },
+        { id: "old30", name: "Trinta", phone: "5517991089191", email: null, createdAt: new Date() },
+        { id: "old60", name: "Sessenta", phone: "5517991089192", email: null, createdAt: new Date() },
+        { id: "old90", name: "Noventa", phone: "5517991089193", email: null, createdAt: new Date() },
+        { id: "recent", name: "Recente", phone: "5517991089194", email: null, createdAt: new Date() },
+      ]);
+      prismaMock.appointment.findMany.mockResolvedValueOnce([]);
+      prismaMock.comanda.findMany.mockResolvedValueOnce([]);
+      prismaMock.customerClubSubscription.findMany.mockResolvedValueOnce([]);
+      prismaMock.barbershopBlockedCustomer.findMany.mockResolvedValueOnce([]);
+      prismaMock.customerContactLog.groupBy.mockResolvedValueOnce([
+        { customerId: "old30", _max: { contactedAt: new Date("2026-07-01T12:00:00.000Z") }, _count: { _all: 1 } },
+        { customerId: "old60", _max: { contactedAt: new Date("2026-05-20T12:00:00.000Z") }, _count: { _all: 1 } },
+        { customerId: "old90", _max: { contactedAt: new Date("2026-04-01T12:00:00.000Z") }, _count: { _all: 1 } },
+        { customerId: "recent", _max: { contactedAt: new Date("2026-08-01T12:00:00.000Z") }, _count: { _all: 1 } },
+      ]);
+      const response = await listClients(req(`http://localhost/api/admin/clients?filter=${filter}`));
+      const data = await response.json();
+      return data.clients.map((c: { id: string }) => c.id);
+    }
+
+    await expect(runFilter("never_contacted")).resolves.toEqual(["never"]);
+    await expect(runFilter("no_contact_30")).resolves.toEqual(["never", "old30", "old60", "old90"]);
+    await expect(runFilter("no_contact_60")).resolves.toEqual(["never", "old60", "old90"]);
+    await expect(runFilter("no_contact_90")).resolves.toEqual(["never", "old90"]);
+    await expect(runFilter("recently_contacted")).resolves.toEqual(["recent"]);
+    expect(prismaMock.customerContactLog.groupBy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ barbershopId: "shop-a" }) })
+    );
+    vi.useRealTimers();
   });
 
   it("cria User novo, normaliza telefone e cria CustomerBarbershopLink do tenant da sessão", async () => {
@@ -295,6 +401,6 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(data.isBlocked).toBe(true);
     expect(data.whatsapp.link).toContain("https://wa.me/5517991089190");
     expect(data.whatsapp.messages.invite).toContain("Cliente Completo");
-    expect(prismaMock).not.toHaveProperty("customerContactLog");
+    expect(prismaMock.customerContactLog.groupBy).not.toHaveBeenCalled();
   });
 });

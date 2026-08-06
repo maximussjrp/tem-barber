@@ -30,6 +30,20 @@ const clientPayload = {
     closedComandas: 0,
     hasClubSubscription: false,
     isBlocked: false,
+    lastContactedAt: null,
+    contactLogCount: 0,
+  },
+};
+
+const contactedClientPayload = {
+  ...clientPayload,
+  id: "client-2",
+  name: "Bruno Contato",
+  phone: "5517991089191",
+  stats: {
+    ...clientPayload.stats,
+    lastContactedAt: "2026-08-05T12:00:00.000Z",
+    contactLogCount: 2,
   },
 };
 
@@ -146,6 +160,35 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copiar mensagem" }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Ana Manual"));
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("contact"));
+  });
+
+  it("mostra métricas, último contato e filtros de contato na listagem", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        clients: [clientPayload, contactedClientPayload],
+        total: 2,
+        page: 1,
+        pageSize: 30,
+        contactMetrics: { neverContacted: 1, noContact30: 1, recentlyContacted: 1 },
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<ClientesPage />);
+
+    expect(await screen.findByText("Ana Manual")).toBeInTheDocument();
+    expect(screen.getByText("Bruno Contato")).toBeInTheDocument();
+    expect(screen.getByText("Nunca contatado")).toBeInTheDocument();
+    expect(screen.getByText("Último contato: 05/08/2026")).toBeInTheDocument();
+    expect(screen.getAllByText("Nunca contatados").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Sem contato há 30 dias").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "Sem contato há 60 dias" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sem contato há 90 dias" })).toBeInTheDocument();
+    expect(screen.getAllByText("Contatados recentemente").length).toBeGreaterThanOrEqual(2);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sem contato há 30 dias" }));
+    await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("filter=no_contact_30"));
   });
 
   it("ficha mostra WhatsApp manual e estado vazio de histórico de contato", async () => {

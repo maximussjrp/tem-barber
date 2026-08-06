@@ -22,7 +22,12 @@ export type AdminClientFilter =
   | "upcoming"
   | "open_comanda"
   | "club"
-  | "blocked";
+  | "blocked"
+  | "never_contacted"
+  | "no_contact_30"
+  | "no_contact_60"
+  | "no_contact_90"
+  | "recently_contacted";
 
 export type ManualClientInput = {
   name?: string | null;
@@ -54,6 +59,8 @@ export type AdminClientListItem = {
     closedComandas: number;
     hasClubSubscription: boolean;
     isBlocked: boolean;
+    lastContactedAt: string | null;
+    contactLogCount: number;
   };
 };
 
@@ -97,7 +104,34 @@ function clientPassesFilter(client: AdminClientListItem, filter: AdminClientFilt
   if (filter === "open_comanda") return client.stats.openComandas > 0;
   if (filter === "club") return client.stats.hasClubSubscription;
   if (filter === "blocked") return client.stats.isBlocked;
+  if (filter === "never_contacted") return client.stats.contactLogCount === 0;
+  if (filter === "recently_contacted") return isRecentlyContacted(client.stats.lastContactedAt);
+  if (filter === "no_contact_30") return hasNoContactSince(client.stats.lastContactedAt, 30);
+  if (filter === "no_contact_60") return hasNoContactSince(client.stats.lastContactedAt, 60);
+  if (filter === "no_contact_90") return hasNoContactSince(client.stats.lastContactedAt, 90);
   return true;
+}
+
+function daysAgo(days: number, now = new Date()) {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function hasNoContactSince(lastContactedAt: string | null, days: number, now = new Date()) {
+  if (!lastContactedAt) return true;
+  return new Date(lastContactedAt).getTime() < daysAgo(days, now).getTime();
+}
+
+function isRecentlyContacted(lastContactedAt: string | null, now = new Date()) {
+  if (!lastContactedAt) return false;
+  return new Date(lastContactedAt).getTime() >= daysAgo(7, now).getTime();
+}
+
+function emptyContactMetrics() {
+  return {
+    neverContacted: 0,
+    noContact30: 0,
+    recentlyContacted: 0,
+  };
 }
 
 export function buildClientWhatsappMessage(input: {
@@ -373,7 +407,7 @@ export async function listBarbershopClients(
   const { ids, sourceSets } = await collectBarbershopCustomerIds(client, params.barbershopId);
 
   if (ids.length === 0) {
-    return { clients: [], total: 0, page, pageSize };
+    return { clients: [], total: 0, page, pageSize, contactMetrics: emptyContactMetrics() };
   }
 
   const users = await client.user.findMany({
@@ -386,11 +420,11 @@ export async function listBarbershopClients(
   const matchingIds = matchingUsers.map((user) => user.id);
 
   if (matchingIds.length === 0) {
-    return { clients: [], total: 0, page, pageSize };
+    return { clients: [], total: 0, page, pageSize, contactMetrics: emptyContactMetrics() };
   }
 
   const now = new Date();
-  const [appointments, comandas, clubSubscriptions, blocks] = await Promise.all([
+  const [appointments, comandas, clubSubscriptions, blocks, contactGroups] = await Promise.all([
     client.appointment.findMany({
       where: { barbershopId: params.barbershopId, customerId: { in: matchingIds } },
       select: { customerId: true, status: true, dateTime: true },
@@ -422,6 +456,12 @@ export async function listBarbershopClients(
       },
       select: { userId: true, phoneNormalized: true },
     }),
+    client.customerContactLog.groupBy({
+      by: ["customerId"],
+      where: { barbershopId: params.barbershopId, customerId: { in: matchingIds } },
+      _max: { contactedAt: true },
+      _count: { _all: true },
+    }),
   ]);
 
   const statsMap = new Map<string, AdminClientListItem["stats"]>();
@@ -439,6 +479,8 @@ export async function listBarbershopClients(
       closedComandas: 0,
       hasClubSubscription: false,
       isBlocked: false,
+      lastContactedAt: null,
+      contactLogCount: 0,
     });
   }
 
@@ -485,7 +527,14 @@ export async function listBarbershopClients(
     }
   }
 
-  const clients = matchingUsers
+  for (const contact of contactGroups) {
+    const stats = statsMap.get(contact.customerId);
+    if (!stats) continue;
+    stats.lastContactedAt = contact._max.contactedAt?.toISOString() ?? null;
+    stats.contactLogCount = contact._count._all;
+  }
+
+  const unfilteredClients = matchingUsers
     .map((user) => ({
       id: user.id,
       name: user.name,
@@ -499,12 +548,19 @@ export async function listBarbershopClients(
         club: sourceSets.club.has(user.id),
       },
       stats: statsMap.get(user.id)!,
-    }))
-    .filter((clientItem) => clientPassesFilter(clientItem, filter));
+    }));
+
+  const contactMetrics = {
+    neverContacted: unfilteredClients.filter((clientItem) => clientItem.stats.contactLogCount === 0).length,
+    noContact30: unfilteredClients.filter((clientItem) => hasNoContactSince(clientItem.stats.lastContactedAt, 30, now)).length,
+    recentlyContacted: unfilteredClients.filter((clientItem) => isRecentlyContacted(clientItem.stats.lastContactedAt, now)).length,
+  };
+
+  const clients = unfilteredClients.filter((clientItem) => clientPassesFilter(clientItem, filter));
 
   const total = clients.length;
   const paged = clients.slice((page - 1) * pageSize, page * pageSize);
-  return { clients: paged, total, page, pageSize };
+  return { clients: paged, total, page, pageSize, contactMetrics };
 }
 
 export async function searchBarbershopClients(

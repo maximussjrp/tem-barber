@@ -3,7 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type ClientFilter = "all" | "with_appointment" | "without_appointment" | "upcoming" | "open_comanda" | "club" | "blocked";
+type ClientFilter =
+  | "all"
+  | "with_appointment"
+  | "without_appointment"
+  | "upcoming"
+  | "open_comanda"
+  | "club"
+  | "blocked"
+  | "never_contacted"
+  | "no_contact_30"
+  | "no_contact_60"
+  | "no_contact_90"
+  | "recently_contacted";
 
 interface ClientStats {
   total: number;
@@ -17,6 +29,8 @@ interface ClientStats {
   closedComandas: number;
   hasClubSubscription: boolean;
   isBlocked: boolean;
+  lastContactedAt: string | null;
+  contactLogCount: number;
 }
 
 interface Client {
@@ -44,7 +58,18 @@ const FILTERS: Array<{ value: ClientFilter; label: string }> = [
   { value: "open_comanda", label: "Comanda aberta" },
   { value: "club", label: "Clube" },
   { value: "blocked", label: "Bloqueados" },
+  { value: "never_contacted", label: "Nunca contatados" },
+  { value: "no_contact_30", label: "Sem contato há 30 dias" },
+  { value: "no_contact_60", label: "Sem contato há 60 dias" },
+  { value: "no_contact_90", label: "Sem contato há 90 dias" },
+  { value: "recently_contacted", label: "Contatados recentemente" },
 ];
+
+interface ContactMetrics {
+  neverContacted: number;
+  noContact30: number;
+  recentlyContacted: number;
+}
 
 function formatPhone(phone: string) {
   const d = phone.replace(/\D/g, "");
@@ -82,6 +107,11 @@ export default function ClientesPage() {
   const router = useRouter();
   const [clients, setClients] = useState<Client[]>([]);
   const [total, setTotal] = useState(0);
+  const [contactMetrics, setContactMetrics] = useState<ContactMetrics>({
+    neverContacted: 0,
+    noContact30: 0,
+    recentlyContacted: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ClientFilter>("all");
@@ -103,6 +133,7 @@ export default function ClientesPage() {
       const data = await res.json();
       setClients(data.clients ?? []);
       setTotal(data.total ?? 0);
+      setContactMetrics(data.contactMetrics ?? { neverContacted: 0, noContact30: 0, recentlyContacted: 0 });
     } finally {
       setLoading(false);
     }
@@ -126,7 +157,10 @@ export default function ClientesPage() {
     manual: clients.filter((client) => !client.sources.appointment).length,
     upcoming: clients.filter((client) => client.stats.nextAppointmentAt).length,
     openComandas: clients.filter((client) => client.stats.openComandas > 0).length,
-  }), [clients, total]);
+    neverContacted: contactMetrics.neverContacted,
+    noContact30: contactMetrics.noContact30,
+    recentlyContacted: contactMetrics.recentlyContacted,
+  }), [clients, contactMetrics, total]);
 
   const submitCreate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -202,6 +236,18 @@ export default function ClientesPage() {
           <p className="text-[10px] uppercase text-stone-500 font-bold">Comanda aberta</p>
           <p className="text-xl font-bold text-emerald-400">{metrics.openComandas}</p>
         </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Nunca contatados</p>
+          <p className="text-xl font-bold text-red-300">{metrics.neverContacted}</p>
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Sem contato há 30 dias</p>
+          <p className="text-xl font-bold text-orange-300">{metrics.noContact30}</p>
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
+          <p className="text-[10px] uppercase text-stone-500 font-bold">Contatados recentemente</p>
+          <p className="text-xl font-bold text-cyan-300">{metrics.recentlyContacted}</p>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -263,6 +309,9 @@ export default function ClientesPage() {
               {clients.map((client) => {
                 const message = buildWhatsappMessage(client);
                 const wa = whatsappLink(client.phone, message);
+                const contactLabel = client.stats.lastContactedAt
+                  ? `Último contato: ${formatDate(client.stats.lastContactedAt)}`
+                  : "Nunca contatado";
                 return (
                   <div
                     key={client.id}
@@ -279,6 +328,9 @@ export default function ClientesPage() {
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-stone-200 truncate">{client.name}</p>
                         <p className="text-xs text-stone-500">{formatPhone(client.phone)}</p>
+                        <p className={`text-[11px] ${client.stats.lastContactedAt ? "text-cyan-400" : "text-red-300"}`}>
+                          {contactLabel}
+                        </p>
                         {client.email && <p className="text-[11px] text-stone-600 truncate">{client.email}</p>}
                       </div>
                     </button>

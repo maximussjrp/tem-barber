@@ -5,7 +5,7 @@ export const CONTACT_TEMPLATE_LABELS = {
   APPOINTMENT_INVITE: "Convite/agendamento",
   WEEK_OPEN: "Agenda da semana aberta",
   RETURN_REMINDER: "Lembrete de retorno",
-  POST_SERVICE_FEEDBACK: "Pos-atendimento/feedback",
+  POST_SERVICE_FEEDBACK: "Pós-atendimento/feedback",
   CUSTOM: "Personalizado",
 } as const;
 
