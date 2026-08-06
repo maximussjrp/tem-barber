@@ -122,7 +122,6 @@ export default function ClientesPage() {
   const [newEmail, setNewEmail] = useState("");
   const [createError, setCreateError] = useState("");
   const [submittingCreate, setSubmittingCreate] = useState(false);
-  const [copyNotice, setCopyNotice] = useState("");
 
   const fetchClients = useCallback(async (q: string, p: number, f: ClientFilter) => {
     setLoading(true);
@@ -193,12 +192,6 @@ export default function ClientesPage() {
     }
   };
 
-  const copyMessage = async (client: Client) => {
-    const message = buildWhatsappMessage(client);
-    await navigator.clipboard.writeText(message);
-    setCopyNotice(`Mensagem copiada para ${client.name}.`);
-    window.setTimeout(() => setCopyNotice(""), 2500);
-  };
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-6xl">
@@ -277,11 +270,6 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      {copyNotice && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-          {copyNotice}
-        </div>
-      )}
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg overflow-hidden">
         {loading ? (
@@ -371,13 +359,6 @@ export default function ClientesPage() {
                       >
                         WhatsApp
                       </a>
-                      <button
-                        type="button"
-                        onClick={() => copyMessage(client)}
-                        className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-300 border border-stone-700 text-xs font-bold hover:bg-stone-700"
-                      >
-                        Copiar mensagem
-                      </button>
                       <button
                         type="button"
                         onClick={() => router.push(`/admin/clientes/${client.id}`)}

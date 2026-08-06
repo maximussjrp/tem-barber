@@ -157,8 +157,7 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("filter=without_appointment"));
 
     expect(screen.getByRole("link", { name: "WhatsApp" })).toHaveAttribute("href", expect.stringContaining("https://wa.me/5517991089190"));
-    await userEvent.click(screen.getByRole("button", { name: "Copiar mensagem" }));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Ana Manual"));
+    expect(screen.queryByRole("button", { name: "Copiar mensagem" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("contact"));
   });
 
@@ -204,9 +203,16 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     expect(screen.queryByText("Histórico de contato ainda não configurado.")).not.toBeInTheDocument();
     expect(screen.getByText("Nenhum contato registrado ainda.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Registrar contato feito" })).toBeInTheDocument();
-    expect(screen.getByText("Abrir WhatsApp ou copiar mensagem não registra contato automaticamente.")).toBeInTheDocument();
+    expect(screen.getByText("Abrir WhatsApp não registra contato automaticamente.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copiar mensagem" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Copiar mensagem" }));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Ana Manual"));
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    await userEvent.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining("https://wa.me/5517991089190"),
+      "_blank",
+      "noopener,noreferrer"
+    );
+    openSpy.mockRestore();
   });
 });

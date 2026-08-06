@@ -78,17 +78,26 @@ describe("P1 Clientes/CRM LOTE B1 contact logs UI", () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ logs: [] }) });
     global.fetch = fetchMock as unknown as typeof fetch;
 
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
     render(<ClienteDetailPage />);
 
     expect(await screen.findByText("Ana Manual")).toBeInTheDocument();
     expect(await screen.findByText("Nenhum contato registrado ainda.")).toBeInTheDocument();
     expect(screen.queryByText("Histórico de contato ainda não configurado.")).not.toBeInTheDocument();
-    expect(screen.getByText("Abrir WhatsApp ou copiar mensagem não registra contato automaticamente.")).toBeInTheDocument();
+    expect(screen.getByText("Abrir WhatsApp não registra contato automaticamente.")).toBeInTheDocument();
 
     expect(screen.getByRole("link", { name: "WhatsApp" })).toHaveAttribute("href", expect.stringContaining("https://wa.me/"));
-    await userEvent.click(screen.getByRole("button", { name: "Copiar mensagem" }));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("Ana Manual"));
+    expect(screen.queryByRole("button", { name: "Copiar mensagem" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining("https://wa.me/5517991089190"),
+      "_blank",
+      "noopener,noreferrer"
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
   });
 
   it("registra contato manual, bloqueia duplo clique e atualiza historico", async () => {

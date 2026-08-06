@@ -273,6 +273,15 @@ export default function Cliente360Page() {
     window.setTimeout(() => setCopyNotice(""), 2500);
   };
 
+  const handleSendWhatsapp = () => {
+    if (!data) return;
+    const message = data.whatsapp.messages[selectedTemplate];
+    const digits = data.phone.replace(/\D/g, "");
+    const intl = digits.startsWith("55") ? digits : `55${digits}`;
+    const link = `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
+    window.open(link, "_blank", "noopener,noreferrer");
+  };
+
   const openContactModal = () => {
     setContactChannel("WHATSAPP");
     setContactTemplateKey(CONTACT_TEMPLATE_BY_WHATSAPP_TEMPLATE[selectedTemplate]);
@@ -382,13 +391,6 @@ export default function Cliente360Page() {
               WhatsApp
             </a>
           )}
-          <button
-            type="button"
-            onClick={copyWhatsappMessage}
-            className="px-4 py-2.5 rounded-lg bg-stone-800 border border-stone-700 text-stone-200 font-semibold hover:bg-stone-700 transition-colors text-sm"
-          >
-            Copiar mensagem
-          </button>
           {data.isBlocked ? (
             <button
               type="button"
@@ -448,8 +450,17 @@ export default function Cliente360Page() {
         <p className="rounded-lg bg-stone-950/60 border border-stone-800 p-3 text-sm text-stone-300 whitespace-pre-wrap">
           {data.whatsapp.messages[selectedTemplate]}
         </p>
+        <div className="flex justify-start">
+          <button
+            type="button"
+            onClick={handleSendWhatsapp}
+            className="px-4 py-2 rounded-lg bg-[#25D366] text-stone-950 text-sm font-bold hover:bg-[#20ba5a] transition-colors"
+          >
+            Enviar mensagem
+          </button>
+        </div>
         <p className="text-xs text-stone-500">
-          Abrir WhatsApp ou copiar mensagem não registra contato automaticamente.
+          Abrir WhatsApp não registra contato automaticamente.
         </p>
       </div>
 

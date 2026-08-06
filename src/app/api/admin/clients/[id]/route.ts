@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
+import { getPublicAppUrl } from "@/lib/public-url";
 import { computeClientMetrics } from "@/lib/clients/client-metrics";
 import {
   buildClientWhatsappLink,
@@ -151,7 +152,8 @@ export async function GET(
     },
   });
 
-  const bookingUrl = barbershop?.slug ? `/${barbershop.slug}/agendar` : null;
+  const baseUrl = getPublicAppUrl(request);
+  const bookingUrl = barbershop?.slug ? `${baseUrl}/${barbershop.slug}/agendar` : null;
   const whatsappMessages = {
     invite: buildClientWhatsappMessage({
       template: "invite",
