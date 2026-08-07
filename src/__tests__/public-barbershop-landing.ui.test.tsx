@@ -1,8 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 
-// Setup hoisting mocks for prisma
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findFirst: vi.fn() },
@@ -14,17 +13,42 @@ const { prismaMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
 
-// Import component and metadata generator
 import BarbershopPublicPage, { generateMetadata } from "@/app/[slug]/page";
 
-const mockBarbershop = {
+const activeSubscription = {
+  id: "sub-1",
+  status: "ACTIVE",
+  currentPeriodEnd: new Date("2030-01-01T00:00:00.000Z"),
+  plan: { id: "plan-1", name: "Premium" },
+};
+
+const baseMember = {
+  id: "m-1",
+  role: "BARBER",
+  bio: "Especialista em corte clássico e acabamento de barba.",
+  ratingAvg: 4.8,
+  user: {
+    name: "Carlos Barber",
+    avatarUrl: "http://avatar.com/carlos.png",
+  },
+  workingHours: [
+    {
+      dayOfWeek: 1,
+      startTime: "09:00",
+      endTime: "18:00",
+      isActive: true,
+    },
+  ],
+};
+
+const baseBarbershop = {
   id: "shop-1",
   name: "Don Brio Barbearia",
   slug: "don-brio",
   description: "Cortes de cabelo premium e barba clássica",
-  phone: "17991089190",
-  logoUrl: "http://logo.com/image.png",
-  coverUrl: "http://cover.com/cover.png",
+  phone: "17991089190" as string | null,
+  logoUrl: "http://logo.com/image.png" as string | null,
+  coverUrl: "http://cover.com/cover.png" as string | null,
   street: "Avenida da Barbearia",
   number: "1000",
   complement: "Loja A",
@@ -35,12 +59,12 @@ const mockBarbershop = {
   categories: [
     {
       id: "cat-1",
-      name: "Cabelo",
+      name: "Cabelo & Barba",
       services: [
         {
           id: "svc-1",
-          name: "Corte Moderno",
-          description: "Corte na tesoura e máquina com finalização",
+          name: "Corte Masculino Tradicional",
+          description: "",
           price: 60.0,
           durationMin: 30,
           isActive: true,
@@ -48,144 +72,180 @@ const mockBarbershop = {
       ],
     },
   ],
-  members: [
-    {
-      id: "m-1",
-      bio: "Profissional especializado em cortes de cabelo masculino",
-      ratingAvg: 4.9,
-      role: "BARBER",
-      user: {
-        name: "Carlos Barber",
-        avatarUrl: "http://avatar.com/carlos.png",
-      },
-      workingHours: [
-        {
-          dayOfWeek: 1,
-          startTime: "09:00",
-          endTime: "18:00",
-          isActive: true,
-        },
-      ],
-    },
-  ],
+  members: [baseMember],
 };
 
-const mockSubscription = {
-  id: "sub-1",
-  status: "ACTIVE",
-  currentPeriodEnd: new Date("2030-01-01T00:00:00.000Z"),
-  plan: { id: "plan-1", name: "Premium" },
-};
-
-describe("P1 Vitrine Pública das Barbearias LOTE A2", () => {
+describe("P1 Vitrine Pública LOTE A3 — Redesign Editorial Premium", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("T1 & T9 — /[slug] renderiza nome da barbearia, endereço e telefone", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
+  async function renderPage(overrides?: {
+    barbershop?: Partial<typeof baseBarbershop>;
+    subscription?: unknown;
+    ownerWorkingHours?: Array<{
+      dayOfWeek: number;
+      startTime: string;
+      endTime: string;
+      isActive: boolean;
+    }>;
+    reviews?: Array<{
+      id: string;
+      rating: number;
+      comment: string | null;
+      createdAt: Date;
+      customer: { name: string };
+    }>;
+  }) {
+    const barbershop = {
+      ...baseBarbershop,
+      ...overrides?.barbershop,
+      categories: overrides?.barbershop?.categories ?? baseBarbershop.categories,
+      members: overrides?.barbershop?.members ?? baseBarbershop.members,
+    };
+
+    prismaMock.barbershop.findFirst.mockResolvedValueOnce(barbershop);
+    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(overrides?.subscription ?? activeSubscription);
+    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce({
+      workingHours: overrides?.ownerWorkingHours ?? baseMember.workingHours,
+    });
+    prismaMock.review.findMany.mockResolvedValueOnce(overrides?.reviews ?? []);
 
     const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
     render(Page);
+  }
 
-    expect(screen.getByText("Don Brio Barbearia")).toBeInTheDocument();
-    expect(screen.getByText(/Avenida da Barbearia, 1000/)).toBeInTheDocument();
-    expect(screen.getByText(/Loja A/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Centro, São José do Rio Preto/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("17991089190")).toBeInTheDocument();
+  it("T1/T2/T3 — renderiza hero editorial e CTA principal para /<slug>/agendar", async () => {
+    await renderPage();
+
+    expect(screen.getByTestId("editorial-hero-title")).toHaveTextContent("Seu estilo.");
+    expect(screen.getByRole("heading", { name: "Don Brio Barbearia" })).toBeInTheDocument();
+    expect(screen.getByTestId("hero-booking-cta").closest("a")).toHaveAttribute("href", "/don-brio/agendar");
+    expect(screen.getByTestId("mobile-sticky-cta")).toBeInTheDocument();
   });
 
-  it("T2 — CTA principal 'Agendar horário' aponta para /<slug>/agendar", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
+  it("T4/T5 — WhatsApp aparece quando telefone existe e não aparece sem telefone", async () => {
+    await renderPage();
+    expect(screen.getByRole("link", { name: /Falar no WhatsApp/i })).toHaveAttribute("href", "https://wa.me/5517991089190");
 
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
-
-    const bookingLinks = screen.getAllByRole("link", { name: /Agendar/i });
-    expect(bookingLinks.length).toBeGreaterThanOrEqual(1);
-    expect(bookingLinks[0]).toHaveAttribute("href", "/don-brio/agendar");
+    cleanup();
+    await renderPage({ barbershop: { phone: null } });
+    expect(screen.queryByRole("link", { name: /Falar no WhatsApp/i })).not.toBeInTheDocument();
   });
 
-  it("T3 — WhatsApp aparece quando telefone público existe", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
+  it("T6/T7 — serviços aparecem como ofertas com fallback de microcopy", async () => {
+    await renderPage({
+      barbershop: {
+        categories: [
+          {
+            id: "cat-a",
+            name: "Cabelo & Barba",
+            services: [
+              {
+                id: "svc-a",
+                name: "Corte Masculino Tradicional",
+                description: "",
+                price: 35,
+                durationMin: 30,
+                isActive: true,
+              },
+            ],
+          },
+        ],
+      },
+    });
 
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
-
-    const whatsappLink = screen.getByRole("link", { name: /Falar no WhatsApp/i });
-    expect(whatsappLink).toHaveAttribute("href", "https://wa.me/5517991089190");
+    expect(screen.getByTestId("services-offers-section")).toBeInTheDocument();
+    expect(screen.getByText("Corte Masculino Tradicional")).toBeInTheDocument();
+    expect(screen.getByText("Tecnica, acabamento e estilo para o seu dia a dia.")).toBeInTheDocument();
   });
 
-  it("T4 — serviços ativos aparecem agrupados na vitrine", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
-
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
-
-    expect(screen.getByText("Cabelo")).toBeInTheDocument();
-    expect(screen.getByText("Corte Moderno")).toBeInTheDocument();
-    expect(screen.getByText("Corte na tesoura e máquina com finalização")).toBeInTheDocument();
-    expect(screen.getByText("R$ 60,00")).toBeInTheDocument();
-    expect(screen.getByText(/30 min/)).toBeInTheDocument();
-  });
-
-  it("T5 — profissionais ativos aparecem na vitrine", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
-
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
+  it("T8/T9/T10 — equipe mostra nome/função e filtra bio administrativa ruim", async () => {
+    await renderPage({
+      barbershop: {
+        members: [
+          {
+            ...baseMember,
+            role: "OWNER",
+            bio: "Gestao Financeira",
+          },
+        ],
+      },
+    });
 
     expect(screen.getByText("Carlos Barber")).toBeInTheDocument();
-    expect(screen.getByText(/Profissional especializado/)).toBeInTheDocument();
+    expect(screen.getByText("Barbeiro responsavel")).toBeInTheDocument();
+    expect(screen.queryByText(/Gestao Financeira/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Especialista em atendimento masculino, corte e acabamento.")).toBeInTheDocument();
   });
 
-  it("T6 — página não quebra sem cover/logo", async () => {
-    const withoutImages = {
-      ...mockBarbershop,
-      logoUrl: null,
-      coverUrl: null,
-    };
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(withoutImages);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]);
+  it("T11/T12 — avaliações aparecem quando existem e seção é omitida quando não existem", async () => {
+    await renderPage({
+      reviews: [
+        {
+          id: "r1",
+          rating: 5,
+          comment: "Excelente experiência",
+          createdAt: new Date("2026-08-01T00:00:00.000Z"),
+          customer: { name: "João da Silva" },
+        },
+      ],
+    });
 
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
+    expect(screen.getByTestId("reviews-section")).toBeInTheDocument();
+    expect(screen.getByText("Excelente experiência")).toBeInTheDocument();
 
-    expect(screen.getByText("Don Brio Barbearia")).toBeInTheDocument();
-    expect(screen.getByText("D")).toBeInTheDocument(); // Logo initial fallback
+    cleanup();
+    await renderPage({ reviews: [] });
+    expect(screen.queryByTestId("reviews-section")).not.toBeInTheDocument();
   });
 
-  it("T7 & T8 — página não quebra sem avaliações e não mostra bloco vazio feio", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(mockSubscription);
-    prismaMock.barbershopMember.findFirst.mockResolvedValueOnce(mockBarbershop.members[0]);
-    prismaMock.review.findMany.mockResolvedValueOnce([]); // Empty reviews
+  it("T13/T14/T18 — ambiente e horários aparecem; página não quebra sem telefone", async () => {
+    await renderPage({ barbershop: { phone: null } });
 
-    const Page = await BarbershopPublicPage({ params: Promise.resolve({ slug: "don-brio" }) });
-    render(Page);
-
-    expect(screen.queryByText("O que dizem nossos clientes")).not.toBeInTheDocument();
+    expect(screen.getByTestId("environment-gallery-section")).toBeInTheDocument();
+    expect(screen.getByTestId("working-hours-section")).toBeInTheDocument();
+    expect(screen.getByText(/Avenida da Barbearia, 1000/i)).toBeInTheDocument();
   });
 
-  it("T10 — metadata title/description geram as tags corretas", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(mockBarbershop);
+  it("T15/T16/T17 — página não quebra sem cover/logo, sem serviços e sem profissionais", async () => {
+    await renderPage({
+      barbershop: {
+        coverUrl: null,
+        logoUrl: null,
+        categories: [],
+        members: [],
+      },
+    });
+
+    expect(screen.getByTestId("hero-fallback")).toBeInTheDocument();
+    expect(screen.getByText(/Estamos atualizando nosso cardapio de servicos/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nossa equipe esta sendo atualizada/i)).toBeInTheDocument();
+  });
+
+  it("T19 — barbearia inexistente retorna estado seguro via notFound", async () => {
+    prismaMock.barbershop.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      BarbershopPublicPage({ params: Promise.resolve({ slug: "inexistente" }) })
+    ).rejects.toThrow();
+  });
+
+  it("T20 — barbearia indisponível renderiza estado seguro", async () => {
+    await renderPage({
+      subscription: {
+        id: "sub-disabled",
+        status: "CANCELED",
+        currentPeriodEnd: new Date("2020-01-01T00:00:00.000Z"),
+        plan: { id: "plan-x", name: "Legacy" },
+      },
+    });
+
+    expect(screen.getByRole("heading", { name: /Barbearia indisponivel/i })).toBeInTheDocument();
+  });
+
+  it("T23/T24 — metadata inclui title/description/openGraph/canonical/metadataBase", async () => {
+    prismaMock.barbershop.findFirst.mockResolvedValueOnce(baseBarbershop);
 
     const metadata = await generateMetadata({ params: Promise.resolve({ slug: "don-brio" }) });
 
@@ -193,15 +253,7 @@ describe("P1 Vitrine Pública das Barbearias LOTE A2", () => {
     expect(metadata.description).toBe("Cortes de cabelo premium e barba clássica");
     expect(metadata.openGraph?.title).toBe("Don Brio Barbearia | Tem Barber");
     expect(metadata.openGraph?.images?.[0]?.url).toBe("http://cover.com/cover.png");
-  });
-
-  it("T11 — barbearia inexistente retorna estado seguro notFound", async () => {
-    prismaMock.barbershop.findFirst.mockResolvedValueOnce(null);
-
-    // Assert that calling BarbershopPublicPage throws or triggers notFound
-    // Next.js notFound throws an internal digest error
-    await expect(
-      BarbershopPublicPage({ params: Promise.resolve({ slug: "inexistente" }) })
-    ).rejects.toThrow();
+    expect(metadata.alternates?.canonical).toBe("/don-brio");
+    expect(metadata.metadataBase?.toString()).toBe("https://app.tembarber.com.br/");
   });
 });

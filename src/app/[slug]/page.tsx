@@ -1,21 +1,75 @@
-import { notFound } from "next/navigation";
+﻿import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { Avatar } from "@/components/ui/Avatar";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Card, CardContent } from "@/components/ui/Card";
-import { Divider } from "@/components/ui/Divider";
+import { Card } from "@/components/ui/Card";
 import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
-import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
+import { isPublicBarbershop, publicBarbershopWhere, sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 
-const DAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+const DAY_NAMES = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
+const PUBLIC_APP_URL = "https://app.tembarber.com.br";
+const ADMIN_BIO_TERMS = ["financeiro", "admin", "gestao financeira", "teste", "sistema"];
 
 interface WorkingHour {
   dayOfWeek: number;
   startTime: string;
   endTime: string;
   isActive: boolean;
+}
+
+function toCurrency(value: { toString(): string } | number | string | null | undefined): string {
+  const numericValue = typeof value === "object" && value !== null ? Number(value.toString()) : Number(value || 0);
+  return numericValue.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function serviceMicrocopy(name: string): string {
+  const normalized = name.toLowerCase();
+
+  if (normalized.includes("corte") && normalized.includes("barba")) {
+    return "Combo completo para renovar presenca e estilo.";
+  }
+  if (normalized.includes("corte")) {
+    return "Tecnica, acabamento e estilo para o seu dia a dia.";
+  }
+  if (normalized.includes("barba")) {
+    return "Acabamento preciso para manter o visual alinhado.";
+  }
+  if (normalized.includes("sobrancelha")) {
+    return "Detalhe final para um visual mais limpo.";
+  }
+
+  return "Servico profissional com atendimento marcado.";
+}
+
+function sanitizePublicBio(bio: string | null | undefined): string | null {
+  if (!bio) return null;
+  const trimmed = bio.trim();
+  if (!trimmed) return null;
+
+  const lowered = trimmed.toLowerCase();
+  if (ADMIN_BIO_TERMS.some((term) => lowered.includes(term))) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function roleLabel(role: string): string {
+  if (role === "OWNER") return "Barbeiro responsavel";
+  if (role === "MANAGER") return "Especialista";
+  return "Barbeiro";
+}
+
+function customerSafeName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "Cliente";
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return `${parts[0].slice(0, 1).toUpperCase()}.`;
+  return `${parts[0]} ${parts[1].slice(0, 1).toUpperCase()}.`;
 }
 
 export async function generateMetadata({
@@ -25,28 +79,33 @@ export async function generateMetadata({
 }) {
   const { slug } = await params;
   const safeSlug = sanitizeBarbershopSlug(slug);
-  if (!safeSlug) return { title: "Barbearia não encontrada" };
+  if (!safeSlug) return { title: "Barbearia nao encontrada" };
 
   const barbershop = await prisma.barbershop.findFirst({
     where: { ...publicBarbershopWhere(), slug: safeSlug },
   });
 
   if (!barbershop || !isPublicBarbershop(barbershop)) {
-    return { title: "Barbearia não encontrada" };
+    return { title: "Barbearia nao encontrada" };
   }
 
   const title = `${barbershop.name} | Tem Barber`;
   const description =
     barbershop.description ||
-    `Agende seu horário online na ${barbershop.name}. Atendimento com hora marcada, praticidade e cuidado nos detalhes.`;
+    `Agende seu horario online na ${barbershop.name}. Atendimento com hora marcada, praticidade e cuidado nos detalhes.`;
   const imageUrl = barbershop.coverUrl || barbershop.logoUrl || undefined;
 
   return {
+    metadataBase: new URL(PUBLIC_APP_URL),
     title,
     description,
+    alternates: {
+      canonical: `/${safeSlug}`,
+    },
     openGraph: {
       title,
       description,
+      url: `/${safeSlug}`,
       images: imageUrl ? [{ url: imageUrl }] : [],
     },
   };
@@ -61,7 +120,6 @@ export default async function BarbershopPublicPage({
   const safeSlug = sanitizeBarbershopSlug(slug);
   if (!safeSlug) notFound();
 
-  // Fetch full profile via direct Prisma (SSR — no auth needed)
   const barbershop = await prisma.barbershop.findFirst({
     where: { ...publicBarbershopWhere(), slug: safeSlug },
     include: {
@@ -84,50 +142,31 @@ export default async function BarbershopPublicPage({
 
   if (!barbershop || !isPublicBarbershop(barbershop)) notFound();
 
-  // Verificar status de assinatura do tenant
   const subscription = await getTenantSubscription(barbershop.id);
   if (!isSubscriptionActive(subscription)) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-text-primary px-4">
-        <Card variant="raised" className="max-w-md w-full p-8 md:p-10 text-center">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-warning-subtle border border-warning/30 text-warning mx-auto mb-6">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-8 h-8"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"
-              />
-            </svg>
-          </div>
-          <h1 className="heading-2 mb-3">Barbearia Indisponível</h1>
-          <p className="body-small text-text-secondary leading-relaxed mb-6">
-            Esta barbearia está temporariamente indisponível para agendamentos.
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-text-primary">
+        <Card variant="raised" className="w-full max-w-md p-8 text-center md:p-10">
+          <h1 className="heading-2 mb-3">Barbearia indisponivel</h1>
+          <p className="body-small mb-6 text-text-secondary">
+            Esta barbearia esta temporariamente indisponivel para agendamentos.
           </p>
-          <Button variant="secondary" className="w-full">
-            <Link href="/" className="w-full">
-              Voltar ao início
-            </Link>
-          </Button>
+          <Link href="/">
+            <Button variant="secondary" className="w-full">
+              Voltar ao inicio
+            </Button>
+          </Link>
         </Card>
       </div>
     );
   }
 
-  // Working hours from first OWNER member
   const ownerMember = await prisma.barbershopMember.findFirst({
     where: { barbershopId: barbershop.id, role: "OWNER" },
     include: { workingHours: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } } },
   });
   const workingHours: WorkingHour[] = ownerMember?.workingHours ?? [];
 
-  // Reviews
   const reviews = await prisma.review.findMany({
     where: { appointment: { barbershopId: barbershop.id } },
     include: { customer: { select: { name: true } } },
@@ -136,323 +175,378 @@ export default async function BarbershopPublicPage({
   });
 
   const avgRating =
-    reviews.length > 0
-      ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
-      : null;
+    reviews.length > 0 ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length : null;
 
-  // Clean and normalize phone number for WhatsApp Link
+  const hasPublicAddress = Boolean(barbershop.street || barbershop.neighborhood || barbershop.city || barbershop.state);
+  const hasServices = barbershop.categories.some((category) => category.services.length > 0);
+  const hasTeam = barbershop.members.length > 0;
+
   const numericPhone = barbershop.phone ? barbershop.phone.replace(/\D/g, "") : "";
-  const whatsappUrl = numericPhone
-    ? `https://wa.me/${numericPhone.startsWith("55") ? numericPhone : `55${numericPhone}`}`
-    : null;
+  const whatsappUrl = numericPhone ? `https://wa.me/${numericPhone.startsWith("55") ? numericPhone : `55${numericPhone}`}` : null;
+
+  const fullAddress = [
+    [barbershop.street, barbershop.number].filter(Boolean).join(", "),
+    barbershop.complement,
+    [barbershop.neighborhood, [barbershop.city, barbershop.state].filter(Boolean).join(" - ")].filter(Boolean).join(", "),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="min-h-screen bg-background text-text-primary">
-      {/* Cover / Hero Header */}
-      <div className="relative h-64 md:h-96 w-full bg-surface-raised overflow-hidden">
-        {barbershop.coverUrl ? (
-          <img
-            src={barbershop.coverUrl}
-            alt={`Capa de ${barbershop.name}`}
-            className="w-full h-full object-cover opacity-50"
-          />
-        ) : (
-          <div className="w-full h-full bg-gradient-to-br from-stone-900 via-stone-950 to-stone-900 opacity-80" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-black/40 to-transparent" />
-      </div>
+    <div className="min-h-screen bg-[#0b0b0d] text-zinc-100">
+      <div className="fixed inset-0 -z-20 bg-[radial-gradient(circle_at_15%_20%,rgba(201,168,76,0.18),transparent_38%),radial-gradient(circle_at_80%_0%,rgba(255,255,255,0.08),transparent_26%),linear-gradient(180deg,#0b0b0d_0%,#09090b_48%,#080809_100%)]" />
+      <div className="fixed inset-0 -z-10 opacity-[0.08] [background-size:16px_16px] [background-image:linear-gradient(to_right,rgba(255,255,255,.15)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,.15)_1px,transparent_1px)]" />
 
-      {/* Main Container */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-
-        {/* Profile Card Overlay */}
-        <div className="relative -mt-24 md:-mt-32 mb-10 z-10">
-          <div className="flex flex-col md:flex-row md:items-end gap-6 pb-6">
-            <div className="shrink-0 w-32 h-32 md:w-40 md:h-40 rounded-2xl bg-surface border-4 border-background overflow-hidden flex items-center justify-center shadow-2xl">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/60 backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+          <Link href={`/${safeSlug}`} className="flex items-center gap-3" aria-label={`Inicio da vitrine ${barbershop.name}`}>
+            <div className="h-9 w-9 overflow-hidden rounded-full border border-[#c9a84c]/60 bg-zinc-900 shadow-[0_0_0_1px_rgba(255,255,255,.08)]">
               {barbershop.logoUrl ? (
-                <img
-                  src={barbershop.logoUrl}
-                  alt={`Logo de ${barbershop.name}`}
-                  className="w-full h-full object-cover"
-                />
+                <img src={barbershop.logoUrl} alt={`Logo de ${barbershop.name}`} className="h-full w-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-surface-raised flex items-center justify-center text-4xl font-serif text-brand">
-                  {barbershop.name.charAt(0).toUpperCase()}
+                <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-[#c9a84c]">
+                  {barbershop.name.slice(0, 1).toUpperCase()}
                 </div>
               )}
             </div>
+            <div className="leading-tight">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-zinc-400">Tem Barber</p>
+              <p className="text-sm font-semibold text-zinc-100">{barbershop.name}</p>
+            </div>
+          </Link>
 
-            <div className="flex-1 pb-2">
-              <h1 className="heading-1 font-serif text-3xl md:text-5xl font-bold leading-tight mb-2">
-                {barbershop.name}
-              </h1>
+          <nav className="hidden items-center gap-6 text-sm text-zinc-300 md:flex">
+            <a href="#servicos" className="transition hover:text-[#c9a84c]">Servicos</a>
+            <a href="#ambiente" className="transition hover:text-[#c9a84c]">Ambiente</a>
+            <a href="#equipe" className="transition hover:text-[#c9a84c]">Equipe</a>
+            <a href="#avaliacoes" className="transition hover:text-[#c9a84c]">Avaliacoes</a>
+            <a href="#contato" className="transition hover:text-[#c9a84c]">Contato</a>
+          </nav>
 
-              <div className="flex items-center gap-2 flex-wrap text-sm text-text-secondary">
-                <span>
-                  {barbershop.neighborhood}, {barbershop.city} – {barbershop.state}
-                </span>
-                {avgRating !== null && (
-                  <>
-                    <span className="text-text-muted">•</span>
-                    <Badge variant="brand" className="font-bold">
-                      ★ {avgRating.toFixed(1)}
-                    </Badge>
-                    <span className="text-text-muted">
-                      ({reviews.length} {reviews.length === 1 ? "avaliação" : "avaliações"})
-                    </span>
-                  </>
+          <Link href={`/${safeSlug}/agendar`}>
+            <Button className="h-10 rounded-full bg-[#c9a84c] px-5 text-xs font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760] sm:text-sm" data-testid="header-booking-cta">
+              Agendar horario
+            </Button>
+          </Link>
+        </div>
+      </header>
+
+      <main className="pb-28 md:pb-16">
+        <section className="relative isolate overflow-hidden">
+          <div className="absolute inset-0 -z-20">
+            {barbershop.coverUrl ? (
+              <img src={barbershop.coverUrl} alt={`Capa de ${barbershop.name}`} className="h-full w-full object-cover" />
+            ) : (
+              <div
+                className="h-full w-full bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.28),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,.08),transparent_28%),linear-gradient(140deg,#151518_0%,#0f1013_46%,#070708_100%)]"
+                data-testid="hero-fallback"
+              />
+            )}
+          </div>
+          <div className="absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(5,5,7,0.45)_0%,rgba(8,8,10,0.72)_32%,rgba(8,8,10,0.92)_68%,#0b0b0d_100%)]" />
+
+          <div className="mx-auto grid min-h-[86svh] w-full max-w-7xl grid-cols-1 items-end gap-10 px-4 pb-12 pt-20 sm:px-6 lg:grid-cols-[1.2fr_.8fr] lg:px-8">
+            <div className="space-y-8">
+              <p className="inline-flex items-center rounded-full border border-white/20 bg-black/35 px-4 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-200">
+                Barbearia premium
+              </p>
+
+              <div className="space-y-4">
+                <h1 className="max-w-3xl text-balance text-4xl font-semibold leading-[1.08] text-zinc-50 sm:text-5xl lg:text-6xl" data-testid="editorial-hero-title">
+                  Seu estilo.
+                  <br />
+                  Sua presenca.
+                  <br />
+                  Nossa arte.
+                </h1>
+                <p className="max-w-2xl text-base leading-relaxed text-zinc-200/90 sm:text-lg">
+                  Mais que um corte, uma experiencia completa de cuidado, confianca e presenca.
+                </p>
+                <p className="text-sm font-medium text-zinc-300">
+                  {barbershop.name}
+                  {hasPublicAddress ? ` · ${barbershop.neighborhood}, ${barbershop.city}` : ""}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Link href={`/${safeSlug}/agendar`}>
+                  <Button className="h-12 rounded-full bg-[#c9a84c] px-8 text-sm font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]" data-testid="hero-booking-cta">
+                    Agendar horario online
+                  </Button>
+                </Link>
+                {whatsappUrl && (
+                  <a href={whatsappUrl} target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" className="h-12 rounded-full border-white/40 bg-black/30 px-8 text-sm font-semibold uppercase tracking-[0.12em] text-white hover:border-[#c9a84c] hover:text-[#f8e4a5]" data-testid="hero-whatsapp-cta">
+                      Falar no WhatsApp
+                    </Button>
+                  </a>
                 )}
               </div>
+
+              <ul className="grid gap-2 text-sm text-zinc-200 sm:grid-cols-2">
+                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Atendimento com hora marcada</li>
+                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Agendamento online</li>
+                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Servicos com preco visivel</li>
+                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Profissionais especializados</li>
+              </ul>
             </div>
-          </div>
 
-          <Divider className="my-2" />
-        </div>
-
-        {/* Pitch & Conversion Block */}
-        <section className="mb-12">
-          <Card variant="raised" className="p-8 text-center relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand/20 via-brand to-brand/20" />
-            <h2 className="heading-2 font-serif text-2xl md:text-3xl mb-3">
-              Seu próximo corte começa aqui.
-            </h2>
-            <p className="body text-text-secondary max-w-2xl mx-auto mb-8">
-              Escolha o serviço, veja os horários e agende em poucos segundos. Atendimento com hora marcada, praticidade e cuidado nos detalhes.
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href={`/${slug}/agendar`} className="w-full sm:w-auto">
-                <Button variant="primary" size="lg" className="w-full px-8 font-bold">
-                  Agendar horário online
-                </Button>
-              </Link>
-              {whatsappUrl && (
-                <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto">
-                  <Button variant="outline" size="lg" className="w-full px-8">
-                    Falar no WhatsApp
-                  </Button>
-                </a>
+            <div className="hidden rounded-3xl border border-white/15 bg-black/40 p-6 shadow-2xl backdrop-blur-sm lg:block">
+              <p className="mb-2 text-xs uppercase tracking-[0.26em] text-zinc-400">Assinatura da marca</p>
+              <h2 className="text-2xl font-semibold text-zinc-50">{barbershop.name}</h2>
+              <p className="mt-3 text-sm text-zinc-300">
+                {barbershop.description || "Atendimento premium para quem busca presenca, cuidado e estilo em cada detalhe."}
+              </p>
+              {avgRating !== null && (
+                <p className="mt-6 text-sm text-zinc-200">
+                  <span className="text-[#c9a84c]">★ {avgRating.toFixed(1)}</span> em {reviews.length} avaliacoes verificadas
+                </p>
               )}
             </div>
-          </Card>
+          </div>
         </section>
 
-        {/* Two-Column Grid: Services on Left, Shop Info on Right */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-16">
-
-          {/* Services Column (Left 2 Columns) */}
-          <div className="lg:col-span-2 space-y-10">
+        <section id="servicos" className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+          <div className="mb-8 flex items-end justify-between gap-4">
             <div>
-              <h2 className="heading-2 mb-1">Nossos Serviços</h2>
-              <p className="body-small text-text-secondary">Selecione o serviço ideal para o seu estilo.</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Servicos</p>
+              <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Ofertas para o seu estilo</h2>
             </div>
-
-            {barbershop.categories.filter((c) => c.services.length > 0).length > 0 ? (
-              <div className="space-y-8">
-                {barbershop.categories
-                  .filter((c) => c.services.length > 0)
-                  .map((cat) => (
-                    <div key={cat.id} className="space-y-3">
-                      <h3 className="label text-brand font-bold uppercase tracking-wider">
-                        {cat.name}
-                      </h3>
-                      <div className="space-y-3">
-                        {cat.services.map((svc) => (
-                          <Card key={svc.id} variant="default" className="hover:border-border-strong transition-all duration-200">
-                            <CardContent className="p-5 flex items-start justify-between gap-4">
-                              <div className="space-y-1">
-                                <p className="body font-semibold text-text-primary">{svc.name}</p>
-                                {svc.description && (
-                                  <p className="body-small text-text-secondary leading-relaxed max-w-lg">
-                                    {svc.description}
-                                  </p>
-                                )}
-                                <div className="flex items-center gap-2 pt-1">
-                                  <span className="text-xs text-text-muted flex items-center gap-1">
-                                    🕒 {svc.durationMin} min
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="text-right shrink-0 flex flex-col items-end justify-between h-full gap-3">
-                                <p className="body-large font-bold text-brand">
-                                  {Number(svc.price).toLocaleString("pt-BR", {
-                                    style: "currency",
-                                    currency: "BRL",
-                                  })}
-                                </p>
-                                <Link href={`/${slug}/agendar`}>
-                                  <Button variant="secondary" size="sm" className="font-semibold text-xs h-8 px-3">
-                                    Agendar
-                                  </Button>
-                                </Link>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            ) : (
-              <Card className="p-8 text-center text-text-muted">
-                Nenhum serviço disponível no momento.
-              </Card>
-            )}
-          </div>
-
-          {/* Info & Opening Hours Column (Right 1 Column) */}
-          <div className="space-y-8">
-            {/* Info Card */}
-            <div>
-              <h2 className="heading-3 text-text-primary mb-4">Informações de Contato</h2>
-              <Card variant="raised" className="p-6 space-y-4">
-                <div>
-                  <p className="label text-text-muted mb-1">Endereço</p>
-                  <p className="body-small font-medium text-text-primary">
-                    {barbershop.street}, {barbershop.number}
-                    {barbershop.complement ? ` – ${barbershop.complement}` : ""}
-                  </p>
-                  <p className="body-small text-text-secondary">
-                    {barbershop.neighborhood}, {barbershop.city} – {barbershop.state}
-                  </p>
-                </div>
-
-                {barbershop.phone && (
-                  <div>
-                    <p className="label text-text-muted mb-1">Telefone / WhatsApp</p>
-                    <p className="body-small font-medium text-text-primary">
-                      {barbershop.phone}
-                    </p>
-                  </div>
-                )}
-              </Card>
-            </div>
-
-            {/* Opening Hours */}
-            {workingHours.length > 0 && (
-              <div>
-                <h2 className="heading-3 text-text-primary mb-4">Horários</h2>
-                <Card variant="raised" className="p-6">
-                  <div className="space-y-3">
-                    {[1, 2, 3, 4, 5, 6, 0].map((d) => {
-                      const wh = workingHours.find((w) => w.dayOfWeek === d);
-                      const isToday = new Date().getDay() === d;
-                      return (
-                        <div key={d} className={`flex items-center justify-between text-sm py-0.5 ${isToday ? "font-bold text-brand" : "text-text-secondary"}`}>
-                          <span className="capitalize">
-                            {DAY_NAMES[d].split("-")[0]}
-                          </span>
-                          <span className={wh ? "text-text-primary font-medium" : "text-text-muted"}>
-                            {wh ? `${wh.startTime} – ${wh.endTime}` : "Fechado"}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Team Section */}
-        {barbershop.members.length > 0 && (
-          <section className="mb-16">
-            <div className="text-center mb-10">
-              <h2 className="heading-2 mb-1">Nossa Equipe</h2>
-              <p className="body-small text-text-secondary">Conheça nossos especialistas prontos para lhe atender.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {barbershop.members.map((m) => (
-                <Card key={m.id} variant="raised" className="p-6 text-center hover:border-border-strong transition-all duration-200">
-                  <div className="w-20 h-20 rounded-full border-2 border-brand/20 mx-auto mb-4 overflow-hidden flex items-center justify-center relative">
-                    <Avatar src={m.user.avatarUrl} alt={m.user.name} size="lg" fallbackText={m.user.name} />
-                  </div>
-
-                  <p className="body font-bold text-text-primary">{m.user.name}</p>
-
-                  {m.ratingAvg > 0 ? (
-                    <div className="flex items-center justify-center gap-1 mt-1 text-amber-400 text-xs">
-                      <span>★ {m.ratingAvg.toFixed(1)}</span>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-text-muted mt-1">Especialista</p>
-                  )}
-
-                  {m.bio && (
-                    <p className="body-small text-text-secondary mt-3 line-clamp-2 italic">
-                      "{m.bio}"
-                    </p>
-                  )}
-
-                  <Divider className="my-4" />
-
-                  <Link href={`/${slug}/agendar`}>
-                    <Button variant="secondary" size="sm" className="w-full text-xs">
-                      Agendar com profissional
-                    </Button>
-                  </Link>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Reviews Section */}
-        {reviews.length > 0 && (
-          <section className="mb-16">
-            <div className="text-center mb-10">
-              <h2 className="heading-2 mb-1">O que dizem nossos clientes</h2>
-              <p className="body-small text-text-secondary">Opiniões de quem já passou pelo nosso atendimento.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {reviews.map((r) => (
-                <Card key={r.id} variant="default" className="p-5 flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <p className="body font-semibold text-text-primary">{r.customer.name}</p>
-                      <span className="text-amber-400 text-sm">
-                        {"★".repeat(r.rating)}
-                        {"☆".repeat(5 - r.rating)}
-                      </span>
-                    </div>
-                    {r.comment && (
-                      <p className="body-small text-text-secondary leading-relaxed">
-                        {r.comment}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="pt-4 flex items-center justify-between text-xs text-text-muted border-t border-border-subtle mt-4">
-                    <span>Atendimento verificado</span>
-                    <span>{new Date(r.createdAt).toLocaleDateString("pt-BR")}</span>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Footer CTA */}
-        <section className="pb-20 text-center">
-          <Card variant="raised" className="p-8 inline-flex flex-col items-center max-w-xl mx-auto border border-brand/30">
-            <h3 className="heading-3 mb-2">Pronto para agendar?</h3>
-            <p className="body-small text-text-secondary mb-6">Agende online de forma rápida e prática no conforto de seu celular.</p>
-            <Link href={`/${slug}/agendar`}>
-              <Button variant="primary" size="lg" className="px-10 font-bold">
-                Agendar horário
+            <Link href={`/${safeSlug}/agendar`} className="hidden md:block">
+              <Button variant="outline" className="rounded-full border-white/20 bg-transparent text-zinc-200 hover:border-[#c9a84c] hover:text-[#f8e4a5]">
+                Ver horarios
               </Button>
             </Link>
-            <p className="text-[10px] text-text-muted mt-6">
-              Powered by Tem Barber
-            </p>
-          </Card>
+          </div>
+
+          {hasServices ? (
+            <div className="space-y-10" data-testid="services-offers-section">
+              {barbershop.categories
+                .filter((category) => category.services.length > 0)
+                .map((category) => (
+                  <div key={category.id} className="space-y-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-300">{category.name}</h3>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {category.services.map((service) => {
+                        const safeDescription = service.description?.trim() || serviceMicrocopy(service.name);
+                        return (
+                          <article key={service.id} className="group rounded-2xl border border-white/10 bg-[#121317] p-5 transition hover:-translate-y-1 hover:border-[#c9a84c]/60 hover:bg-[#15161d]">
+                            <p className="text-lg font-semibold text-zinc-100">{service.name}</p>
+                            <p className="mt-2 min-h-[44px] text-sm leading-relaxed text-zinc-300">{safeDescription}</p>
+                            <div className="mt-5 flex items-end justify-between gap-4">
+                              <div>
+                                <p className="text-xl font-semibold text-[#f2d78d]">{toCurrency(service.price)}</p>
+                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">{service.durationMin} min</p>
+                              </div>
+                              <Link href={`/${safeSlug}/agendar`}>
+                                <Button size="sm" className="rounded-full bg-[#c9a84c] px-4 text-xs font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]">
+                                  Agendar
+                                </Button>
+                              </Link>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <Card className="rounded-2xl border border-white/10 bg-[#111217] p-8 text-center text-zinc-300">
+              Estamos atualizando nosso cardapio de servicos. Volte em instantes para conferir todas as opcoes.
+            </Card>
+          )}
         </section>
 
+        <section id="ambiente" className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8" data-testid="environment-gallery-section">
+          <div className="mb-8">
+            <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Ambiente</p>
+            <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Um espaco feito para voce</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-zinc-300">
+              Atendimento com hora marcada, ambiente profissional e cuidado nos detalhes. Nossa vitrine ja esta pronta para receber galerias reais da experiencia.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="relative min-h-[220px] overflow-hidden rounded-3xl border border-white/10 bg-[#121319] p-6">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(201,168,76,.22),transparent_34%),linear-gradient(145deg,rgba(255,255,255,.05),transparent_50%)]" />
+              <div className="relative">
+                <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Ambiente</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-100">Conforto e presenca</p>
+                <p className="mt-2 text-sm text-zinc-300">Slot preparado para foto principal do ambiente.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {["Atendimento", "Detalhes", "Marca", "Experiencia"].map((slot) => (
+                <div key={slot} className="min-h-[120px] rounded-2xl border border-white/10 bg-[#111217] p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-400">{slot}</p>
+                  <p className="mt-2 text-sm text-zinc-300">Slot visual premium para composicao editorial.</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section id="equipe" className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+          <div className="mb-8">
+            <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Equipe</p>
+            <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Especialistas em presenca</h2>
+          </div>
+
+          {hasTeam ? (
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {barbershop.members.map((member) => {
+                const safeBio = sanitizePublicBio(member.bio);
+                return (
+                  <article key={member.id} className="rounded-2xl border border-white/10 bg-[#121317] p-5">
+                    <div className="mb-4 flex items-center gap-4">
+                      <Avatar src={member.user.avatarUrl} alt={member.user.name} size="lg" fallbackText={member.user.name} />
+                      <div>
+                        <p className="text-base font-semibold text-zinc-100">{member.user.name}</p>
+                        <p className="text-xs uppercase tracking-[0.12em] text-[#c9a84c]">{roleLabel(member.role)}</p>
+                      </div>
+                    </div>
+                    <p className="min-h-[44px] text-sm leading-relaxed text-zinc-300">
+                      {safeBio || "Especialista em atendimento masculino, corte e acabamento."}
+                    </p>
+                    <div className="mt-5">
+                      <Link href={`/${safeSlug}/agendar`}>
+                        <Button variant="outline" className="w-full rounded-full border-white/20 text-zinc-100 hover:border-[#c9a84c] hover:text-[#f8e4a5]">
+                          Agendar com profissional
+                        </Button>
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <Card className="rounded-2xl border border-white/10 bg-[#111217] p-8 text-center text-zinc-300">
+              Nossa equipe esta sendo atualizada para voce conhecer todos os profissionais.
+            </Card>
+          )}
+        </section>
+
+        {reviews.length > 0 ? (
+          <section id="avaliacoes" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8" data-testid="reviews-section">
+            <div className="mb-8">
+              <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Avaliacoes</p>
+              <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Quem passa por aqui recomenda</h2>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {reviews.slice(0, 6).map((review) => (
+                <article key={review.id} className="rounded-2xl border border-white/10 bg-[#121317] p-5">
+                  <p className="text-sm text-[#f2d78d]">{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</p>
+                  {review.comment && <p className="mt-3 text-sm leading-relaxed text-zinc-200">{review.comment}</p>}
+                  <div className="mt-4 border-t border-white/10 pt-3 text-xs text-zinc-400">
+                    <p>{customerSafeName(review.customer.name)}</p>
+                    <p>{new Date(review.createdAt).toLocaleDateString("pt-BR")}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section id="avaliacoes" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+            <div className="grid grid-cols-1 gap-3 rounded-2xl border border-white/10 bg-[#121317] p-6 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                "Atendimento com hora marcada",
+                "Servicos com preco visivel",
+                "Agendamento online rapido",
+                "Localizacao clara para chegar facil",
+              ].map((item) => (
+                <p key={item} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-200">{item}</p>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section id="contato" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_.9fr]">
+            <div className="rounded-3xl border border-white/10 bg-[#121317] p-7">
+              <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Contato</p>
+              <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Encontre a barbearia</h2>
+              <p className="mt-4 text-sm leading-relaxed text-zinc-300">
+                {hasPublicAddress ? fullAddress : "Localizacao em atualizacao. Fale com a barbearia para mais detalhes."}
+              </p>
+              {barbershop.phone && <p className="mt-2 text-sm text-zinc-200">Telefone / WhatsApp: {barbershop.phone}</p>}
+
+              {workingHours.length > 0 && (
+                <div className="mt-6 space-y-2" data-testid="working-hours-section">
+                  {[1, 2, 3, 4, 5, 6, 0].map((day) => {
+                    const item = workingHours.find((hour) => hour.dayOfWeek === day);
+                    return (
+                      <div key={day} className="flex items-center justify-between text-sm text-zinc-300">
+                        <span>{DAY_NAMES[day]}</span>
+                        <span>{item ? `${item.startTime} - ${item.endTime}` : "Fechado"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <Link href={`/${safeSlug}/agendar`}>
+                  <Button className="h-11 rounded-full bg-[#c9a84c] px-6 text-sm font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]">
+                    Agendar horario
+                  </Button>
+                </Link>
+                {whatsappUrl && (
+                  <a href={whatsappUrl} target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" className="h-11 rounded-full border-white/20 bg-transparent px-6 text-sm font-semibold uppercase tracking-[0.12em] text-zinc-100 hover:border-[#c9a84c] hover:text-[#f8e4a5]">
+                      WhatsApp
+                    </Button>
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111217] p-7">
+              <p className="text-xs uppercase tracking-[0.24em] text-zinc-400">Referencia visual</p>
+              <h3 className="mt-2 text-xl font-semibold text-zinc-100">Fachada e localizacao</h3>
+              <div className="mt-5 h-56 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.18),transparent_35%),linear-gradient(160deg,#1b1c22_0%,#101116_100%)] p-4">
+                <p className="text-sm text-zinc-300">Espaco reservado para foto da fachada/mapa ilustrativo em proximos lotes.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mx-auto w-full max-w-7xl px-4 pb-20 pt-10 text-center sm:px-6 lg:px-8">
+          <div className="rounded-3xl border border-[#c9a84c]/35 bg-[linear-gradient(145deg,rgba(201,168,76,.12),rgba(201,168,76,.02)_45%,rgba(8,8,10,.95))] px-6 py-10">
+            <h3 className="text-3xl font-semibold text-zinc-50">Pronto para transformar seu visual?</h3>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-zinc-300">
+              Agende online de forma rapida e pratica pelo Tem Barber.
+            </p>
+            <div className="mt-6 flex justify-center">
+              <Link href={`/${safeSlug}/agendar`}>
+                <Button className="h-12 rounded-full bg-[#c9a84c] px-10 text-sm font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]" data-testid="final-booking-cta">
+                  Agendar horario
+                </Button>
+              </Link>
+            </div>
+            <p className="mt-8 text-xs uppercase tracking-[0.18em] text-zinc-500">Powered by Tem Barber</p>
+          </div>
+        </section>
+      </main>
+
+      <div className="fixed inset-x-0 bottom-0 z-50 border-t border-white/15 bg-black/80 p-3 backdrop-blur-md md:hidden" data-testid="mobile-sticky-cta">
+        <div className="mx-auto flex max-w-md items-center gap-2">
+          <Link href={`/${safeSlug}/agendar`} className="flex-1">
+            <Button className="h-11 w-full rounded-full bg-[#c9a84c] text-xs font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]">
+              Agendar horario
+            </Button>
+          </Link>
+          {whatsappUrl && (
+            <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="flex-1">
+              <Button variant="outline" className="h-11 w-full rounded-full border-white/30 bg-transparent text-xs font-semibold uppercase tracking-[0.12em] text-zinc-100 hover:border-[#c9a84c]">
+                WhatsApp
+              </Button>
+            </a>
+          )}
+        </div>
       </div>
+
+      <div className="h-16 md:hidden" aria-hidden="true" />
     </div>
   );
 }
