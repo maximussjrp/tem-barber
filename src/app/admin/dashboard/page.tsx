@@ -87,6 +87,20 @@ const APPT_STATUS: Record<string, { label: string; dot: string; badge: string }>
   },
 };
 
+function getAppointmentNetRevenue(a: {
+  totalPrice: any;
+  comandas?: { status: string; total: any }[];
+}): number {
+  const comanda = a.comandas?.[0];
+  if (comanda) {
+    if (comanda.status === "CANCELLED") {
+      return 0;
+    }
+    return Number(comanda.total);
+  }
+  return Number(a.totalPrice);
+}
+
 // â”€â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default async function DashboardPage() {
@@ -102,6 +116,14 @@ export default async function DashboardPage() {
         include: {
           customer: { select: { name: true } },
           services: { include: { service: { select: { name: true } } } },
+          comandas: {
+            select: {
+              status: true,
+              total: true,
+              discountTotal: true,
+              surchargeTotal: true,
+            },
+          },
         },
         orderBy: { dateTime: "asc" },
       }),
@@ -115,7 +137,18 @@ export default async function DashboardPage() {
           dateTime: { gte: weekStart, lte: endOfDay },
           status: "COMPLETED",
         },
-        select: { dateTime: true, totalPrice: true },
+        select: {
+          dateTime: true,
+          totalPrice: true,
+          comandas: {
+            select: {
+              status: true,
+              total: true,
+              discountTotal: true,
+              surchargeTotal: true,
+            },
+          },
+        },
       }),
       prisma.appointment.findMany({
         where: { barbershopId: barbershopId! },
@@ -134,7 +167,7 @@ export default async function DashboardPage() {
   const cancelledCount = todayDetailedAppts.filter((a) => a.status === "CANCELLED").length;
   const revenue = todayDetailedAppts
     .filter((a) => a.status === "COMPLETED")
-    .reduce((s, a) => s + Number(a.totalPrice), 0);
+    .reduce((s, a) => s + getAppointmentNetRevenue(a), 0);
   const totalCount = todayDetailedAppts.length;
   const confirmedPct = totalCount > 0 ? Math.round((confirmedCount / totalCount) * 100) : 0;
   const cancelledPct = totalCount > 0 ? Math.round((cancelledCount / totalCount) * 100) : 0;
@@ -147,8 +180,9 @@ export default async function DashboardPage() {
     const br = new Date(a.dateTime.getTime() - 3 * 3600 * 1000);
     const dow = br.getUTCDay();
     const isoDay = dow === 0 ? 6 : dow - 1;
-    dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + Number(a.totalPrice);
-    totalWeekRevenue += Number(a.totalPrice);
+    const netRev = getAppointmentNetRevenue(a);
+    dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + netRev;
+    totalWeekRevenue += netRev;
   }
   const dailyRevenue = DAY_LABELS.map((label, i) => ({ label, revenue: dailyRevByDay[i] ?? 0 }));
 
@@ -198,12 +232,13 @@ export default async function DashboardPage() {
     endTime: string;
     totalSlots: number;
     bookedSlots: number;
+    blockedSlots: number[];
     freeSlots: number[];
   };
 
   const memberSlots: SlotInfo[] = activeMembers.map((m) => {
     const wh = m.workingHours[0];
-    const onTimeOff = m.timeOffs.length > 0;
+    const onTimeOff = m.timeOffs.some((to) => to.allDay);
 
     if (!wh || onTimeOff) {
       return {
@@ -214,6 +249,7 @@ export default async function DashboardPage() {
         endTime: "",
         totalSlots: 0,
         bookedSlots: 0,
+        blockedSlots: [],
         freeSlots: [],
       };
     }
@@ -239,7 +275,24 @@ export default async function DashboardPage() {
       }
     }
 
-    const freeSlots = allSlots.filter((t) => !occupiedMinutes.has(t));
+    const [y, mMonth, d] = todayStr.split("-").map(Number);
+    const blockedSlots: number[] = [];
+    const partialTimeOffs = m.timeOffs.filter((to) => !to.allDay);
+    for (const t of allSlots) {
+      const slotStart = new Date(Date.UTC(y, mMonth - 1, d, Math.floor(t / 60), t % 60));
+      const slotEnd = new Date(Date.UTC(y, mMonth - 1, d, Math.floor((t + SLOT_MIN) / 60), (t + SLOT_MIN) % 60));
+      const isOverlapping = partialTimeOffs.some((to) => {
+        const toStart = new Date(to.startDate);
+        const toEnd = new Date(to.endDate);
+        return toStart < slotEnd && toEnd > slotStart;
+      });
+      if (isOverlapping) {
+        blockedSlots.push(t);
+      }
+    }
+
+    const blockedSet = new Set(blockedSlots);
+    const freeSlots = allSlots.filter((t) => !occupiedMinutes.has(t) && !blockedSet.has(t));
     const bookedCount = allSlots.filter((t) => occupiedMinutes.has(t)).length;
 
     return {
@@ -250,6 +303,7 @@ export default async function DashboardPage() {
       endTime: wh.endTime,
       totalSlots: allSlots.length,
       bookedSlots: bookedCount,
+      blockedSlots,
       freeSlots,
     };
   });
@@ -293,7 +347,7 @@ export default async function DashboardPage() {
   const occupancyData = {
     occupied: memberSlots.reduce((s, m) => s + m.bookedSlots, 0),
     available: memberSlots.reduce((s, m) => s + m.freeSlots.length, 0),
-    blocked: 0,
+    blocked: memberSlots.reduce((s, m) => s + m.blockedSlots.length, 0),
   };
 
   // â”€â”€ Current time (BRT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -515,9 +569,18 @@ export default async function DashboardPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
-                          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--surface-3)] border border-[var(--border-medium)]" />Disponível</span>
-                          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[var(--gold)]" />Ocupado</span>
-                          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />Bloqueado</span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            Disponível
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--gold)]" />
+                            Ocupado
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
+                            Bloqueado
+                          </span>
                         </div>
                       </div>
 
@@ -526,19 +589,27 @@ export default async function DashboardPage() {
                         {(() => {
                           const allTimes: number[] = [];
                           const freeSet = new Set(m.freeSlots);
+                          const blockedSet = new Set(m.blockedSlots);
                           const start = parseTime(m.startTime);
                           const end = parseTime(m.endTime);
                           for (let t = start; t + SLOT_MIN <= end; t += SLOT_MIN) allTimes.push(t);
                           return allTimes.map((t) => {
                             const isFree = freeSet.has(t);
+                            const isBlocked = blockedSet.has(t);
+
+                            let slotClass = "";
+                            if (isBlocked) {
+                              slotClass = "bg-zinc-800/50 text-zinc-500 border-zinc-700/30 opacity-60";
+                            } else if (isFree) {
+                              slotClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+                            } else {
+                              slotClass = "bg-[var(--gold-surface)] text-[var(--gold)] border-[var(--gold-border)]";
+                            }
+
                             return (
                               <span
                                 key={t}
-                                className={`text-[10px] tabular-nums px-2 py-1 rounded-lg font-semibold border transition-colors ${
-                                  isFree
-                                    ? "bg-[var(--surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)]"
-                                    : "bg-[var(--gold-surface)] text-[var(--gold)] border-[var(--gold-border)]"
-                                }`}
+                                className={`text-[10px] tabular-nums px-2 py-1 rounded-lg font-semibold border transition-colors ${slotClass}`}
                               >
                                 {formatTime(t)}
                               </span>
