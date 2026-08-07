@@ -9,7 +9,25 @@ import { isPublicBarbershop, publicBarbershopWhere, sanitizeBarbershopSlug } fro
 
 const DAY_NAMES = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
 const PUBLIC_APP_URL = "https://app.tembarber.com.br";
-const ADMIN_BIO_TERMS = ["financeiro", "admin", "gestao financeira", "teste", "sistema"];
+const ADMIN_BIO_TERMS = [
+  "financeiro",
+  "financeira",
+  "administrativo",
+  "administrativa",
+  "admin",
+  "gestao",
+  "gestao financeira",
+  "gestao administrativa",
+  "teste",
+  "sistema",
+  "operacional",
+  "comercial",
+  "faturamento",
+  "backoffice",
+  "suporte",
+  "rh",
+  "recursos humanos",
+];
 
 interface WorkingHour {
   dayOfWeek: number;
@@ -45,12 +63,16 @@ function serviceMicrocopy(name: string): string {
   return "Servico profissional com atendimento marcado.";
 }
 
+function removeDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
 function sanitizePublicBio(bio: string | null | undefined): string | null {
   if (!bio) return null;
   const trimmed = bio.trim();
   if (!trimmed) return null;
 
-  const lowered = trimmed.toLowerCase();
+  const lowered = removeDiacritics(trimmed).toLowerCase();
   if (ADMIN_BIO_TERMS.some((term) => lowered.includes(term))) {
     return null;
   }
@@ -59,7 +81,7 @@ function sanitizePublicBio(bio: string | null | undefined): string | null {
 }
 
 function roleLabel(role: string): string {
-  if (role === "OWNER") return "Barbeiro responsavel";
+  if (role === "OWNER") return "Barbeiro responsável";
   if (role === "MANAGER") return "Especialista";
   return "Barbeiro";
 }
@@ -238,9 +260,12 @@ export default async function BarbershopPublicPage({
               <img src={barbershop.coverUrl} alt={`Capa de ${barbershop.name}`} className="h-full w-full object-cover" />
             ) : (
               <div
-                className="h-full w-full bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.28),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,.08),transparent_28%),linear-gradient(140deg,#151518_0%,#0f1013_46%,#070708_100%)]"
+                className="h-full w-full bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.35),transparent_28%),radial-gradient(circle_at_80%_15%,rgba(255,255,255,.12),transparent_24%),linear-gradient(135deg,#1d1e24_0%,#131419_42%,#060607_100%)]"
                 data-testid="hero-fallback"
-              />
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(201,168,76,.16),transparent_36%)]" />
+                <div className="absolute inset-y-0 right-0 w-1/3 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,.04)_100%)]" />
+              </div>
             )}
           </div>
           <div className="absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(5,5,7,0.45)_0%,rgba(8,8,10,0.72)_32%,rgba(8,8,10,0.92)_68%,#0b0b0d_100%)]" />
@@ -372,15 +397,22 @@ export default async function BarbershopPublicPage({
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(201,168,76,.22),transparent_34%),linear-gradient(145deg,rgba(255,255,255,.05),transparent_50%)]" />
               <div className="relative">
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Ambiente</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-100">Conforto e presenca</p>
-                <p className="mt-2 text-sm text-zinc-300">Slot preparado para foto principal do ambiente.</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-100">Conforto e presença</p>
+                <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+                  Um espaço pensado para receber com atenção, cuidado e uma experiência elegante do início ao fim.
+                </p>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {["Atendimento", "Detalhes", "Marca", "Experiencia"].map((slot) => (
-                <div key={slot} className="min-h-[120px] rounded-2xl border border-white/10 bg-[#111217] p-5">
-                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-400">{slot}</p>
-                  <p className="mt-2 text-sm text-zinc-300">Slot visual premium para composicao editorial.</p>
+              {[
+                { title: "Atendimento", body: "Reserva de horário com comodidade e organização." },
+                { title: "Detalhes", body: "Cuidado nas finas etapas que fazem diferença no resultado." },
+                { title: "Marca", body: "Identidade visual forte e uma experiência memorável." },
+                { title: "Experiência", body: "Cada visita preparada para deixar uma boa impressão." },
+              ].map((item) => (
+                <div key={item.title} className="min-h-[120px] rounded-2xl border border-white/10 bg-[#111217] p-5">
+                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-400">{item.title}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-zinc-300">{item.body}</p>
                 </div>
               ))}
             </div>
@@ -467,7 +499,9 @@ export default async function BarbershopPublicPage({
               <p className="text-xs uppercase tracking-[0.24em] text-[#c9a84c]">Contato</p>
               <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Encontre a barbearia</h2>
               <p className="mt-4 text-sm leading-relaxed text-zinc-300">
-                {hasPublicAddress ? fullAddress : "Localizacao em atualizacao. Fale com a barbearia para mais detalhes."}
+                {hasPublicAddress
+                  ? fullAddress
+                  : "Endereço em atualização. Nossa equipe pode te orientar com mais detalhes sobre a localização e o atendimento."}
               </p>
               {barbershop.phone && <p className="mt-2 text-sm text-zinc-200">Telefone / WhatsApp: {barbershop.phone}</p>}
 
@@ -502,10 +536,12 @@ export default async function BarbershopPublicPage({
             </div>
 
             <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111217] p-7">
-              <p className="text-xs uppercase tracking-[0.24em] text-zinc-400">Referencia visual</p>
-              <h3 className="mt-2 text-xl font-semibold text-zinc-100">Fachada e localizacao</h3>
+              <p className="text-xs uppercase tracking-[0.24em] text-zinc-400">Localização</p>
+              <h3 className="mt-2 text-xl font-semibold text-zinc-100">Fachada, endereço e atendimento</h3>
               <div className="mt-5 h-56 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.18),transparent_35%),linear-gradient(160deg,#1b1c22_0%,#101116_100%)] p-4">
-                <p className="text-sm text-zinc-300">Espaco reservado para foto da fachada/mapa ilustrativo em proximos lotes.</p>
+                <p className="text-sm leading-relaxed text-zinc-300">
+                  A experiência começa no caminho até a barbearia, com uma chegada acolhedora e um atendimento preparado para impressionar.
+                </p>
               </div>
             </div>
           </div>
@@ -515,7 +551,7 @@ export default async function BarbershopPublicPage({
           <div className="rounded-3xl border border-[#c9a84c]/35 bg-[linear-gradient(145deg,rgba(201,168,76,.12),rgba(201,168,76,.02)_45%,rgba(8,8,10,.95))] px-6 py-10">
             <h3 className="text-3xl font-semibold text-zinc-50">Pronto para transformar seu visual?</h3>
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-zinc-300">
-              Agende online de forma rapida e pratica pelo Tem Barber.
+              Reserve seu próximo atendimento com praticidade e deixe a sua presença sempre impecável.
             </p>
             <div className="mt-6 flex justify-center">
               <Link href={`/${safeSlug}/agendar`}>

@@ -124,6 +124,17 @@ describe("P1 Vitrine Pública LOTE A3 — Redesign Editorial Premium", () => {
     expect(screen.getByTestId("mobile-sticky-cta")).toBeInTheDocument();
   });
 
+  it("T1/T2/T3/T7/T8 — remove placeholders técnicos e usa copy comercial", async () => {
+    await renderPage();
+
+    expect(screen.queryByText(/Slot visual/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Slot preparado/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Espaço reservado/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/próximos lotes/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Atendimento com hora marcada/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Atendimento com hora marcada, ambiente profissional e cuidado nos detalhes/i)).toBeInTheDocument();
+  });
+
   it("T4/T5 — WhatsApp aparece quando telefone existe e não aparece sem telefone", async () => {
     await renderPage();
     expect(screen.getByRole("link", { name: /Falar no WhatsApp/i })).toHaveAttribute("href", "https://wa.me/5517991089190");
@@ -167,14 +178,15 @@ describe("P1 Vitrine Pública LOTE A3 — Redesign Editorial Premium", () => {
           {
             ...baseMember,
             role: "OWNER",
-            bio: "Gestao Financeira",
+            bio: "Gestão Financeira",
           },
         ],
       },
     });
 
     expect(screen.getByText("Carlos Barber")).toBeInTheDocument();
-    expect(screen.getByText("Barbeiro responsavel")).toBeInTheDocument();
+    expect(screen.getByText("Barbeiro responsável")).toBeInTheDocument();
+    expect(screen.queryByText(/Gestão Financeira/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Gestao Financeira/i)).not.toBeInTheDocument();
     expect(screen.getByText("Especialista em atendimento masculino, corte e acabamento.")).toBeInTheDocument();
   });
