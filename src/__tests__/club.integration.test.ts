@@ -10,6 +10,13 @@ const describeIf = canRunIntegration ? describe : describe.skip;
 
 let prisma: PrismaClient;
 let clubOps: typeof import("@/lib/operations/club");
+let phoneSeedCounter = 0;
+
+function buildSeedPhone(label: string, prefix: string) {
+  phoneSeedCounter += 1;
+  const normalizedLabel = label.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toLowerCase();
+  return `119${prefix}${normalizedLabel}${String(phoneSeedCounter).padStart(3, "0")}`;
+}
 
 async function truncateDatabase() {
   if (!testDatabaseUrl) {
@@ -89,9 +96,9 @@ async function seedUser(name: string, phone: string) {
 async function seedTenantWithClub(label: string) {
   const shop = await seedBarbershop(label);
   
-  const ownerUser = await seedUser(`Owner ${label}`, `119911${label.charCodeAt(0)}${Math.floor(Math.random() * 1000)}`);
-  const barberUser = await seedUser(`Barbeiro ${label}`, `119922${label.charCodeAt(0)}${Math.floor(Math.random() * 1000)}`);
-  const customerUser = await seedUser(`Cliente ${label}`, `119933${label.charCodeAt(0)}${Math.floor(Math.random() * 1000)}`);
+  const ownerUser = await seedUser(`Owner ${label}`, buildSeedPhone(label, "11"));
+  const barberUser = await seedUser(`Barbeiro ${label}`, buildSeedPhone(label, "22"));
+  const customerUser = await seedUser(`Cliente ${label}`, buildSeedPhone(label, "33"));
 
   const owner = await prisma.barbershopMember.create({
     data: { barbershopId: shop.id, userId: ownerUser.id, role: "OWNER" },
