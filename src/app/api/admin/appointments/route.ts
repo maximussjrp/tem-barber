@@ -138,7 +138,22 @@ export async function GET(request: NextRequest) {
           include: { service: { select: { id: true, name: true, durationMin: true } } },
         },
         comandas: {
-          select: { id: true, status: true, total: true, paidTotal: true },
+          select: {
+            id: true,
+            status: true,
+            total: true,
+            paidTotal: true,
+            items: {
+              select: {
+                id: true,
+                type: true,
+                status: true,
+                quantity: true,
+                serviceId: true,
+                productId: true,
+              },
+            },
+          },
         },
         whatsappConfirmation: {
           select: {

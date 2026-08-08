@@ -13,6 +13,7 @@ type Item = {
   total: string;
   serviceId?: string | null;
   productId?: string | null;
+  executorId?: string | null;
   executor?: { id: string; user: { name: string } } | null;
   clubBenefitRequested?: boolean;
   requestedClubPlanBenefitId?: string | null;
@@ -48,10 +49,11 @@ interface Props {
   onConclude: (id: string) => void;
   onCancel: (id: string) => void;
   onUpdate?: (id: string, body: { clubBenefitRequested: boolean; requestedClubPlanBenefitId: string | null }) => void;
+  onAddDuplicate?: (item: Item) => void;
   clubBalance?: ClubBalance | null;
 }
 
-export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCancel, onUpdate, clubBalance }: Props) {
+export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCancel, onUpdate, onAddDuplicate, clubBalance }: Props) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   function brl(value: string | number) {
@@ -121,11 +123,24 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
             {item.executor && ` • ${item.executor.user.name}`}
           </p>
           {(item.type === "SERVICE" || item.type === "PRODUCT") && (
-            <p className="text-xs text-text-secondary mt-1">
-              {Number(item.quantity)}x {brl(item.unitPrice)}
-              {clubCovered && <span className="text-emerald-400 font-bold ml-1">(Coberto pelo Clube)</span>}
-              {clubDiscount > 0 && <span className="text-emerald-400 font-bold ml-1">(-{brl(clubDiscount)} Desconto Clube)</span>}
-            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-xs text-text-secondary">
+                {Number(item.quantity)}x {brl(item.unitPrice)}
+                {clubCovered && <span className="text-emerald-400 font-bold ml-1">(Coberto pelo Clube)</span>}
+                {clubDiscount > 0 && <span className="text-emerald-400 font-bold ml-1">(-{brl(clubDiscount)} Desconto Clube)</span>}
+              </p>
+              {!comandaClosed && !isCancelled && onAddDuplicate && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAddDuplicate(item)}
+                  title={item.type === "SERVICE" ? "Adicionar mais um deste serviço" : "Adicionar mais um deste produto"}
+                  className="w-5 h-5 flex items-center justify-center text-xs font-bold rounded-full bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-[var(--text-inverse)] transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  +
+                </button>
+              )}
+            </div>
           )}
           
           {!comandaClosed && !isCancelled && (item.type === "SERVICE" || item.type === "PRODUCT") && (

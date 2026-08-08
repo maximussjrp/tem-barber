@@ -492,6 +492,21 @@ export default function ComandaDetailPage() {
                     onConclude={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "DONE" }, "PATCH")}
                     onCancel={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "CANCELLED" }, "PATCH")}
                     onUpdate={(itemId, body) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, body, "PATCH")}
+                    onAddDuplicate={async (item) => {
+                      if (item.type === "SERVICE" && item.serviceId) {
+                        await mutate(`/api/admin/comandas/${id}/items`, {
+                          type: "SERVICE",
+                          serviceId: item.serviceId,
+                          executorId: item.executor?.id || item.executorId || "",
+                        });
+                      } else if (item.type === "PRODUCT" && item.productId) {
+                        await mutate(`/api/admin/comandas/${id}/items`, {
+                          type: "PRODUCT",
+                          productId: item.productId,
+                          quantity: 1,
+                        });
+                      }
+                    }}
                   />
                 ))}
               </div>

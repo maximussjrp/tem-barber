@@ -42,7 +42,13 @@ interface Appointment {
   customer: { id: string; name: string; phone: string };
   barber: { id: string; user: { name: string; avatarUrl: string | null } };
   services: AppService[];
-  comandas?: { id: string; status: string; total: string; paidTotal: string }[];
+  comandas?: {
+    id: string;
+    status: string;
+    total: string;
+    paidTotal: string;
+    items?: { id: string; type: string; status: string; quantity: string }[];
+  }[];
   whatsappConfirmation?: AppointmentWhatsappConfirmation | null;
 }
 
@@ -2344,22 +2350,51 @@ function CalendarGrid({
 
                 {/* Appointments and Schedule Blocks */}
                 <div className="relative" style={{ height: totalHeight }}>
-                  {slotMinutes.map((minutes) => (
-                    <button
-                      key={`${m.id}-${minutes}`}
-                      type="button"
-                      onClick={() =>
-                        onEmptySlotClick({
-                          memberId: m.id,
-                          dateTime: minutesToLocalInput(currentDate, minutes),
-                        })
-                      }
-                      className="absolute left-0 right-0 z-0 text-left hover:bg-amber-500/5 focus:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-500/50 transition-colors"
-                      style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
-                      title={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
-                      aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
-                    />
-                  ))}
+                  {slotMinutes.map((minutes) => {
+                    const startMinutes = m.startTime ? (() => {
+                      const [h, min] = m.startTime.split(":").map(Number);
+                      return h * 60 + min;
+                    })() : null;
+
+                    const endMinutes = m.endTime ? (() => {
+                      const [h, min] = m.endTime.split(":").map(Number);
+                      return h * 60 + min;
+                    })() : null;
+
+                    const isOutOfWorkHours = startMinutes === null || endMinutes === null || minutes < startMinutes || minutes >= endMinutes;
+
+                    if (isOutOfWorkHours) {
+                      return (
+                        <div
+                          key={`${m.id}-${minutes}`}
+                          className="absolute left-0 right-0 z-0 bg-stone-950/40 cursor-not-allowed bg-[repeating-linear-gradient(45deg,rgba(0,0,0,0.1),rgba(0,0,0,0.1)_6px,transparent_6px,transparent_12px)] flex items-center justify-center"
+                          style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
+                          title="Fora do expediente"
+                        >
+                          <span className="text-[9px] font-semibold text-stone-600 uppercase tracking-wider select-none">
+                            Fora de expediente
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={`${m.id}-${minutes}`}
+                        type="button"
+                        onClick={() =>
+                          onEmptySlotClick({
+                            memberId: m.id,
+                            dateTime: minutesToLocalInput(currentDate, minutes),
+                          })
+                        }
+                        className="absolute left-0 right-0 z-0 text-left hover:bg-amber-500/5 focus:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-500/50 transition-colors"
+                        style={{ top: minutesToTop(minutes), height: ROW_HEIGHT }}
+                        title={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                        aria-label={`Novo agendamento ${m.user.name} ${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`}
+                      />
+                    );
+                  })}
 
                   {/* Schedule Blocks */}
                   {(scheduleBlocks.filter((b) => b.memberId === m.id)).map((b) => {
@@ -2625,9 +2660,33 @@ function AgendamentosContent() {
 
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
   const pending = appointments.filter((a) => a.status === "PENDING").length;
-  const revenue = appointments
-    .filter((a) => a.status === "COMPLETED")
-    .reduce((s, a) => s + parseFloat(a.totalPrice), 0);
+
+  let totalServices = 0;
+  let revenue = 0;
+
+  for (const a of appointments) {
+    if (a.status === "CANCELLED") {
+      continue;
+    }
+    const comanda = a.comandas?.[0];
+    if (comanda) {
+      if (comanda.status !== "CANCELLED") {
+        revenue += parseFloat(comanda.total || "0");
+        const activeItems = comanda.items?.filter(
+          (item) =>
+            (item.type === "SERVICE" || item.type === "PRODUCT") &&
+            item.status !== "CANCELLED"
+        ) ?? [];
+        totalServices += activeItems.reduce(
+          (sum, item) => sum + parseFloat(item.quantity || "0"),
+          0
+        );
+      }
+    } else {
+      revenue += parseFloat(a.totalPrice || "0");
+      totalServices += a.services?.length ?? 0;
+    }
+  }
 
   const shareMembersData = members.map((m) => ({
     memberName: m.user.name,
@@ -2745,7 +2804,7 @@ function AgendamentosContent() {
             {/* Row 3 on mobile: Stats & Actions */}
             <div className="flex items-center justify-between md:justify-start gap-3 w-full md:w-auto md:ml-auto flex-wrap">
               <div className="flex items-center gap-2 text-stone-500 text-xs">
-                <span>{appointments.length} tot.</span>
+                <span>{totalServices} tot.</span>
                 {confirmed > 0 && <span className="text-sky-400">{confirmed} conf.</span>}
                 {pending > 0 && <span className="text-amber-400">{pending} pend.</span>}
                 <span className="text-emerald-400 font-semibold">
