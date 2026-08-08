@@ -18,6 +18,7 @@ import {
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
 import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
+import { stripMetadataFromNotes, buildNotesWithMetadata } from "@/lib/appointments/notes-metadata";
 import {
   findBarbershopCustomerById,
   normalizePhone,
@@ -50,6 +51,7 @@ interface SessionUser {
 interface PublicBookingBody {
   memberId?: string;
   serviceIds?: string[];
+  services?: { serviceId: string; quantity: number }[];
   dateTime?: string;
   customerName?: string;
   customerPhone?: string;
@@ -218,7 +220,7 @@ export async function POST(
     return NextResponse.json({ error: "Body invalido." }, { status: 400 });
   }
 
-  const { memberId, serviceIds, dateTime, customerName, customerPhone, notes, bookingMode } = body;
+  const { memberId, serviceIds, services: bodyServices, dateTime, customerName, customerPhone, notes, bookingMode } = body;
 
   if (bookingMode === "FIT_IN") {
     return NextResponse.json(
@@ -249,9 +251,9 @@ export async function POST(
     );
   }
 
-  if (!memberId || !serviceIds?.length || !dateTime) {
+  if (!memberId || (!serviceIds?.length && !bodyServices?.length) || !dateTime) {
     return NextResponse.json(
-      { error: "memberId, serviceIds e dateTime sao obrigatorios." },
+      { error: "memberId, services e dateTime sao obrigatorios." },
       { status: 400 }
     );
   }
@@ -330,9 +332,10 @@ export async function POST(
   try {
     idempotencyKey = getIdempotencyKeyFromRequest(request, body);
     requestHash = hashPublicBookingPayload({
-      memberId,
-      serviceIds,
-      dateTime,
+      memberId: memberId || "",
+      serviceIds: serviceIds || [],
+      services: bodyServices,
+      dateTime: dateTime || "",
       customerName,
       customerPhone,
       notes,
@@ -373,10 +376,43 @@ export async function POST(
         });
       }
 
+      let rawServices: { serviceId: string; quantity: number }[] = [];
+      if (bodyServices && bodyServices.length > 0) {
+        bodyServices.forEach((s) => {
+          if (s.serviceId) {
+            const qty = Number(s.quantity) || 1;
+            rawServices.push({ serviceId: s.serviceId, quantity: Math.min(5, Math.max(1, qty)) });
+          }
+        });
+      } else if (serviceIds && serviceIds.length > 0) {
+        const uniqueIds = Array.from(new Set(serviceIds));
+        rawServices = uniqueIds.map((id) => ({ serviceId: id, quantity: 1 }));
+      }
+
+      // Aggregate duplicate serviceIds, Cap at 5
+      const serviceQtyMap = new Map<string, number>();
+      rawServices.forEach((s) => {
+        const existing = serviceQtyMap.get(s.serviceId) ?? 0;
+        serviceQtyMap.set(s.serviceId, Math.min(5, existing + s.quantity));
+      });
+
+      const normalizedServices = Array.from(serviceQtyMap.entries()).map(([serviceId, quantity]) => ({
+        serviceId,
+        quantity,
+      }));
+
+      const targetServiceIds = normalizedServices.map((s) => s.serviceId);
+
       const { services } = await validateProfessionalServiceCapability(tx, {
         barbershopId: barbershop.id,
         memberId,
-        serviceIds,
+        serviceIds: targetServiceIds,
+      });
+
+      // Apply quantities
+      const qtyMap = new Map(normalizedServices.map(s => [s.serviceId, s.quantity]));
+      services.forEach(s => {
+        s.quantity = qtyMap.get(s.id) ?? 1;
       });
 
       const { totalPrice, durationMin } = calculateAppointmentTotals(services);
@@ -471,6 +507,15 @@ export async function POST(
         };
       }
 
+      const cleanUserNotes = stripMetadataFromNotes(notes);
+      const activeQtyMap: Record<string, number> = {};
+      normalizedServices.forEach((s) => {
+        if (s.quantity > 1) {
+          activeQtyMap[s.serviceId] = s.quantity;
+        }
+      });
+      const updatedNotes = buildNotesWithMetadata(cleanUserNotes, activeQtyMap);
+
       const appointment = await createAppointmentWithScheduleLock(tx, {
         barbershopId: barbershop.id,
         memberId,
@@ -479,7 +524,7 @@ export async function POST(
         totalPrice,
         durationMin,
         services,
-        notes: notes?.trim() || null,
+        notes: updatedNotes,
       });
 
       // Upsert vínculo do cliente com a barbearia

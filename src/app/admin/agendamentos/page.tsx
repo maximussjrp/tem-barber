@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import WhatsAppShareSlots from "@/components/admin/WhatsAppShareSlots";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
+import { extractServiceQuantities, stripMetadataFromNotes } from "@/lib/appointments/notes-metadata";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ interface AppointmentWhatsappConfirmation {
 }
 
 interface AppService {
+  serviceId?: string;
   service: { id: string; name: string; durationMin: number };
   priceApplied: string;
 }
@@ -434,16 +436,27 @@ export function AppointmentModal({
     appointment?.bookingMode ?? initialBookingMode ?? "NORMAL"
   );
   const [memberId, setMemberId] = useState(appointment?.barber.id ?? initialState?.memberId ?? "");
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
-    appointment
-      ? appointment.services
-          .map((s) => {
-            const match = barbershopServices.find((bs) => bs.name === s.service.name);
-            return match?.id ?? "";
-          })
-          .filter(Boolean)
-      : initialState?.serviceIds ?? []
-  );
+  const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>(() => {
+    if (appointment) {
+      const qMap = extractServiceQuantities(appointment.notes);
+      const initialQtys: Record<string, number> = {};
+      appointment.services.forEach((s) => {
+        const match = barbershopServices.find((bs) => bs.name === s.service.name);
+        if (match) {
+          initialQtys[match.id] = qMap[s.serviceId ?? match.id] ?? 1;
+        }
+      });
+      return initialQtys;
+    }
+    if (initialState?.serviceIds) {
+      const initialQtys: Record<string, number> = {};
+      initialState.serviceIds.forEach((id) => {
+        if (id) initialQtys[id] = 1;
+      });
+      return initialQtys;
+    }
+    return {};
+  });
   const [dateTime, setDateTime] = useState(() => {
     if (appointment) {
       const d = new Date(appointment.dateTime);
@@ -469,7 +482,7 @@ export function AppointmentModal({
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const [phoneSuggestion, setPhoneSuggestion] = useState<CustomerSearchResult | null>(null);
-  const [notes, setNotes] = useState(appointment?.notes ?? "");
+  const [notes, setNotes] = useState(stripMetadataFromNotes(appointment?.notes) ?? "");
   const [fitInReason, setFitInReason] = useState(appointment?.fitInReason ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -577,9 +590,9 @@ export function AppointmentModal({
   const canShowPhoneSuggestion = customerPhone.replace(/\D/g, "").length >= 5;
   const canShowCustomerResults = customerLookupQuery.trim().length > 0 && !selectedCustomer;
 
-  const selectedDurationMin = selectedServiceIds.reduce((sum, serviceId) => {
+  const selectedDurationMin = Object.entries(serviceQuantities).reduce((sum, [serviceId, qty]) => {
     const service = barbershopServices.find((item) => item.id === serviceId);
-    return sum + (service?.durationMin ?? 0);
+    return sum + (service?.durationMin ?? 0) * qty;
   }, 0);
 
   const fitInConflicts: FitInConflictPreview[] =
@@ -610,10 +623,43 @@ export function AppointmentModal({
           })
       : [];
 
-  const toggleService = (id: string) =>
-    setSelectedServiceIds((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
-    );
+  const selectedServiceIds = Object.keys(serviceQuantities);
+
+  const toggleService = (id: string) => {
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current > 0) {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      } else {
+        return { ...prev, [id]: 1 };
+      }
+    });
+  };
+
+  const incrementService = (id: string) => {
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current < 5) {
+        return { ...prev, [id]: current + 1 };
+      }
+      return prev;
+    });
+  };
+
+  const decrementService = (id: string) => {
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current <= 1) {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      } else {
+        return { ...prev, [id]: current - 1 };
+      }
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -640,6 +686,11 @@ export function AppointmentModal({
       }
     }
 
+    const servicesPayload = Object.entries(serviceQuantities).map(([serviceId, quantity]) => ({
+      serviceId,
+      quantity,
+    }));
+
     setSaving(true);
     try {
       let res: Response;
@@ -647,7 +698,7 @@ export function AppointmentModal({
         res = await fetch(`/api/admin/appointments/${appointment!.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ memberId, serviceIds: selectedServiceIds, dateTime, notes }),
+          body: JSON.stringify({ memberId, services: servicesPayload, dateTime, notes }),
         });
       } else {
         res = await fetch("/api/admin/appointments", {
@@ -655,7 +706,7 @@ export function AppointmentModal({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             memberId,
-            serviceIds: selectedServiceIds,
+            services: servicesPayload,
             dateTime,
             customerId: selectedCustomer?.id,
             customerName: customerName.trim() || undefined,
@@ -677,9 +728,15 @@ export function AppointmentModal({
 
 
   const getSelectedServicesPreview = () => {
-    const selectedServices = selectedServiceIds
-      .map(id => barbershopServices.find(s => s.id === id))
-      .filter(Boolean) as Service[];
+    const selectedServices: Service[] = [];
+    Object.entries(serviceQuantities).forEach(([id, qty]) => {
+      const svc = barbershopServices.find(s => s.id === id);
+      if (svc && qty > 0) {
+        for (let i = 0; i < qty; i++) {
+          selectedServices.push(svc);
+        }
+      }
+    });
 
     let totalOriginal = 0;
     let totalToday = 0;
@@ -884,25 +941,59 @@ export function AppointmentModal({
                     }
                   }
 
+                  const qty = serviceQuantities[s.id] ?? 0;
+
                   return (
-                    <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"}`}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleService(s.id)} title={s.name} className="accent-amber-500" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-stone-300 truncate">{s.name}</span>
-                          {clubBadge}
+                    <label key={s.id} className={`flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"}`}>
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleService(s.id)}
+                          title={s.name}
+                          className="accent-amber-500 cursor-pointer"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-stone-300 truncate">{s.name}</span>
+                            {clubBadge}
+                          </div>
                         </div>
+                        <span className="text-xs text-stone-500 shrink-0">{s.durationMin}min</span>
                       </div>
-                      <span className="text-xs text-stone-500 shrink-0">{s.durationMin}min</span>
-                      <div className="text-right shrink-0">
-                        {strikethroughPriceText && (
-                          <span className="text-xs text-stone-500 line-through mr-1.5 tabular-nums">
-                            {strikethroughPriceText}
-                          </span>
+
+                      <div className="flex items-center gap-4 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {checked && (
+                          <div className="flex items-center bg-stone-900 border border-stone-800 rounded-lg px-1.5 py-0.5" onClick={(e) => e.preventDefault()}>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); decrementService(s.id); }}
+                              className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                            >
+                              -
+                            </button>
+                            <span className="text-xs text-stone-200 font-semibold px-1 min-w-[12px] text-center">
+                              {qty}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); incrementService(s.id); }}
+                              className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
                         )}
-                        <span className="text-xs text-amber-400 font-semibold tabular-nums">
-                          {priceText}
-                        </span>
+                        <div className="text-right min-w-[70px]">
+                          {strikethroughPriceText && (
+                            <span className="text-xs text-stone-500 line-through block tabular-nums">
+                              {strikethroughPriceText}
+                            </span>
+                          )}
+                          <span className="text-xs text-amber-400 font-semibold tabular-nums">
+                            {priceText}
+                          </span>
+                        </div>
                       </div>
                     </label>
                   );
@@ -1213,7 +1304,11 @@ function DeleteAppointmentModal({
     }
   };
 
-  const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
+  const quantitiesMap = extractServiceQuantities(appointment.notes);
+  const serviceNames = appointment.services.map((s) => {
+    const qty = quantitiesMap[s.serviceId ?? s.service?.id] ?? 1;
+    return qty > 1 ? `${s.service.name} x${qty}` : s.service.name;
+  }).join(", ");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
@@ -1676,7 +1771,16 @@ export function AppointmentBlock({
     const benefits = clubBalance?.benefits ? clubBalance.benefits.map((b) => ({ ...b })) : [];
     const isInactive = !!clubBalance?.status && INACTIVE_CLUB_STATUSES.includes(clubBalance.status);
 
-    const processed = appointment.services.map(s => {
+    const quantitiesMap = extractServiceQuantities(appointment.notes);
+    const expandedServices: typeof appointment.services = [];
+    appointment.services.forEach((s) => {
+      const qty = quantitiesMap[s.service.id] ?? 1;
+      for (let i = 0; i < qty; i++) {
+        expandedServices.push(s);
+      }
+    });
+
+    const processed = expandedServices.map(s => {
       const originalPrice = parseFloat(s.priceApplied);
       totalOriginal += originalPrice;
 
@@ -1745,7 +1849,11 @@ export function AppointmentBlock({
   const primaryStatus = getPrimaryStatusPresentation(appointmentWithEffectiveWhatsapp);
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
   const canConfirmWhatsapp = currentRole === "OWNER" || currentRole === "MANAGER";
-  const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
+  const quantitiesMap = extractServiceQuantities(appointment.notes);
+  const serviceNames = appointment.services.map((s) => {
+    const qty = quantitiesMap[s.serviceId ?? s.service?.id] ?? 1;
+    return qty > 1 ? `${s.service.name} x${qty}` : s.service.name;
+  }).join(", ");
   // Lógica de Lembrete WhatsApp
   const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
   const { date: waDate, time: waTime } = formatAppointmentDateTimeForMessage(appointment.dateTime);
@@ -2003,8 +2111,10 @@ export function AppointmentBlock({
               </div>
             </div>
 
-            {appointment.notes && (
-              <p className="text-sm text-[var(--text-muted)] italic border-l-2 border-[var(--gold-border)] pl-3">{appointment.notes}</p>
+            {stripMetadataFromNotes(appointment.notes) && (
+              <p className="text-sm text-[var(--text-muted)] italic border-l-2 border-[var(--gold-border)] pl-3">
+                {stripMetadataFromNotes(appointment.notes)}
+              </p>
             )}
 
             {appointment.bookingMode === "FIT_IN" && appointment.fitInReason && (

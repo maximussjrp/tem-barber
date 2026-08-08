@@ -4,10 +4,12 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import { todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
+import { extractServiceQuantities } from "@/lib/appointments/notes-metadata";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface AppointmentService {
+  serviceId?: string;
   service: { name: string; durationMin: number };
   priceApplied: string;
 }
@@ -123,7 +125,11 @@ function AppointmentCard({
     }
   };
 
-  const serviceNames = appointment.services.map((s) => s.service.name).join(", ");
+  const quantitiesMap = extractServiceQuantities(appointment.notes);
+  const serviceNames = appointment.services.map((s) => {
+    const qty = quantitiesMap[s.serviceId ?? ""] ?? 1;
+    return qty > 1 ? `${s.service.name} x${qty}` : s.service.name;
+  }).join(", ");
   const endTime = (() => {
     const start = new Date(appointment.dateTime);
     start.setUTCMinutes(start.getUTCMinutes() + appointment.durationMin);

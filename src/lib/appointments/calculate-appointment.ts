@@ -2,12 +2,13 @@ export interface AppointmentServiceInput {
   id: string;
   price: { toString(): string } | number | string;
   durationMin: number;
+  quantity?: number;
 }
 
 export function calculateAppointmentTotals(services: AppointmentServiceInput[]) {
   return {
-    totalPrice: services.reduce((sum, service) => sum + Number(service.price), 0),
-    durationMin: services.reduce((sum, service) => sum + service.durationMin, 0),
+    totalPrice: services.reduce((sum, service) => sum + Number(service.price) * (service.quantity ?? 1), 0),
+    durationMin: services.reduce((sum, service) => sum + service.durationMin * (service.quantity ?? 1), 0),
   };
 }
 

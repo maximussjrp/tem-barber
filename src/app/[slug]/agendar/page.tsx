@@ -110,7 +110,8 @@ function BookingWizard() {
   const [loadingProfile, setLoadingProfile] = useState(Boolean(safeSlug));
 
   // Selections
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
+  const selectedServiceIds = Object.keys(serviceQuantities);
   const [selectedMemberId, setSelectedMemberId] = useState<string>("any");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [availabilityResults, setAvailabilityResults] = useState<AvailabilityResult[]>([]);
@@ -196,8 +197,8 @@ function BookingWizard() {
     !clientLoggedOut && isPublicClientAuthLevel(sessionUser?.authLevel);
 
   const selectedServices = allServices.filter((s) => selectedServiceIds.includes(s.id));
-  const totalPrice = selectedServices.reduce((s, svc) => s + Number(svc.price), 0);
-  const totalDuration = selectedServices.reduce((s, svc) => s + svc.durationMin, 0);
+  const totalPrice = selectedServices.reduce((s, svc) => s + Number(svc.price) * (serviceQuantities[svc.id] ?? 1), 0);
+  const totalDuration = selectedServices.reduce((s, svc) => s + svc.durationMin * (serviceQuantities[svc.id] ?? 1), 0);
 
   // Eligible members: perform ALL selected services
   // BarberService links are the source of truth for online booking eligibility.
@@ -217,7 +218,11 @@ function BookingWizard() {
       setSelectedSlot(null);
 
       const memberId = selectedMemberId !== "any" ? selectedMemberId : undefined;
-      const params = new URLSearchParams({ date, serviceIds: selectedServiceIds.join(",") });
+      const servicesParam = Object.entries(serviceQuantities)
+        .map(([serviceId, qty]) => `${serviceId}:${qty}`)
+        .join(",");
+
+      const params = new URLSearchParams({ date, services: servicesParam });
       if (memberId) params.set("memberId", memberId);
 
       try {
@@ -228,7 +233,7 @@ function BookingWizard() {
         setLoadingSlots(false);
       }
     },
-    [slug, selectedServiceIds, selectedMemberId]
+    [slug, selectedServiceIds, serviceQuantities, selectedMemberId]
   );
 
   useEffect(() => {
@@ -246,9 +251,49 @@ function BookingWizard() {
   // ─── Step 0: Services ─────────────────────────────────────────────────────
 
   const toggleService = (id: string) => {
-    setSelectedServiceIds((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
-    );
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current > 0) {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      } else {
+        return { ...prev, [id]: 1 };
+      }
+    });
+    setSelectedMemberId("any");
+    setSelectedDate("");
+    setSelectedSlot(null);
+    setAvailabilityResults([]);
+    resetBookingAttempt();
+  };
+
+  const incrementService = (id: string) => {
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current < 5) {
+        return { ...prev, [id]: current + 1 };
+      }
+      return prev;
+    });
+    setSelectedMemberId("any");
+    setSelectedDate("");
+    setSelectedSlot(null);
+    setAvailabilityResults([]);
+    resetBookingAttempt();
+  };
+
+  const decrementService = (id: string) => {
+    setServiceQuantities((prev) => {
+      const current = prev[id] ?? 0;
+      if (current <= 1) {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      } else {
+        return { ...prev, [id]: current - 1 };
+      }
+    });
     setSelectedMemberId("any");
     setSelectedDate("");
     setSelectedSlot(null);
@@ -350,7 +395,10 @@ function BookingWizard() {
         },
         body: JSON.stringify({
           memberId: selectedSlot.memberId,
-          serviceIds: selectedServiceIds,
+          services: Object.entries(serviceQuantities).map(([serviceId, quantity]) => ({
+            serviceId,
+            quantity,
+          })),
           dateTime: dt.toISOString(),
           customerName: customerName.trim() || undefined,
           customerPhone: customerPhone.replace(/\D/g, "") || undefined,
@@ -652,35 +700,62 @@ function BookingWizard() {
                 </p>
                 <div className="bg-stone-900 border border-stone-800 rounded-xl divide-y divide-stone-800">
                   {cat.services.map((svc) => {
-                    const checked = selectedServiceIds.includes(svc.id);
+                    const qty = serviceQuantities[svc.id] ?? 0;
+                    const checked = qty > 0;
                     return (
                       <label
                         key={svc.id}
-                        className={`flex items-center gap-4 px-4 py-3 cursor-pointer transition-colors ${
+                        className={`flex items-center justify-between gap-4 px-4 py-3 cursor-pointer transition-colors ${
                           checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"
                         }`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleService(svc.id)}
-                          title={svc.name}
-                          className="accent-amber-500 w-4 h-4"
-                        />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-stone-200">{svc.name}</p>
-                          {svc.description && (
-                            <p className="text-xs text-stone-500 mt-0.5">{svc.description}</p>
-                          )}
+                        <div className="flex items-center gap-4 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleService(svc.id)}
+                            title={svc.name}
+                            className="accent-amber-500 w-4 h-4 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-stone-200 truncate">{svc.name}</p>
+                            {svc.description && (
+                              <p className="text-xs text-stone-500 mt-0.5 line-clamp-1">{svc.description}</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-sm font-bold text-amber-400">
-                            {Number(svc.price).toLocaleString("pt-BR", {
-                              style: "currency",
-                              currency: "BRL",
-                            })}
-                          </p>
-                          <p className="text-xs text-stone-600">{svc.durationMin}min</p>
+
+                        <div className="flex items-center gap-4 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {checked && (
+                            <div className="flex items-center bg-stone-950 border border-stone-800 rounded-lg px-1.5 py-0.5" onClick={(e) => e.preventDefault()}>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); decrementService(svc.id); }}
+                                className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                              >
+                                -
+                              </button>
+                              <span className="text-xs text-stone-200 font-semibold px-1 min-w-[12px] text-center">
+                                {qty}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); incrementService(svc.id); }}
+                                className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                              >
+                                +
+                              </button>
+                            </div>
+                          )}
+                          <div className="text-right min-w-[80px]">
+                            <p className="text-sm font-bold text-amber-400">
+                              {Number(svc.price).toLocaleString("pt-BR", {
+                                style: "currency",
+                                currency: "BRL",
+                              })}
+                            </p>
+                            <p className="text-xs text-stone-600">{svc.durationMin}min</p>
+                          </div>
                         </div>
                       </label>
                     );

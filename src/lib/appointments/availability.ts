@@ -7,6 +7,7 @@ export interface GetAvailabilityParams {
   barbershopId: string;
   dateStr: string; // YYYY-MM-DD
   serviceIds: string[];
+  services?: { serviceId: string; quantity: number }[];
   memberId?: string; // se undefined, retorna para todos disponíveis
 }
 
@@ -20,6 +21,7 @@ export async function getAvailableSlots({
   barbershopId,
   dateStr,
   serviceIds,
+  services,
   memberId,
 }: GetAvailabilityParams): Promise<{ results: AvailabilityResult[]; totalDuration: number }> {
   const capability = await findEligibleMembersForServices(prisma, {
@@ -27,9 +29,17 @@ export async function getAvailableSlots({
     serviceIds,
     memberId,
   });
-  const totalDuration = capability.services.reduce((s, svc) => s + svc.durationMin, 0);
+
   if (!capability.services.length) {
     return { results: [], totalDuration: 0 };
+  }
+
+  let totalDuration = 0;
+  if (services && services.length > 0) {
+    const serviceQtyMap = new Map(services.map(s => [s.serviceId, s.quantity]));
+    totalDuration = capability.services.reduce((s, svc) => s + svc.durationMin * (serviceQtyMap.get(svc.id) ?? 1), 0);
+  } else {
+    totalDuration = capability.services.reduce((s, svc) => s + svc.durationMin, 0);
   }
 
   // 2. Parse target date to UTC edges (so it matches DB exactly for that date)

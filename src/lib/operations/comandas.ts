@@ -42,6 +42,8 @@ export class OperationalError extends Error {
   }
 }
 
+import { extractServiceQuantities } from "../appointments/notes-metadata";
+
 export async function ensureComandaForAppointment(
   tx: Prisma.TransactionClient,
   input: {
@@ -71,6 +73,8 @@ export async function ensureComandaForAppointment(
     throw new OperationalError("APPOINTMENT_NOT_FOUND", "Agendamento nao encontrado.", 404);
   }
 
+  const quantitiesMap = extractServiceQuantities(appointment.notes);
+
   const itemsToCreate = [];
   for (const item of appointment.services) {
     let clubBenefitRequested = false;
@@ -94,13 +98,19 @@ export async function ensureComandaForAppointment(
       // Keep comanda creation available even when club preview is unavailable.
     }
 
+    const qty = quantitiesMap[item.serviceId] ?? 1;
+    const itemTotal = calculateItemTotal({
+      quantity: qty,
+      unitPrice: item.priceApplied,
+    });
+
     itemsToCreate.push({
       barbershopId: input.barbershopId,
       type: "SERVICE" as const,
       description: item.service.name,
-      quantity: 1,
+      quantity: qty,
       unitPrice: item.priceApplied,
-      total: item.priceApplied,
+      total: itemTotal,
       serviceId: item.serviceId,
       executorId: appointment.memberId,
       clubBenefitRequested,

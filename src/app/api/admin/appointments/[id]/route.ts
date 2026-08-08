@@ -16,6 +16,11 @@ import {
 import { rescheduleAppointmentWithScheduleLock } from "@/lib/appointments/reschedule-appointment";
 import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
 import { lockAppointmentSchedule } from "@/lib/appointments/appointment-lock";
+import {
+  extractServiceQuantities,
+  stripMetadataFromNotes,
+  buildNotesWithMetadata,
+} from "@/lib/appointments/notes-metadata";
 
 const VALID_STATUSES = ["PENDING", "CONFIRMED", "COMPLETED", "NO_SHOW", "CANCELLED"] as const;
 type ValidStatus = (typeof VALID_STATUSES)[number];
@@ -101,7 +106,12 @@ export async function GET(
     return NextResponse.json({ error: "Agendamento não encontrado." }, { status: 404 });
   }
 
-  return NextResponse.json(appointment);
+  const cleaned = {
+    ...appointment,
+    notes: stripMetadataFromNotes(appointment.notes),
+  };
+
+  return NextResponse.json(cleaned);
 }
 
 // PUT /api/admin/appointments/[id] — full edit (reschedule, change barber/services)
@@ -122,6 +132,7 @@ export async function PUT(
   let body: {
     memberId?: string;
     serviceIds?: string[];
+    services?: { serviceId: string; quantity: number }[];
     dateTime?: string;
     notes?: string;
   };
@@ -132,7 +143,7 @@ export async function PUT(
     return NextResponse.json({ error: "Body inválido." }, { status: 400 });
   }
 
-  const { memberId, serviceIds, dateTime, notes } = body;
+  const { memberId, serviceIds, services: bodyServices, dateTime, notes } = body;
 
   const existing = await prisma.appointment.findFirst({
     where: { id, barbershopId },
@@ -153,11 +164,39 @@ export async function PUT(
   let totalPrice = Number(existing.totalPrice);
   let durationMin = existing.durationMin;
 
+  let rawServices: { serviceId: string; quantity: number }[] = [];
+  let isServiceListModified = false;
+
+  if (bodyServices && bodyServices.length > 0) {
+    isServiceListModified = true;
+    bodyServices.forEach((s) => {
+      if (s.serviceId) {
+        const qty = Number(s.quantity) || 1;
+        rawServices.push({ serviceId: s.serviceId, quantity: Math.min(5, Math.max(1, qty)) });
+      }
+    });
+  } else if (serviceIds && serviceIds.length > 0) {
+    isServiceListModified = true;
+    const uniqueIds = Array.from(new Set(serviceIds));
+    rawServices = uniqueIds.map((id) => ({ serviceId: id, quantity: 1 }));
+  }
+
+  // Aggregate duplicate serviceIds, Cap at 5
+  const serviceQtyMap = new Map<string, number>();
+  rawServices.forEach((s) => {
+    const existingQty = serviceQtyMap.get(s.serviceId) ?? 0;
+    serviceQtyMap.set(s.serviceId, Math.min(5, existingQty + s.quantity));
+  });
+
+  const normalizedServices = Array.from(serviceQtyMap.entries()).map(([serviceId, quantity]) => ({
+    serviceId,
+    quantity,
+  }));
+
   const targetMemberId = memberId ?? existing.memberId;
-  const targetServiceIds =
-    serviceIds && serviceIds.length > 0
-      ? serviceIds
-      : existing.services.map((service) => service.serviceId);
+  const targetServiceIds = isServiceListModified
+    ? normalizedServices.map((s) => s.serviceId)
+    : existing.services.map((service) => service.serviceId);
   const targetDateTime = dateTime
     ? new Date(dateTime.endsWith("Z") ? dateTime : dateTime + "Z")
     : existing.dateTime;
@@ -172,27 +211,58 @@ export async function PUT(
       async (tx) => {
         let serviceCreateData: { serviceId: string; priceApplied: string | number }[] | undefined;
 
-        if (memberId || (serviceIds && serviceIds.length > 0)) {
+        if (memberId || isServiceListModified) {
           const { services } = await validateProfessionalServiceCapability(tx, {
             barbershopId,
             memberId: targetMemberId,
             serviceIds: targetServiceIds,
           });
 
-          if (serviceIds && serviceIds.length > 0) {
+          // Apply quantities
+          if (isServiceListModified) {
+            const qtyMap = new Map(normalizedServices.map(s => [s.serviceId, s.quantity]));
+            services.forEach(s => {
+              s.quantity = qtyMap.get(s.id) ?? 1;
+            });
             const totals = calculateAppointmentTotals(services);
             totalPrice = totals.totalPrice;
             durationMin = totals.durationMin;
             serviceCreateData = mapAppointmentServiceSnapshots(services);
+          } else {
+            // If service list did not change, keep current quantities from existing notes metadata
+            const currentQtyMap = extractServiceQuantities(existing.notes);
+            services.forEach(s => {
+              s.quantity = currentQtyMap[s.id] ?? 1;
+            });
+            const totals = calculateAppointmentTotals(services);
+            totalPrice = totals.totalPrice;
+            durationMin = totals.durationMin;
           }
         }
+
+        // Clean user notes and merge metadata
+        const inputNotes = notes !== undefined ? notes : stripMetadataFromNotes(existing.notes);
+        const cleanUserNotes = stripMetadataFromNotes(inputNotes);
+
+        let finalQtyMap: Record<string, number> = {};
+        if (isServiceListModified) {
+          normalizedServices.forEach((s) => {
+            if (s.quantity > 1) {
+              finalQtyMap[s.serviceId] = s.quantity;
+            }
+          });
+        } else {
+          finalQtyMap = extractServiceQuantities(existing.notes);
+        }
+
+        const updatedNotes = buildNotesWithMetadata(cleanUserNotes, finalQtyMap);
 
         return rescheduleAppointmentWithScheduleLock(tx, {
           id,
           barbershopId,
           memberId: targetMemberId,
           dateTime: targetDateTime,
-          notes,
+          notes: updatedNotes !== null ? updatedNotes : undefined,
           totalPrice,
           durationMin,
           serviceCreateData,

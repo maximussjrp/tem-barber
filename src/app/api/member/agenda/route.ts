@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getMemberSession } from "@/lib/member-api-auth";
 
+import { stripMetadataFromNotes } from "@/lib/appointments/notes-metadata";
+
 export async function GET(request: NextRequest) {
   const { error, data } = await getMemberSession();
   if (error) return error;
@@ -40,5 +42,10 @@ export async function GET(request: NextRequest) {
     orderBy: { dateTime: "asc" },
   });
 
-  return NextResponse.json(appointments);
+  const cleaned = appointments.map((a) => ({
+    ...a,
+    notes: stripMetadataFromNotes(a.notes),
+  }));
+
+  return NextResponse.json(cleaned);
 }

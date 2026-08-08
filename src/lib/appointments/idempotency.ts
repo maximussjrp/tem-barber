@@ -9,6 +9,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 export interface PublicBookingHashInput {
   memberId: string;
   serviceIds: string[];
+  services?: { serviceId: string; quantity: number }[];
   dateTime: string;
   customerName?: string;
   customerPhone?: string;
@@ -40,9 +41,13 @@ export function getIdempotencyExpiresAt(now = new Date()) {
 }
 
 export function normalizePublicBookingPayload(input: PublicBookingHashInput) {
+  const normalizedServices = input.services
+    ? [...input.services].sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map(s => `${s.serviceId}:${s.quantity}`)
+    : [...new Set(input.serviceIds)].sort().map(id => `${id}:1`);
+
   return {
     memberId: input.memberId,
-    serviceIds: [...new Set(input.serviceIds)].sort(),
+    services: normalizedServices,
     dateTime: new Date(input.dateTime).toISOString(),
     customerName: input.customerName?.trim() || null,
     customerPhone: input.customerPhone?.replace(/\D/g, "") || null,
