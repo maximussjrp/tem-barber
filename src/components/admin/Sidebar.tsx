@@ -59,6 +59,14 @@ const Icons = {
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
     </svg>
   ),
+  marketing: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10"/>
+      <path d="M12 3v12"/>
+      <path d="M3 15l9 4 9-4"/>
+      <path d="M3 19l9 4 9-4"/>
+    </svg>
+  ),
   chevron: (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9"/>
@@ -107,6 +115,15 @@ const navItems = [
       { label: "Assinantes",   href: "/admin/clube/assinantes" },
       { label: "Fechamentos",  href: "/admin/clube/fechamentos" },
       { label: "Relatórios",   href: "/admin/clube/relatorios" },
+    ],
+  },
+  {
+    label: "Marketing",
+    href: "/admin/marketing",
+    icon: Icons.marketing,
+    ownerOnly: true,
+    children: [
+      { label: "Vitrine pública", href: "/admin/marketing/vitrine" },
     ],
   },
   {

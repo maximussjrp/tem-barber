@@ -92,6 +92,52 @@ describe("Sidebar Logo Fallback", () => {
     expect(screen.getAllByText("Configurações").length).toBeGreaterThan(0);
     expect(screen.queryByText("Plano e cobranca")).toBeNull();
   });
+
+  it("exibe Marketing no sidebar para OWNER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Admin"
+        userRole="OWNER"
+      />
+    );
+
+    expect(screen.getAllByText("Marketing").length).toBeGreaterThan(0);
+  });
+
+  it("exibe subitem Vitrine pública dentro de Marketing para OWNER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Admin"
+        userRole="OWNER"
+      />
+    );
+
+    // Click Marketing to expand it
+    const marketingButtons = screen.getAllByText("Marketing");
+    fireEvent.click(marketingButtons[0]);
+
+    expect(screen.getAllByText("Vitrine pública").length).toBeGreaterThan(0);
+  });
+
+  it("oculta Marketing no sidebar para BARBER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Barbeiro"
+        userRole="BARBER"
+      />
+    );
+
+    expect(screen.queryByText("Marketing")).toBeNull();
+  });
 });
 
 describe("MemberNav Logo Fallback", () => {
