@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { formatPhone, formatCep } from "@/lib/utils";
 
 interface BarbershopData {
@@ -35,6 +35,12 @@ export default function MarketingVitrinePage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -51,6 +57,52 @@ export default function MarketingVitrinePage() {
 
   const publicUrl = `${PUBLIC_APP_URL}/${slug}`;
   const bookingUrl = `${PUBLIC_APP_URL}/${slug}/agendar`;
+
+  async function handleUpload(file: File, type: "logo" | "cover") {
+    // Frontend validations
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedMimeTypes.includes(file.type)) {
+      setError("Tipo de arquivo inválido. Use JPEG, PNG ou WebP.");
+      return;
+    }
+
+    const maxSize = type === "logo" ? 2 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError(
+        type === "logo"
+          ? "A logo deve ter no máximo 2MB."
+          : "A foto de capa deve ter no máximo 5MB."
+      );
+      return;
+    }
+
+    const setUploading = type === "logo" ? setUploadingLogo : setUploadingCover;
+    const setUrl = type === "logo" ? setLogoUrl : setCoverUrl;
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", type);
+
+      const res = await fetch("/api/admin/upload", {
+        method: "POST",
+        body: fd,
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setUrl(data.url);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erro no upload.";
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/admin/barbershop")
@@ -291,11 +343,11 @@ export default function MarketingVitrinePage() {
             Imagens da vitrine
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Logo preview */}
+            {/* Logo input and controls */}
             <div>
-              <label className={labelClass}>Logo</label>
+              <label className={labelClass}>Logo da barbearia</label>
               {logoUrl ? (
-                <div className="w-24 h-24 rounded-xl overflow-hidden border border-stone-700">
+                <div className="mb-3 w-24 h-24 rounded-xl overflow-hidden border border-stone-700 bg-stone-950">
                   <img
                     src={logoUrl}
                     alt="Logo da barbearia"
@@ -303,18 +355,50 @@ export default function MarketingVitrinePage() {
                   />
                 </div>
               ) : (
-                <div className="w-24 h-24 rounded-xl border border-dashed border-stone-700 flex items-center justify-center">
+                <div className="mb-3 w-24 h-24 rounded-xl border border-dashed border-stone-700 flex items-center justify-center bg-stone-950">
                   <span className="text-stone-600 text-xs text-center px-2">
                     Sem logo
                   </span>
                 </div>
               )}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                ref={logoInputRef}
+                title="Upload logo"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleUpload(f, "logo");
+                }}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={uploadingLogo}
+                  className="flex-1 px-3 py-2 bg-stone-800 border border-stone-700 text-stone-300 hover:bg-stone-700 text-xs rounded-lg font-medium transition-all disabled:opacity-50"
+                >
+                  {uploadingLogo ? "Enviando..." : logoUrl ? "Alterar" : "Enviar"}
+                </button>
+                {logoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setLogoUrl("")}
+                    disabled={uploadingLogo}
+                    className="px-3 py-2 bg-red-950/20 border border-red-900/30 text-red-400 hover:bg-red-950/40 text-xs rounded-lg font-medium transition-all disabled:opacity-50"
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
             </div>
-            {/* Cover preview */}
+
+            {/* Cover input and controls */}
             <div>
-              <label className={labelClass}>Foto de capa</label>
+              <label className={labelClass}>Foto de capa da vitrine</label>
               {coverUrl ? (
-                <div className="w-full h-24 rounded-xl overflow-hidden border border-stone-700">
+                <div className="mb-3 w-full h-24 rounded-xl overflow-hidden border border-stone-700 bg-stone-950">
                   <img
                     src={coverUrl}
                     alt="Capa da barbearia"
@@ -322,17 +406,51 @@ export default function MarketingVitrinePage() {
                   />
                 </div>
               ) : (
-                <div className="w-full h-24 rounded-xl border border-dashed border-stone-700 flex items-center justify-center">
+                <div className="mb-3 w-full h-24 rounded-xl border border-dashed border-stone-700 flex items-center justify-center bg-stone-950">
                   <span className="text-stone-600 text-xs text-center px-2">
                     Sem capa
                   </span>
                 </div>
               )}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                ref={coverInputRef}
+                title="Upload capa"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleUpload(f, "cover");
+                }}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => coverInputRef.current?.click()}
+                  disabled={uploadingCover}
+                  className="flex-1 px-3 py-2 bg-stone-800 border border-stone-700 text-stone-300 hover:bg-stone-700 text-xs rounded-lg font-medium transition-all disabled:opacity-50"
+                >
+                  {uploadingCover ? "Enviando..." : coverUrl ? "Alterar" : "Enviar"}
+                </button>
+                {coverUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setCoverUrl("")}
+                    disabled={uploadingCover}
+                    className="px-3 py-2 bg-red-950/20 border border-red-900/30 text-red-400 hover:bg-red-950/40 text-xs rounded-lg font-medium transition-all disabled:opacity-50"
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-          <p className="text-[11px] text-stone-500 mt-4">
-            Para alterar imagens, use Configurações &gt; Geral.
-          </p>
+          <div className="text-[11px] text-stone-500 mt-4 space-y-1">
+            <p>✓ Use imagens nítidas e bem iluminadas para aumentar a confiança do cliente.</p>
+            <p>✓ Logo: recomendado formato quadrado, máximo 2MB.</p>
+            <p>✓ Foto de capa: recomendado formato horizontal, máximo 5MB.</p>
+            <p>✓ Formatos aceitos: JPEG, PNG ou WebP.</p>
+          </div>
         </section>
 
         {/* Endereço */}

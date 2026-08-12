@@ -25,7 +25,7 @@ const mockBarbershop = {
   state: "SP",
 };
 
-function mockFetch(overrides: Partial<typeof mockBarbershop> = {}) {
+function mockFetch(overrides: Partial<typeof mockBarbershop> = {}, uploadResponse: any = { url: "/uploads/new-image.png" }, uploadOk = true) {
   const data = { ...mockBarbershop, ...overrides };
   return vi.fn().mockImplementation((url: string, options?: RequestInit) => {
     if (url === "/api/admin/barbershop" && (!options || options.method !== "PUT")) {
@@ -38,6 +38,12 @@ function mockFetch(overrides: Partial<typeof mockBarbershop> = {}) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(data),
+      });
+    }
+    if (url === "/api/admin/upload" && options?.method === "POST") {
+      return Promise.resolve({
+        ok: uploadOk,
+        json: () => Promise.resolve(uploadResponse),
       });
     }
     return Promise.resolve({
@@ -170,7 +176,6 @@ describe("Marketing Vitrine Page", () => {
       const body = JSON.parse(putCall![1]!.body as string);
       expect(body.name).toBe("Don Brio");
       expect(body.description).toBe("A melhor barbearia da cidade");
-      // slug should NOT be in the body
       expect(body.slug).toBeUndefined();
     });
   });
@@ -199,13 +204,19 @@ describe("Marketing Vitrine Page", () => {
     expect(logos.length).toBeGreaterThan(0);
   });
 
-  it("mostra orientação sobre alteração de imagens", async () => {
+  it("mostra orientação sobre diretrizes de tamanho e formato de imagens", async () => {
     globalThis.fetch = mockFetch();
     const MarketingVitrinePage = (await import("../app/admin/marketing/vitrine/page")).default;
     render(<MarketingVitrinePage />);
 
     expect(
-      await screen.findByText("Para alterar imagens, use Configurações > Geral.")
+      await screen.findByText("✓ Logo: recomendado formato quadrado, máximo 2MB.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("✓ Foto de capa: recomendado formato horizontal, máximo 5MB.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("✓ Formatos aceitos: JPEG, PNG ou WebP.")
     ).toBeInTheDocument();
   });
 
@@ -252,5 +263,79 @@ describe("Marketing Vitrine Page", () => {
       expect(body.whatsapp).toBeUndefined();
       expect(body.instagram).toBeUndefined();
     });
+  });
+
+  it("aceita upload de logo válido e atualiza a visualização", async () => {
+    const fetchMock = mockFetch();
+    globalThis.fetch = fetchMock;
+    const MarketingVitrinePage = (await import("../app/admin/marketing/vitrine/page")).default;
+    render(<MarketingVitrinePage />);
+
+    await screen.findByDisplayValue("Don Brio");
+
+    // Simula a seleção de arquivo no input do logo
+    const file = new File(["dummy content"], "logo.png", { type: "image/png" });
+    const inputs = screen.getAllByTitle("Upload logo");
+    expect(inputs[0]).toBeInTheDocument();
+
+    fireEvent.change(inputs[0], { target: { files: [file] } });
+
+    await waitFor(() => {
+      const uploadCall = (fetchMock.mock.calls as Array<[string, RequestInit?]>).find(
+        (c) => c[0] === "/api/admin/upload" && c[1]?.method === "POST"
+      );
+      expect(uploadCall).toBeDefined();
+    });
+  });
+
+  it("rejeita upload de logo com formato inválido no frontend", async () => {
+    globalThis.fetch = mockFetch();
+    const MarketingVitrinePage = (await import("../app/admin/marketing/vitrine/page")).default;
+    render(<MarketingVitrinePage />);
+
+    await screen.findByDisplayValue("Don Brio");
+
+    const file = new File(["dummy content"], "logo.pdf", { type: "application/pdf" });
+    const inputs = screen.getAllByTitle("Upload logo");
+
+    fireEvent.change(inputs[0], { target: { files: [file] } });
+
+    expect(await screen.findByText(/Tipo de arquivo inválido. Use JPEG, PNG ou WebP./)).toBeInTheDocument();
+  });
+
+  it("rejeita upload de logo acima de 2MB no frontend", async () => {
+    globalThis.fetch = mockFetch();
+    const MarketingVitrinePage = (await import("../app/admin/marketing/vitrine/page")).default;
+    render(<MarketingVitrinePage />);
+
+    await screen.findByDisplayValue("Don Brio");
+
+    // Cria um arquivo maior que 2MB (2.1 MB)
+    const largeFile = new File([new ArrayBuffer(2.1 * 1024 * 1024)], "logo.png", { type: "image/png" });
+    const inputs = screen.getAllByTitle("Upload logo");
+
+    fireEvent.change(inputs[0], { target: { files: [largeFile] } });
+
+    expect(await screen.findByText(/A logo deve ter no máximo 2MB./)).toBeInTheDocument();
+  });
+
+  it("permite remover a logo e a capa no estado local", async () => {
+    globalThis.fetch = mockFetch();
+    const MarketingVitrinePage = (await import("../app/admin/marketing/vitrine/page")).default;
+    render(<MarketingVitrinePage />);
+
+    await screen.findByDisplayValue("Don Brio");
+
+    // Encontra botões de remover
+    const removeButtons = screen.getAllByText("Remover");
+    expect(removeButtons.length).toBe(2);
+
+    // Clica para remover logo
+    fireEvent.click(removeButtons[0]);
+    // Clica para remover capa
+    fireEvent.click(removeButtons[1]);
+
+    // Verifica que na prévia a logo agora mostra o fallback com as iniciais "DB"
+    expect(screen.getByText("DB")).toBeInTheDocument();
   });
 });

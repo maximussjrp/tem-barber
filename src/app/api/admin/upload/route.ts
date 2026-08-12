@@ -18,6 +18,7 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
+    const kind = formData.get("kind") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "Nenhum arquivo enviado." }, { status: 400 });
@@ -31,9 +32,20 @@ export async function POST(request: Request) {
       );
     }
 
-    if (file.size > MAX_SIZE) {
+    // Set max size limit based on kind
+    let maxAllowedSize = MAX_SIZE; // default 5MB
+    if (kind === "logo") {
+      maxAllowedSize = 2 * 1024 * 1024; // 2MB
+    } else if (kind === "cover") {
+      maxAllowedSize = 5 * 1024 * 1024; // 5MB
+    }
+
+    if (file.size > maxAllowedSize) {
+      const errorMsg = kind === "logo"
+        ? "Logo muito grande. Máximo 2 MB."
+        : "Foto de capa muito grande. Máximo 5 MB.";
       return NextResponse.json(
-        { error: "Arquivo muito grande. Máximo 5 MB." },
+        { error: errorMsg },
         { status: 400 }
       );
     }
