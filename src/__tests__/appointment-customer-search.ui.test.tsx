@@ -158,4 +158,37 @@ describe("busca de cliente no modal de agendamento", () => {
       customerPhone: "(17) 98888-8888",
     });
   });
+
+  it("exibe mensagem humana de erro e nao INVALID_SERVICE_SELECTION ao receber falha no agendamento", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/appointments" && init?.method === "POST") {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({
+            error: "INVALID_SERVICE_SELECTION",
+            message: "Um ou mais serviços selecionados não estão mais disponíveis. Atualize a seleção e tente novamente."
+          }),
+        };
+      }
+
+      return {
+        ok: true,
+        json: async () => ({ clients: [customer] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderModal(onSaved);
+
+    await user.click(screen.getByTitle("Corte"));
+    await user.type(screen.getByTitle("Cliente"), "Maria Souza");
+    await user.click(await screen.findByText("Maria Souza"));
+    await user.click(screen.getByText("Criar agendamento"));
+
+    expect(await screen.findByText("Um ou mais serviços selecionados não estão mais disponíveis. Atualize a seleção e tente novamente.")).toBeInTheDocument();
+    expect(screen.queryByText("INVALID_SERVICE_SELECTION")).not.toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
 });

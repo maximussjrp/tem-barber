@@ -717,7 +717,10 @@ export function AppointmentModal({
           }),
         });
       }
-      if (!res.ok) throw new Error((await res.json()).error ?? "Erro ao salvar.");
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message ?? data.error ?? "Erro ao salvar.");
+      }
       onSaved(await res.json());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erro ao salvar.");
@@ -1164,7 +1167,10 @@ function CancelModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "CANCELLED", notes: reason || null }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Erro.");
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message ?? data.error ?? "Erro.");
+      }
       onCancelled(await res.json());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erro ao cancelar.");
@@ -2687,7 +2693,7 @@ function AgendamentosContent() {
       if (filterMember) params.set("memberId", filterMember);
       const [apptRes, svcRes] = await Promise.all([
         fetch(`/api/admin/appointments?${params}`),
-        fetch("/api/admin/services"),
+        fetch("/api/admin/services?activeOnly=true"),
       ]);
       const apptData = await apptRes.json();
       const svcData = await svcRes.json();

@@ -53,7 +53,7 @@ describe("P1 UX Agenda - Navegação Rápida por Dias da Semana", () => {
             }),
         } as Response);
       }
-      if (url === "/api/admin/services") {
+      if (url.startsWith("/api/admin/services")) {
         return Promise.resolve({
           ok: true,
           status: 200,

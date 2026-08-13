@@ -50,7 +50,7 @@ function mockFetch(canReopen: boolean) {
         permissions: { canReopen },
       });
     }
-    if (url === "/api/admin/services") return jsonResponse([]);
+    if (url.startsWith("/api/admin/services")) return jsonResponse([]);
     if (url === "/api/admin/products") return jsonResponse({ products: [] });
     if (url === "/api/admin/appointments") return jsonResponse({ members: [] });
     return jsonResponse({});

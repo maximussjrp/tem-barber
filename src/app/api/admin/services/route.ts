@@ -8,11 +8,13 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const categoryId = url.searchParams.get("categoryId") || undefined;
+  const activeOnly = url.searchParams.get("activeOnly") === "true";
 
   const services = await prisma.service.findMany({
     where: {
       barbershopId: data!.barbershopId!,
       ...(categoryId ? { categoryId } : {}),
+      ...(activeOnly ? { isActive: true } : {}),
     },
     include: { category: { select: { id: true, name: true } } },
     orderBy: { name: "asc" },

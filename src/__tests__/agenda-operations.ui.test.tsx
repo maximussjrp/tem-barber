@@ -106,7 +106,7 @@ function mockAdminFetch(deleteStatus = 200, appointmentStatus: "CONFIRMED" | "CA
         scheduleBlocks: blockDeleted ? [] : adminPayload.scheduleBlocks,
       });
     }
-    if (url === "/api/admin/services") return jsonResponse([{ id: "svc-1", name: "Corte", durationMin: 30, price: "50.00" }]);
+    if (url.startsWith("/api/admin/services")) return jsonResponse([{ id: "svc-1", name: "Corte", durationMin: 30, price: "50.00" }]);
     return jsonResponse({});
   });
 }

@@ -29,6 +29,8 @@ let publicBook: PublicBook;
 let availability: Availability;
 let adminCreate: AdminPost;
 let adminUpdate: AdminPut;
+type AdminServicesGet = typeof import("@/app/api/admin/services/route").GET;
+let adminServicesGet: AdminServicesGet;
 
 function publicRequest(body: unknown, key: string, slug = "shop-a") {
   return new NextRequest(`http://localhost/api/public/barbershop/${slug}/book`, {
@@ -172,6 +174,7 @@ describeIf("P1 professional service capability com PostgreSQL", () => {
     availability = (await import("@/app/api/public/barbershop/[slug]/availability/route")).GET;
     adminCreate = (await import("@/app/api/admin/appointments/route")).POST;
     adminUpdate = (await import("@/app/api/admin/appointments/[id]/route")).PUT;
+    adminServicesGet = (await import("@/app/api/admin/services/route")).GET;
   });
 
   beforeEach(async () => {
@@ -470,5 +473,77 @@ describeIf("P1 professional service capability com PostgreSQL", () => {
     expect(response.status).toBe(201);
     expect(appointment.durationMin).toBe(60);
     expect(appointment.services).toHaveLength(2);
+  });
+
+  it("16. GET /api/admin/services padrão inclui ativos e inativos, e activeOnly=true filtra", async () => {
+    const tenant = await seedTenant("b");
+    await prisma.service.update({ where: { id: tenant.cut.id }, data: { isActive: false } });
+
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: tenant.adminUser.id, role: "OWNER", memberId: tenant.owner.id, barbershopId: tenant.shop.id },
+    });
+
+    const resDefault = await adminServicesGet(new NextRequest("http://localhost/api/admin/services"));
+    expect(resDefault.status).toBe(200);
+    const servicesDefault = await resDefault.json();
+    expect(servicesDefault.map((s: { id: string }) => s.id).sort()).toEqual([tenant.cut.id, tenant.beard.id].sort());
+
+    const resActiveOnly = await adminServicesGet(new NextRequest("http://localhost/api/admin/services?activeOnly=true"));
+    expect(resActiveOnly.status).toBe(200);
+    const servicesActiveOnly = await resActiveOnly.json();
+    expect(servicesActiveOnly).toHaveLength(1);
+    expect(servicesActiveOnly[0].id).toBe(tenant.beard.id);
+  });
+
+  it("17. admin create rejeita servico inativo", async () => {
+    const tenant = await seedTenant("c");
+    await prisma.service.update({ where: { id: tenant.cut.id }, data: { isActive: false } });
+
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: tenant.adminUser.id, role: "OWNER", memberId: tenant.owner.id, barbershopId: tenant.shop.id },
+    });
+
+    const response = await adminCreate(
+      adminRequest({
+        memberId: tenant.joao.id,
+        customerId: tenant.customer.id,
+        services: [{ serviceId: tenant.cut.id, quantity: 1 }],
+        dateTime: "2026-07-20T14:30:00.000Z",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("INVALID_SERVICE_SELECTION");
+    expect(data.message).toBe("Um ou mais serviços selecionados não estão mais disponíveis. Atualize a seleção e tente novamente.");
+  });
+
+  it("18. admin create cria agendamento com services [{serviceId, quantity}] valido", async () => {
+    const tenant = await seedTenant("d");
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: tenant.adminUser.id, role: "OWNER", memberId: tenant.owner.id, barbershopId: tenant.shop.id },
+    });
+
+    const response = await adminCreate(
+      adminRequest({
+        memberId: tenant.joao.id,
+        customerId: tenant.customer.id,
+        services: [{ serviceId: tenant.cut.id, quantity: 2 }],
+        dateTime: "2026-07-20T15:00:00.000Z",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.id).toBeDefined();
+
+    const appointment = await prisma.appointment.findUniqueOrThrow({
+      where: { id: data.id },
+      include: { services: true },
+    });
+    expect(appointment.notes).toContain(`[[TEMBARBER_SERVICE_QUANTITIES_V1:{"${tenant.cut.id}":2}]]`);
   });
 });

@@ -59,7 +59,7 @@ export class InvalidServiceSelectionError extends Error {
   readonly code = INVALID_SERVICE_SELECTION;
   readonly status = 400;
 
-  constructor(message = "Um ou mais servicos invalidos.") {
+  constructor(message = "Um ou mais serviços selecionados não estão mais disponíveis. Atualize a seleção e tente novamente.") {
     super(message);
   }
 }

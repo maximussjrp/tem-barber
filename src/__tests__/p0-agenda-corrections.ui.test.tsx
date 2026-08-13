@@ -63,7 +63,7 @@ describe("P0 Agenda - Fora do Expediente e Totais do Topo", () => {
       if (url.startsWith("/api/admin/appointments")) {
         return jsonResponse(payload);
       }
-      if (url === "/api/admin/services") {
+      if (url.startsWith("/api/admin/services")) {
         return jsonResponse([]);
       }
       return jsonResponse({});
@@ -164,7 +164,7 @@ describe("P0 Agenda - Fora do Expediente e Totais do Topo", () => {
       if (url.startsWith("/api/admin/appointments")) {
         return jsonResponse(payload);
       }
-      if (url === "/api/admin/services") {
+      if (url.startsWith("/api/admin/services")) {
         return jsonResponse([]);
       }
       return jsonResponse({});

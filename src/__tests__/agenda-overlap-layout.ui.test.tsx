@@ -174,7 +174,7 @@ describe("P1 UX Agenda - Overlap and Fit-in Reason Tests", () => {
             }),
         } as Response);
       }
-      if (url === "/api/admin/services") {
+      if (url.startsWith("/api/admin/services")) {
         return Promise.resolve({
           ok: true,
           status: 200,
