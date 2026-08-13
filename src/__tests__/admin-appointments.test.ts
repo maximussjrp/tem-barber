@@ -405,6 +405,9 @@ describe("agendamento administrativo", () => {
           { dayOfWeek: 1, startTime: "09:00", endTime: "11:00", breakStart: null, breakEnd: null, isActive: true },
         ],
         timeOffs: [],
+        services: [
+          { serviceId: "service-corte" }
+        ],
       },
     ]);
 
@@ -438,9 +441,10 @@ describe("agendamento administrativo", () => {
     expect(data.barbershopName).toBe("Don Brio");
     expect(data.barbershopSlug).toBe("don-brio");
 
-    const maxMember = (data.members as AppointmentMemberSlot[]).find((m) => m.id === "member-max");
+    const maxMember = (data.members as any[]).find((m) => m.id === "member-max");
     expect(maxMember).toBeDefined();
     expect(maxMember?.freeSlots).toEqual([540, 570, 630]);
+    expect(maxMember?.serviceIds).toEqual(["service-corte"]);
   });
 
   it("GET /api/admin/appointments nao inclui freeSlots para profissional sem agenda ativa", async () => {

@@ -67,6 +67,7 @@ interface Member {
   startTime?: string;
   endTime?: string;
   freeSlots?: number[];
+  serviceIds?: string[];
 }
 
 interface Service {
@@ -624,8 +625,14 @@ export function AppointmentModal({
       : [];
 
   const selectedServiceIds = Object.keys(serviceQuantities);
+  const selectedMember = members.find((m) => m.id === memberId);
 
   const toggleService = (id: string) => {
+    const isServiceIncompatible = !!selectedMember && selectedMember.serviceIds && !selectedMember.serviceIds.includes(id);
+    const checked = (serviceQuantities[id] ?? 0) > 0;
+    if (isServiceIncompatible && !checked) {
+      return;
+    }
     setServiceQuantities((prev) => {
       const current = prev[id] ?? 0;
       if (current > 0) {
@@ -639,6 +646,10 @@ export function AppointmentModal({
   };
 
   const incrementService = (id: string) => {
+    const isServiceIncompatible = !!selectedMember && selectedMember.serviceIds && !selectedMember.serviceIds.includes(id);
+    if (isServiceIncompatible) {
+      return;
+    }
     setServiceQuantities((prev) => {
       const current = prev[id] ?? 0;
       if (current < 5) {
@@ -649,6 +660,11 @@ export function AppointmentModal({
   };
 
   const decrementService = (id: string) => {
+    const isServiceIncompatible = !!selectedMember && selectedMember.serviceIds && !selectedMember.serviceIds.includes(id);
+    const checked = (serviceQuantities[id] ?? 0) > 0;
+    if (isServiceIncompatible && !checked) {
+      return;
+    }
     setServiceQuantities((prev) => {
       const current = prev[id] ?? 0;
       if (current <= 1) {
@@ -872,7 +888,32 @@ export function AppointmentModal({
 
           <div className="space-y-1.5">
             <label className={LABEL_INPUT}>Barbeiro</label>
-            <select value={memberId} onChange={(e) => setMemberId(e.target.value)} title="Barbeiro" className={INPUT_CLASS}>
+            <select
+              value={memberId}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setMemberId(nextId);
+                if (nextId) {
+                  const m = members.find((item) => item.id === nextId);
+                  const serviceIds = m?.serviceIds;
+                  if (serviceIds) {
+                    setServiceQuantities((prev) => {
+                      const next = { ...prev };
+                      let changed = false;
+                      for (const svcId of Object.keys(prev)) {
+                        if (!serviceIds.includes(svcId)) {
+                          delete next[svcId];
+                          changed = true;
+                        }
+                      }
+                      return changed ? next : prev;
+                    });
+                  }
+                }
+              }}
+              title="Barbeiro"
+              className={INPUT_CLASS}
+            >
               <option value="">Selecione...</option>
               {members.map((m) => (<option key={m.id} value={m.id}>{m.user.name}</option>))}
             </select>
@@ -908,6 +949,9 @@ export function AppointmentModal({
                   // Match service to benefits
                   const benefit = customerClubBalance?.benefits?.find((b) => b.serviceId === s.id);
                   const isInactive = !!customerClubBalance?.status && INACTIVE_CLUB_STATUSES.includes(customerClubBalance.status);
+
+                  const isServiceIncompatible = !!selectedMember && selectedMember.serviceIds && !selectedMember.serviceIds.includes(s.id);
+                  const isServiceDisabled = isServiceIncompatible && !checked;
 
                   let priceText = originalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
                   let strikethroughPriceText = "";
@@ -947,20 +991,31 @@ export function AppointmentModal({
                   const qty = serviceQuantities[s.id] ?? 0;
 
                   return (
-                    <label key={s.id} className={`flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"}`}>
+                    <label
+                      key={s.id}
+                      className={`flex items-center justify-between gap-3 px-4 py-2.5 transition-colors ${isServiceDisabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-stone-800/40"} ${checked ? "bg-amber-500/5" : ""}`}
+                    >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleService(s.id)}
+                          disabled={isServiceDisabled}
                           title={s.name}
-                          className="accent-amber-500 cursor-pointer"
+                          className="accent-amber-500 cursor-pointer disabled:cursor-not-allowed"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm text-stone-300 truncate">{s.name}</span>
                             {clubBadge}
                           </div>
+                          {isServiceIncompatible && (
+                            <span className="text-[10px] text-red-400 block font-medium">
+                              {checked
+                                ? "Este profissional não executa mais este serviço — remova para continuar"
+                                : "Não disponível para este profissional"}
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs text-stone-500 shrink-0">{s.durationMin}min</span>
                       </div>

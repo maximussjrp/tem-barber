@@ -230,6 +230,7 @@ export async function GET(request: NextRequest) {
           endDate: { gte: startOfDay },
         },
       },
+      services: { select: { serviceId: true } },
     },
     orderBy: { user: { name: "asc" } },
   });
@@ -253,6 +254,7 @@ export async function GET(request: NextRequest) {
         startTime: "",
         endTime: "",
         freeSlots: [],
+        serviceIds: member.services?.map((s) => s.serviceId) ?? [],
       });
       continue;
     }
@@ -323,6 +325,7 @@ export async function GET(request: NextRequest) {
       startTime: wh.startTime,
       endTime: wh.endTime,
       freeSlots,
+      serviceIds: member.services?.map((s) => s.serviceId) ?? [],
     });
   }
 
