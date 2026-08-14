@@ -89,4 +89,112 @@ describe("agenda publica PWA", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/client/logout", { method: "POST" });
     expect(localStorage.getItem("lastBarbershopSlug")).toBe("don-brio");
   });
+
+  it("previne loop infinito ao buscar disponibilidade e mudar estados de loading/slots", async () => {
+    const categoriesPayload = {
+      categories: [
+        {
+          id: "cat-1",
+          name: "Cabelo",
+          services: [
+            {
+              id: "svc-1",
+              name: "Corte",
+              price: "50.00",
+              durationMin: 30,
+            },
+          ],
+        },
+      ],
+      members: [
+        {
+          id: "member-1",
+          name: "João Barber",
+          avatarUrl: null,
+          bio: null,
+          ratingAvg: 5,
+          serviceIds: ["svc-1"],
+          workingHours: [],
+        },
+      ],
+    };
+
+    const availabilityPayload = {
+      results: [
+        {
+          memberId: "member-1",
+          memberName: "João Barber",
+          slots: ["09:00", "10:00"],
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/availability")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(availabilityPayload),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(categoriesPayload),
+      });
+    });
+
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<AgendasPage />);
+
+    // Passo 0: Selecionar o serviço
+    const serviceCheckbox = await screen.findByRole("checkbox", { name: /Corte/ });
+    await user.click(serviceCheckbox);
+
+    // Clicar em Continuar
+    const continueBtn1 = await screen.findByRole("button", { name: "Continuar" });
+    await user.click(continueBtn1);
+
+    // Passo 1: Selecionar o barbeiro (qualquer disponível por padrão)
+    const continueBtn2 = await screen.findByRole("button", { name: "Continuar" });
+    await user.click(continueBtn2);
+
+    // Passo 2: Escolha o horário - Selecionar a data
+    const dateInput = await screen.findByTitle("Data do agendamento");
+
+    // Reset call counts on fetchMock to trace only availability requests
+    fetchMock.mockClear();
+
+    // Define a data
+    await user.type(dateInput, "2026-08-20");
+
+    // Esperar os slots serem renderizados
+    await screen.findByRole("button", { name: "09:00" });
+
+    // Esperar um tempo razoável para dar oportunidade de loop de rerender ocorrer
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Filtrar chamadas de availability
+    const availabilityCalls = fetchMock.mock.calls.filter((call) =>
+      (call[0] as string).includes("/availability")
+    );
+
+    // Deve ter chamado exatamente 1 vez para a data inicial
+    expect(availabilityCalls.length).toBe(1);
+
+    // Agora altera a data para provocar outra chamada
+    await user.clear(dateInput);
+    await user.type(dateInput, "2026-08-21");
+
+    // Esperar os slots da nova data (que são os mesmos pelo mock)
+    await screen.findByRole("button", { name: "09:00" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const availabilityCallsAfterChange = fetchMock.mock.calls.filter((call) =>
+      (call[0] as string).includes("/availability")
+    );
+
+    // Deve ter chamado exatamente 2 vezes no total
+    expect(availabilityCallsAfterChange.length).toBe(2);
+  });
 });

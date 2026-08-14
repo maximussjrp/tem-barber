@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { formatHeaderDate } from "@/lib/time-utils";
@@ -111,7 +111,10 @@ function BookingWizard() {
 
   // Selections
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
-  const selectedServiceIds = Object.keys(serviceQuantities);
+  const selectedServiceIds = useMemo(
+    () => Object.keys(serviceQuantities),
+    [serviceQuantities]
+  );
   const [selectedMemberId, setSelectedMemberId] = useState<string>("any");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [availabilityResults, setAvailabilityResults] = useState<AvailabilityResult[]>([]);
