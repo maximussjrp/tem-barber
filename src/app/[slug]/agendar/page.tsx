@@ -6,6 +6,7 @@ import { signIn, useSession } from "next-auth/react";
 import { formatHeaderDate } from "@/lib/time-utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { sanitizeBarbershopSlug } from "@/lib/public-barbershops";
+import { isValidBrazilMobilePhone } from "@/lib/phone-utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ interface BookingErrorResponse {
 
 type PublicSessionUser = {
   authLevel?: string;
+  phone?: string;
 };
 
 function isPublicClientAuthLevel(authLevel: string | undefined) {
@@ -199,6 +201,24 @@ function BookingWizard() {
   const clientSessionActive =
     !clientLoggedOut && isPublicClientAuthLevel(sessionUser?.authLevel);
 
+  const sessionPhone = clientSessionActive ? sessionUser?.phone ?? "" : "";
+  const hasValidSessionPhone = Boolean(
+    sessionPhone && isValidBrazilMobilePhone(sessionPhone)
+  );
+
+  const effectiveCustomerPhone =
+    customerPhone.replace(/\D/g, "") || sessionPhone.replace(/\D/g, "");
+
+  const maskedSessionPhone = useMemo(() => {
+    if (!sessionPhone) return "";
+    const digits = sessionPhone.replace(/\D/g, "");
+    const core = digits.startsWith("55") && digits.length >= 12 ? digits.slice(2) : digits;
+    if (core.length >= 11) {
+      return `(${core.slice(0, 2)}) *****-${core.slice(-4)}`;
+    }
+    return "";
+  }, [sessionPhone]);
+
   const selectedServices = allServices.filter((s) => selectedServiceIds.includes(s.id));
   const totalPrice = selectedServices.reduce((s, svc) => s + Number(svc.price) * (serviceQuantities[svc.id] ?? 1), 0);
   const totalDuration = selectedServices.reduce((s, svc) => s + svc.durationMin * (serviceQuantities[svc.id] ?? 1), 0);
@@ -316,7 +336,7 @@ function BookingWizard() {
   // ─── Step 3: Customer login/fill ─────────────────────────────────────────
 
   const handleLoginOrContinue = async () => {
-    if (clientSessionActive) {
+    if (clientSessionActive && hasValidSessionPhone) {
       setStep(4);
       return;
     }
@@ -404,7 +424,7 @@ function BookingWizard() {
           })),
           dateTime: dt.toISOString(),
           customerName: customerName.trim() || undefined,
-          customerPhone: customerPhone.replace(/\D/g, "") || undefined,
+          customerPhone: effectiveCustomerPhone || undefined,
         }),
       });
       const data = await res.json();
@@ -922,13 +942,13 @@ function BookingWizard() {
           <div className="space-y-5">
             <h2 className="text-xl font-serif font-bold text-stone-100">Seus dados</h2>
 
-            {clientSessionActive ? (
+            {clientSessionActive && hasValidSessionPhone ? (
               <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-xl px-4 py-3">
                 <p className="text-sm text-emerald-400">
                   ✓ Você está logado como <span className="font-semibold">{session?.user?.name}</span>.
                 </p>
-                <p className="text-xs text-emerald-600 mt-0.5">
-                  O agendamento será feito com sua conta.
+                <p className="text-xs text-emerald-300/80 mt-1">
+                  Usaremos o WhatsApp cadastrado na sua conta{maskedSessionPhone ? ` (${maskedSessionPhone})` : ""}.
                 </p>
                 <button
                   type="button"
@@ -942,6 +962,11 @@ function BookingWizard() {
               </div>
             ) : (
               <div className="space-y-4">
+                {clientSessionActive && !hasValidSessionPhone && (
+                  <div className="bg-amber-950/40 border border-amber-800/50 rounded-xl px-4 py-3 text-xs text-amber-300">
+                    Sua conta precisa de um WhatsApp válido para concluir o agendamento. Informe abaixo:
+                  </div>
+                )}
                 <p className="text-sm text-stone-400">
                   Informe seu telefone para confirmar. Se você não tiver conta, criamos automaticamente.
                 </p>
@@ -1092,7 +1117,7 @@ function BookingWizard() {
             {step === 3 && (
               <button
                 onClick={handleLoginOrContinue}
-                disabled={!clientSessionActive && !customerPhone.trim()}
+                disabled={!(clientSessionActive && hasValidSessionPhone) && !customerPhone.trim()}
                 className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-bold py-4 rounded-xl transition-colors"
               >
                 {loginStep === "logging-in" ? "Entrando..." : "Continuar"}

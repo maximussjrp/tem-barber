@@ -197,4 +197,185 @@ describe("agenda publica PWA", () => {
     // Deve ter chamado exatamente 2 vezes no total
     expect(availabilityCallsAfterChange.length).toBe(2);
   });
+
+  it("permite cliente logado concluir agendamento enviando o telefone da sessao", async () => {
+    sessionMock.mockReturnValue({
+      user: { id: "customer-1", name: "Maria", phone: "5511999999999", authLevel: "phone_lookup" },
+    });
+
+    const categoriesPayload = {
+      categories: [
+        {
+          id: "cat-1",
+          name: "Cabelo",
+          services: [{ id: "svc-1", name: "Corte", price: "50.00", durationMin: 30 }],
+        },
+      ],
+      members: [
+        {
+          id: "member-1",
+          name: "Barbeiro",
+          avatarUrl: null,
+          bio: null,
+          ratingAvg: 5,
+          serviceIds: ["svc-1"],
+          workingHours: [],
+        },
+      ],
+    };
+
+    const availabilityPayload = {
+      results: [{ memberId: "member-1", memberName: "Barbeiro", slots: ["09:00"] }],
+    };
+
+    const bookSuccessPayload = {
+      appointment: {
+        id: "appt-1",
+        barberName: "Barbeiro",
+        dateTime: "2026-08-20T09:00:00.000Z",
+        services: ["Corte"],
+        totalPrice: "50.00",
+      },
+    };
+
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/book") && init?.method === "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(bookSuccessPayload),
+        });
+      }
+      if (url.includes("/availability")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(availabilityPayload),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(categoriesPayload),
+      });
+    });
+
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<AgendasPage />);
+
+    // Step 0: Escolher serviço
+    await user.click(await screen.findByRole("checkbox", { name: /Corte/ }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Step 1: Escolher barbeiro
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Step 2: Escolher horário
+    const dateInput = await screen.findByTitle("Data do agendamento");
+    await user.type(dateInput, "2026-08-20");
+    await user.click(await screen.findByRole("button", { name: "09:00" }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Step 3: Seus dados - Cliente logado com telefone válido não exige digitação
+    expect(screen.getByText(/Você está logado como/)).toBeInTheDocument();
+    expect(screen.getByText(/Usaremos o WhatsApp cadastrado na sua conta/)).toBeInTheDocument();
+    expect(screen.queryByTitle("Seu telefone")).not.toBeInTheDocument();
+
+    // Avança para Step 4 (Confirmar)
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Step 4: Confirmar agendamento
+    await user.click(await screen.findByRole("button", { name: "Confirmar agendamento" }));
+
+    // Verificar chamada do POST /book
+    const bookCall = fetchMock.mock.calls.find((call) => (call[0] as string).includes("/book"));
+    expect(bookCall).toBeTruthy();
+    const body = JSON.parse(bookCall![1].body as string);
+    expect(body.customerPhone).toBe("5511999999999");
+    expect(await screen.findByText("Agendado!")).toBeInTheDocument();
+  });
+
+  it("exige telefone para cliente nao logado", async () => {
+    sessionMock.mockReturnValue(null);
+
+    const categoriesPayload = {
+      categories: [
+        {
+          id: "cat-1",
+          name: "Cabelo",
+          services: [{ id: "svc-1", name: "Corte", price: "50.00", durationMin: 30 }],
+        },
+      ],
+      members: [],
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(categoriesPayload),
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(<AgendasPage />);
+
+    // Step 0 -> Step 1 -> Step 2 -> Step 3
+    await user.click(await screen.findByRole("checkbox", { name: /Corte/ }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Mock slots setup to step 2
+    // Navigate to step 3 manually or by clicking
+  });
+
+  it("exibe campo de telefone se sessao ativa nao possuir telefone valido", async () => {
+    sessionMock.mockReturnValue({
+      user: { id: "customer-1", name: "Maria", phone: "", authLevel: "phone_lookup" },
+    });
+
+    const categoriesPayload = {
+      categories: [
+        {
+          id: "cat-1",
+          name: "Cabelo",
+          services: [{ id: "svc-1", name: "Corte", price: "50.00", durationMin: 30 }],
+        },
+      ],
+      members: [
+        {
+          id: "member-1",
+          name: "Barbeiro",
+          avatarUrl: null,
+          bio: null,
+          ratingAvg: 5,
+          serviceIds: ["svc-1"],
+          workingHours: [],
+        },
+      ],
+    };
+
+    const availabilityPayload = {
+      results: [{ memberId: "member-1", memberName: "Barbeiro", slots: ["09:00"] }],
+    };
+
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/availability")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(availabilityPayload) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(categoriesPayload) });
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(<AgendasPage />);
+
+    await user.click(await screen.findByRole("checkbox", { name: /Corte/ }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    const dateInput = await screen.findByTitle("Data do agendamento");
+    await user.type(dateInput, "2026-08-20");
+    await user.click(await screen.findByRole("button", { name: "09:00" }));
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+
+    // Step 3: Deve exibir o input de telefone pois a sessão não possui telefone válido
+    expect(screen.getByTitle("Seu telefone")).toBeInTheDocument();
+    expect(screen.getByText(/Sua conta precisa de um WhatsApp válido/)).toBeInTheDocument();
+  });
 });

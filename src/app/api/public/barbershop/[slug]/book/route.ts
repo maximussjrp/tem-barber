@@ -46,6 +46,17 @@ import { isCustomerOrPhoneBlocked } from "@/lib/operations/blocked-customers";
 
 interface SessionUser {
   id?: string;
+  role?: string;
+  phone?: string;
+  authLevel?: string;
+}
+
+function isPublicClientAuthLevel(authLevel: string | undefined) {
+  return (
+    authLevel === "phone_lookup" ||
+    authLevel === "verified_link" ||
+    authLevel === "verified_otp"
+  );
 }
 
 interface PublicBookingBody {
@@ -233,7 +244,34 @@ export async function POST(
   }
 
   const ip = resolveClientIp(request);
-  const normalizedPhoneKey = normalizePhone(customerPhone);
+
+  let session: Record<string, unknown> | null = null;
+  let isPublicClientSession = false;
+  let sessionUserId: string | null = null;
+  let sessionUserPhone: string | null = null;
+  try {
+    session = await getServerSession(authOptions);
+    const sessionUser = session?.user as SessionUser | undefined;
+    if (sessionUser && isPublicClientAuthLevel(sessionUser.authLevel)) {
+      isPublicClientSession = true;
+      sessionUserId = sessionUser.id ?? null;
+      sessionUserPhone = sessionUser.phone ?? null;
+    }
+  } catch {
+    session = null;
+    isPublicClientSession = false;
+    sessionUserId = null;
+    sessionUserPhone = null;
+  }
+
+  const validSessionPhone =
+    isPublicClientSession && sessionUserPhone && isValidBrazilMobilePhone(sessionUserPhone)
+      ? sessionUserPhone
+      : null;
+
+  const effectiveCustomerPhone = validSessionPhone || customerPhone || "";
+
+  const normalizedPhoneKey = normalizePhone(effectiveCustomerPhone);
   const rateLimit = consumeRateLimit({
     bucket: "public-booking",
     key: `${slug}:${ip}:${normalizedPhoneKey || "no-phone"}`,
@@ -276,7 +314,7 @@ export async function POST(
   }
 
   // 1. Validação de telefone brasileiro para agendamento público
-  if (!isValidBrazilMobilePhone(customerPhone)) {
+  if (!isValidBrazilMobilePhone(effectiveCustomerPhone)) {
     return NextResponse.json(
       { error: "INVALID_PHONE", message: "Informe um WhatsApp válido para concluir o agendamento." },
       { status: 400 }
@@ -284,19 +322,9 @@ export async function POST(
   }
 
   // 2. Checar bloqueio por barbearia ANTES de criar qualquer usuário ou agendamento
-  let session: Record<string, unknown> | null = null;
-  let sessionUserId: string | null = null;
-  try {
-    session = await getServerSession(authOptions);
-    sessionUserId = (session?.user as SessionUser | undefined)?.id ?? null;
-  } catch {
-    session = null;
-    sessionUserId = null;
-  }
-
   const isBlocked = await isCustomerOrPhoneBlocked({
     barbershopId: barbershop.id,
-    phone: customerPhone,
+    phone: effectiveCustomerPhone,
     userId: sessionUserId,
   });
 
@@ -337,7 +365,7 @@ export async function POST(
       services: bodyServices,
       dateTime: dateTime || "",
       customerName,
-      customerPhone,
+      customerPhone: effectiveCustomerPhone,
       notes,
     });
   } catch (error) {
@@ -418,18 +446,15 @@ export async function POST(
       const { totalPrice, durationMin } = calculateAppointmentTotals(services);
 
       let customerId: string | undefined;
-      if (session?.user) {
-        const sessionCustomerId = (session.user as SessionUser).id;
-        if (sessionCustomerId) {
-          const scopedCustomer = await findBarbershopCustomerById(
-            tx,
-            barbershop.id,
-            sessionCustomerId
-          );
-          customerId = scopedCustomer?.id ?? sessionCustomerId;
-        }
+      if (isPublicClientSession && sessionUserId) {
+        const scopedCustomer = await findBarbershopCustomerById(
+          tx,
+          barbershop.id,
+          sessionUserId
+        );
+        customerId = scopedCustomer?.id ?? sessionUserId;
       } else {
-        if (!customerPhone) {
+        if (!effectiveCustomerPhone) {
           return {
             error: NextResponse.json(
               { error: "Informe seu telefone para confirmar o agendamento." },
@@ -438,7 +463,7 @@ export async function POST(
           };
         }
 
-        const cleanPhone = normalizePhone(customerPhone);
+        const cleanPhone = normalizePhone(effectiveCustomerPhone);
         if (!validateBrazilianMobilePhone(cleanPhone)) {
           return {
             error: NextResponse.json({ error: "Informe um WhatsApp válido com DDD." }, { status: 400 }),

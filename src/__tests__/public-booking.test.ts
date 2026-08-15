@@ -383,4 +383,130 @@ describe("agendamento publico", () => {
     expect(data.error).toBe("DUPLICATE_APPOINTMENT");
     expect(txMock.appointment.create).not.toHaveBeenCalled();
   });
+
+  it("1. sessao publica + telefone valido + body sem telefone -> usa telefone da sessao (booking PASS)", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-existing", name: "Cliente Logado", phone: "5511999999999", authLevel: "phone_lookup" },
+    });
+
+    const bodyWithoutPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Logado",
+    };
+
+    const response = await POST(request(bodyWithoutPhone, "11111111-1111-4111-8111-111111111101"), params);
+    expect(response.status).toBe(201);
+  });
+
+  it("2. sessao publica + telefone valido + body com telefone DIFERENTE -> telefone da sessao continua autoridade", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-existing", name: "Cliente Logado", phone: "5511999999999", authLevel: "phone_lookup" },
+    });
+
+    const bodyWithDifferentPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Logado",
+      customerPhone: "(11) 98888-7777",
+    };
+
+    const response = await POST(request(bodyWithDifferentPhone, "11111111-1111-4111-8111-111111111102"), params);
+    expect(response.status).toBe(201);
+    // Customer ID used in appointment creation should match session user ID (customer-existing)
+    expect(txMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          customerId: "customer-existing",
+        }),
+      })
+    );
+  });
+
+  it("3. sessao publica + telefone invalido/nulo + body com telefone valido -> usa body (recovery PASS)", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-bad-phone", name: "Cliente Bad Phone", phone: "invalid", authLevel: "phone_lookup" },
+    });
+
+    const bodyWithValidPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Bad Phone",
+      customerPhone: "(11) 99999-9999",
+    };
+
+    const response = await POST(request(bodyWithValidPhone, "11111111-1111-4111-8111-111111111103"), params);
+    expect(response.status).toBe(201);
+  });
+
+  it("4. sessao publica + telefone invalido + body sem telefone -> INVALID_PHONE", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-bad-phone", name: "Cliente Bad Phone", phone: "", authLevel: "phone_lookup" },
+    });
+
+    const bodyWithoutPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Bad Phone",
+    };
+
+    const response = await POST(request(bodyWithoutPhone, "11111111-1111-4111-8111-111111111104"), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("INVALID_PHONE");
+  });
+
+  it("5. sessao authLevel=admin + telefone admin + body com telefone de cliente -> NAO usar telefone admin", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "admin-user-id", name: "Owner Barba", phone: "5511977777777", authLevel: "admin", role: "OWNER" },
+    });
+
+    const bodyClientPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Publico",
+      customerPhone: "(11) 99999-9999",
+    };
+
+    const response = await POST(request(bodyClientPhone, "11111111-1111-4111-8111-111111111105"), params);
+    expect(response.status).toBe(201);
+    expect(txMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          customerId: "customer-existing", // resolved customer id from phone, NOT admin-user-id
+        }),
+      })
+    );
+  });
+
+  it("6. sessao authLevel=admin nao deve transformar o User admin em customerId no booking publico", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "admin-user-id", name: "Owner Barba", phone: "5511977777777", authLevel: "admin", role: "OWNER" },
+    });
+
+    const bodyClientPhone = {
+      memberId: "member-a",
+      serviceIds: ["svc-a", "svc-b"],
+      dateTime: "2026-07-20T13:00:00.000Z",
+      customerName: "Cliente Publico",
+      customerPhone: "(11) 99999-9999",
+    };
+
+    const response = await POST(request(bodyClientPhone, "11111111-1111-4111-8111-111111111106"), params);
+    expect(response.status).toBe(201);
+
+    expect(txMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          customerId: "customer-existing", // resolved customer id from phone, NOT admin-user-id
+        }),
+      })
+    );
+  });
 });
