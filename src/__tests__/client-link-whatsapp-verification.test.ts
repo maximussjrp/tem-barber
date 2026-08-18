@@ -148,7 +148,7 @@ describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {
   describe("Vínculo Cliente-Barbearia", () => {
     it("1. após booking público, linkedBarbershops retorna a barbearia do slug", async () => {
       getServerSessionMock.mockResolvedValue({
-        user: { id: "user-rafael", role: "USER", authLevel: "phone_lookup" },
+        user: { id: "user-rafael", role: "USER", authLevel: "verified_link" },
       });
 
       prismaMock.customerBarbershopLink.findMany.mockResolvedValue([
@@ -162,7 +162,7 @@ describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {
       expect(data.linkedBarbershopIds).toContain("shop-dom-brio");
     });
 
-    it("2. /minha-conta acessa appointments e vinculados mesmo com sessao phone_lookup", async () => {
+    it("2. /minha-conta bloqueia appointments para sessao phone_lookup", async () => {
       getServerSessionMock.mockResolvedValue({
         user: { id: "user-rafael", role: "USER", authLevel: "phone_lookup" },
       });
@@ -177,16 +177,13 @@ describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {
 
       const req = new Request("http://localhost/api/client/appointments");
       const res = await getClientAppointments(req as unknown as NextRequest);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(Array.isArray(data)).toBe(true);
-      expect(data.length).toBe(1);
+      expect(res.status).toBe(403);
+      expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
     });
 
     it("3. tenant isolation: cliente de uma barbearia não vê outra", async () => {
       getServerSessionMock.mockResolvedValue({
-        user: { id: "user-rafael", role: "USER", authLevel: "phone_lookup" },
+        user: { id: "user-rafael", role: "USER", authLevel: "verified_link" },
       });
 
       prismaMock.customerBarbershopLink.findMany.mockResolvedValue([
@@ -204,7 +201,7 @@ describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {
 
     it("4. telefone canônico e legado funcionam na busca de agendamentos", async () => {
       getServerSessionMock.mockResolvedValue({
-        user: { id: "user-rafael", role: "USER", authLevel: "phone_lookup" },
+        user: { id: "user-rafael", role: "USER", authLevel: "verified_link" },
       });
 
       prismaMock.user.findUnique.mockResolvedValue({
@@ -675,13 +672,7 @@ describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {
       const req = new Request("http://localhost/api/client/appointments");
       await getClientAppointments(req as unknown as NextRequest);
 
-      expect(prismaMock.appointment.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            OR: expect.arrayContaining([{ customerId: "user-rafael" }]),
-          }),
-        })
-      );
+      expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
     });
   });
 });

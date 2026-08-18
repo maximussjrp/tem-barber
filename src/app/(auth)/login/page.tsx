@@ -47,6 +47,17 @@ interface SessionUserWithRole {
   role?: string;
 }
 
+function getSafeBookingCallbackUrl(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return null;
+
+  const pathname = value.split(/[?#]/, 1)[0];
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length !== 2 || segments[1] !== "agendar") return null;
+
+  const slug = sanitizeBarbershopSlug(segments[0]);
+  return slug === segments[0] ? value : null;
+}
+
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -114,6 +125,28 @@ function LoginContent() {
   }, [activeTab, router, searchParams]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  useEffect(() => {
+    if (activeTab !== "client" || !showDiscovery) return;
+
+    let cancelled = false;
+    fetch("/api/public/barbershops")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("public barbershop lookup failed");
+        const data = await response.json();
+        if (!cancelled) setPartners(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setPartners([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPartnersLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, showDiscovery]);
+
   const selectTab = (tab: "client" | "admin") => {
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -168,50 +201,18 @@ function LoginContent() {
         return;
       }
 
-      // Consulta se o telefone possui barbearias vinculadas
-      const lookupRes = await fetch("/api/public/client-lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: clientName, phone: clientPhone }),
-      });
+      // General client login is discovery only. User/session persistence stays
+      // inside the actual public booking flow.
+      const callbackUrl = getSafeBookingCallbackUrl(searchParams.get("callbackUrl"));
+      const storedSlug = sanitizeBarbershopSlug(
+        savedBarbershopSlug || localStorage.getItem("lastBarbershopSlug")
+      );
 
-      if (!lookupRes.ok) {
-        const errData = await lookupRes.json();
-        setErrorMsg(errData.error || "Erro ao consultar telefone.");
-        setLoading(false);
-        return;
-      }
-
-      const lookupData = await lookupRes.json();
-      const linked = lookupData.linkedBarbershops || [];
-
-      if (linked.length > 0) {
-        // Encontrou barbearia vinculada, realiza o login
-        const res = await signIn("credentials", {
-          redirect: false,
-          loginType: "client",
-          name: clientName,
-          phone: clientPhone,
-        });
-
-        if (res?.error) {
-          setErrorMsg(res.error);
-        } else {
-          const callbackUrl = searchParams.get("callbackUrl");
-          if (callbackUrl) {
-            router.push(callbackUrl);
-          } else if (linked.length === 1) {
-            router.push(`/${linked[0].slug}/agendar`);
-          } else {
-            router.push("/minha-conta");
-          }
-          router.refresh();
-        }
+      if (callbackUrl) {
+        router.push(callbackUrl);
+      } else if (storedSlug) {
+        router.push(`/${storedSlug}/agendar`);
       } else {
-        if (lookupData.phoneHint) {
-          setErrorMsg(lookupData.phoneHint);
-        }
-        // Não possui barbearias vinculadas: exibe o buscador de barbearias
         setShowDiscovery(true);
       }
     } catch {
@@ -447,12 +448,12 @@ function LoginContent() {
         </div>
 
         {/* Descoberta de barbearias para clientes */}
-        {activeTab === "client" && showDiscovery && false && (
-        <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
+        {activeTab === "client" && showDiscovery && (
+          <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Não encontramos uma barbearia vinculada a este telefone.</h2>
-              <p className="text-sm text-[var(--text-muted)] mt-1">Escolha uma barbearia para agendar.</p>
+              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Contexto pronto para agendar</h2>
+              <p className="text-sm text-[var(--text-muted)] mt-1">Escolha uma barbearia pública para continuar. O telefone informado não libera acesso ao histórico.</p>
             </div>
 
             {!locationPermitted && (
@@ -527,26 +528,6 @@ function LoginContent() {
               ))}
             </div>
           )}
-        </div>
-        )}
-
-        {activeTab === "client" && showDiscovery && (
-          <div id="parceiras" className="w-full max-w-md mx-auto lg:max-w-none pt-4 lg:pt-0 relative z-10">
-            <div className="mb-6">
-              <h2 className="text-lg font-bold text-[var(--text-primary)] font-serif">Não encontramos uma barbearia vinculada a este telefone.</h2>
-              <p className="text-sm text-[var(--text-muted)] mt-1">Acesse pelo link enviado pela sua barbearia ou confira se o número está correto.</p>
-            </div>
-
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-5">
-              <p className="text-sm text-[var(--text-muted)]">
-                Por segurança, não exibimos uma lista pública de barbearias quando o telefone não tem vínculo.
-              </p>
-              {savedBarbershopSlug && (
-                <Link href={`/${savedBarbershopSlug}/agendar`} className="btn-gold mt-4 inline-flex w-full justify-center">
-                  Agendar na minha barbearia
-                </Link>
-              )}
-            </div>
           </div>
         )}
 

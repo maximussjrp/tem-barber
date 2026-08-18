@@ -68,10 +68,9 @@ export const authOptions: NextAuthOptions = {
 
           return {
             id: user.id,
-            name: user.name,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
+            name: "Cliente",
+            email: null,
+            phone: canonicalPhone,
             authLevel: "phone_lookup",
           };
         }
@@ -145,12 +144,44 @@ export const authOptions: NextAuthOptions = {
         token.phone = (user as CustomAuthUser).phone;
         (token as Record<string, unknown>).authLevel = (user as CustomAuthUser).authLevel;
       }
+
+      // phone_lookup is only an unverified booking context. Sanitize on every
+      // callback so JWTs issued before this hotfix also stop exposing User PII.
+      if ((token as Record<string, unknown>).authLevel === "phone_lookup") {
+        const tokenRecord = token as Record<string, unknown>;
+        const allowedClaims = new Set([
+          "id",
+          "phone",
+          "authLevel",
+          "name",
+          "email",
+          "picture",
+          "sub",
+          "iat",
+          "exp",
+          "jti",
+        ]);
+
+        for (const claim of Object.keys(tokenRecord)) {
+          if (!allowedClaims.has(claim)) delete tokenRecord[claim];
+        }
+
+        token.name = "Cliente";
+        token.email = null;
+        token.picture = null;
+      }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
+        if ((token as Record<string, unknown>).authLevel === "phone_lookup") {
+          session.user = {
+            name: "Cliente",
+            email: null,
+            image: null,
+          };
+        }
         (session.user as CustomAuthUser).id = token.id as string;
-        (session.user as CustomAuthUser).role = token.role as string;
         (session.user as CustomAuthUser).phone = token.phone as string;
         (session.user as CustomAuthUser).authLevel = (token as Record<string, unknown>).authLevel as
           | "phone_lookup"
@@ -158,6 +189,9 @@ export const authOptions: NextAuthOptions = {
           | "verified_link"
           | "verified_otp"
           | undefined;
+        if ((token as Record<string, unknown>).authLevel !== "phone_lookup") {
+          (session.user as CustomAuthUser).role = token.role as string;
+        }
       }
       return session;
     },

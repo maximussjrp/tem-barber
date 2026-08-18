@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "@/app/(auth)/login/page";
 import { signIn } from "next-auth/react";
@@ -22,11 +22,40 @@ vi.mock("next-auth/react", () => ({
   getSession: vi.fn(),
 }));
 
+function submitClientDiscovery(phone = "(11) 99999-9999") {
+  fireEvent.change(screen.getByPlaceholderText("Ex: João da Silva"), {
+    target: { value: "Nome Informado" },
+  });
+  fireEvent.change(screen.getByPlaceholderText("Ex: (11) 99999-9999"), {
+    target: { value: phone },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Entrar para Agendar" }));
+}
+
 describe("login", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     currentParams = new URLSearchParams();
     localStorage.clear();
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/public/barbershops") {
+        return {
+          ok: true,
+          json: async () => ([{
+            id: "shop-1",
+            name: "Don Brio",
+            slug: "don-brio",
+            logoUrl: null,
+            coverUrl: null,
+            city: "São Paulo",
+            neighborhood: "Centro",
+            latitude: null,
+            longitude: null,
+          }]),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as unknown as typeof fetch;
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation(() => ({
@@ -35,179 +64,95 @@ describe("login", () => {
         removeEventListener: vi.fn(),
       })),
     });
-
-    // Mock fetch for public lookup
-    global.fetch = vi.fn().mockImplementation((url, init) => {
-      const urlStr = url.toString();
-      if (urlStr === "/api/public/client-lookup") {
-        const body = JSON.parse(init.body);
-        if (body.phone && body.phone.replace(/\D/g, "") === "11911111111") {
-          // Exactly 1 linked barbershop
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({
-              linkedBarbershops: [{ id: "1", name: "Don Brio", slug: "don-brio" }]
-            }),
-          });
-        } else if (body.phone && body.phone.replace(/\D/g, "") === "22922222222") {
-          // Multiple linked barbershops
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({
-              linkedBarbershops: [
-                { id: "1", name: "Don Brio", slug: "don-brio" },
-                { id: "2", name: "Smoke Premium", slug: "smoke-premium" }
-              ]
-            }),
-          });
-        } else {
-          // No linked barbershops
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ linkedBarbershops: [] }),
-          });
-        }
-      } else if (urlStr === "/api/public/barbershops") {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve([
-            { id: "1", name: "Don Brio", slug: "don-brio", logoUrl: null, coverUrl: null, city: "São Paulo", neighborhood: "Centro" }
-          ]),
-        });
-      }
-      return Promise.reject(new Error("Unknown URL"));
-    }) as unknown as typeof fetch;
   });
 
   it("nao exibe descoberta de barbearias no fluxo Sou Barbearia", async () => {
     currentParams = new URLSearchParams("tab=admin");
-
     render(<LoginPage />);
 
     expect(screen.getByRole("button", { name: "Sou Barbearia" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Acessar Painel" })).toBeInTheDocument();
-    expect(screen.queryByText("Encontrar minha barbearia")).not.toBeInTheDocument();
-    expect(screen.queryByText("Não encontramos uma barbearia vinculada a este telefone.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contexto pronto para agendar")).not.toBeInTheDocument();
     await waitFor(() => expect(global.fetch).not.toHaveBeenCalled());
   });
 
-  it("nao mostra lista de barbearias inicialmente na aba cliente", async () => {
+  it("nao mostra descoberta inicialmente na aba cliente", () => {
     render(<LoginPage />);
 
-    expect(screen.queryByText("Não encontramos uma barbearia vinculada a este telefone.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contexto pronto para agendar")).not.toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("lookup com uma barbearia vinculada realiza login e redireciona para /[slug]/agendar", async () => {
+  it.each(["(11) 99999-9999", "(79) 98824-0050"])(
+    "telefone válido %s segue fluxo indistinguível sem criar User ou sessão",
+    async (phone) => {
+      render(<LoginPage />);
+      submitClientDiscovery(phone);
+
+      expect(await screen.findByText("Contexto pronto para agendar")).toBeInTheDocument();
+      expect(await screen.findByRole("link", { name: "Agendar Horário" })).toHaveAttribute(
+        "href",
+        "/don-brio/agendar"
+      );
+      expect(signIn).not.toHaveBeenCalled();
+      expect(routerMock.push).not.toHaveBeenCalledWith("/minha-conta");
+      expect(global.fetch).toHaveBeenCalledWith("/api/public/barbershops");
+      expect(global.fetch).not.toHaveBeenCalledWith("/api/public/client-lookup", expect.anything());
+    }
+  );
+
+  it("retorna ao booking salvo depois de criar o contexto", async () => {
+    localStorage.setItem("lastBarbershopSlug", "don-brio");
     render(<LoginPage />);
+    submitClientDiscovery();
 
-    const nameInput = screen.getByPlaceholderText("Ex: João da Silva");
-    const phoneInput = screen.getByPlaceholderText("Ex: (11) 99999-9999");
-    const submitBtn = screen.getByRole("button", { name: "Entrar para Agendar" });
-
-    fireEvent.change(nameInput, { target: { value: "Cliente Um" } });
-    fireEvent.change(phoneInput, { target: { value: "(11) 91111-1111" } });
-    fireEvent.click(submitBtn);
-
-    await waitFor(() => {
-      expect(signIn).toHaveBeenCalledWith("credentials", {
-        redirect: false,
-        loginType: "client",
-        name: "Cliente Um",
-        phone: "(11) 91111-1111",
-      });
-      expect(routerMock.push).toHaveBeenCalledWith("/don-brio/agendar");
-    });
+    await waitFor(() => expect(routerMock.push).toHaveBeenCalledWith("/don-brio/agendar"));
+    expect(signIn).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/public/client-lookup", expect.anything());
   });
 
-  it("lookup com multiplas barbearias vinculadas realiza login e redireciona para /minha-conta", async () => {
+  it("aceita callbackUrl apenas quando aponta para booking local", async () => {
+    currentParams = new URLSearchParams("callbackUrl=%2Fdon-brio%2Fagendar%3Fservice%3D1");
     render(<LoginPage />);
-
-    const nameInput = screen.getByPlaceholderText("Ex: João da Silva");
-    const phoneInput = screen.getByPlaceholderText("Ex: (11) 99999-9999");
-    const submitBtn = screen.getByRole("button", { name: "Entrar para Agendar" });
-
-    fireEvent.change(nameInput, { target: { value: "Cliente Dois" } });
-    fireEvent.change(phoneInput, { target: { value: "(22) 92222-2222" } });
-    fireEvent.click(submitBtn);
+    submitClientDiscovery();
 
     await waitFor(() => {
-      expect(signIn).toHaveBeenCalledWith("credentials", {
-        redirect: false,
-        loginType: "client",
-        name: "Cliente Dois",
-        phone: "(22) 92222-2222",
-      });
-      expect(routerMock.push).toHaveBeenCalledWith("/minha-conta");
+      expect(routerMock.push).toHaveBeenCalledWith("/don-brio/agendar?service=1");
     });
-  });
-
-  it("lookup sem barbearias vinculadas nao realiza login e exibe mensagem segura", async () => {
-    render(<LoginPage />);
-
-    const nameInput = screen.getByPlaceholderText("Ex: João da Silva");
-    const phoneInput = screen.getByPlaceholderText("Ex: (11) 99999-9999");
-    const submitBtn = screen.getByRole("button", { name: "Entrar para Agendar" });
-
-    fireEvent.change(nameInput, { target: { value: "Cliente Tres" } });
-    fireEvent.change(phoneInput, { target: { value: "(33) 93333-3333" } });
-    fireEvent.click(submitBtn);
-
-    expect(await screen.findByText("Não encontramos uma barbearia vinculada a este telefone.")).toBeInTheDocument();
-    expect(screen.getByText("Por segurança, não exibimos uma lista pública de barbearias quando o telefone não tem vínculo.")).toBeInTheDocument();
-
-    expect(global.fetch).not.toHaveBeenCalledWith("/api/public/barbershops");
     expect(signIn).not.toHaveBeenCalled();
   });
 
-  it("lookup sem vinculo mostra mensagem segura e oferece retorno ao slug salvo", async () => {
-    localStorage.setItem("lastBarbershopSlug", "don-brio");
-
+  it("rejeita callbackUrl externo e oferece descoberta pública", async () => {
+    currentParams = new URLSearchParams("callbackUrl=https%3A%2F%2Fevil.example%2Fsteal");
     render(<LoginPage />);
+    submitClientDiscovery();
 
-    const inputs = screen.getAllByRole("textbox");
-    fireEvent.change(inputs[0], { target: { value: "Cliente Tres" } });
-    fireEvent.change(inputs[1], { target: { value: "(33) 93333-3333" } });
-    fireEvent.click(screen.getByRole("button", { name: "Entrar para Agendar" }));
-
-    expect(await screen.findByText("Não encontramos uma barbearia vinculada a este telefone.")).toBeInTheDocument();
-    expect(screen.getByText("Por segurança, não exibimos uma lista pública de barbearias quando o telefone não tem vínculo.")).toBeInTheDocument();
-
-    const link = screen.getByRole("link", { name: "Agendar na minha barbearia" });
-    expect(link).toHaveAttribute("href", "/don-brio/agendar");
+    expect(await screen.findByText("Contexto pronto para agendar")).toBeInTheDocument();
+    expect(routerMock.push).not.toHaveBeenCalled();
     expect(signIn).not.toHaveBeenCalled();
-    expect(global.fetch).not.toHaveBeenCalledWith("/api/public/barbershops");
   });
 
-  it("lookup sem vinculo oferece retorno ao slug salvo", async () => {
-    localStorage.setItem("lastBarbershopSlug", "don-brio");
-
+  it("rejeita callbackUrl privado sem criar sessão phone_lookup", async () => {
+    currentParams = new URLSearchParams("callbackUrl=%2Fminha-conta");
     render(<LoginPage />);
+    submitClientDiscovery();
 
-    const inputs = screen.getAllByRole("textbox");
-    fireEvent.change(inputs[0], { target: { value: "Cliente Tres" } });
-    fireEvent.change(inputs[1], { target: { value: "(33) 93333-3333" } });
-    fireEvent.click(screen.getByRole("button", { name: "Entrar para Agendar" }));
-
-    const link = await screen.findByRole("link", { name: "Agendar na minha barbearia" });
-    expect(link).toHaveAttribute("href", "/don-brio/agendar");
-    expect(global.fetch).not.toHaveBeenCalledWith("/api/public/barbershops");
+    expect(await screen.findByText("Contexto pronto para agendar")).toBeInTheDocument();
+    expect(routerMock.push).not.toHaveBeenCalledWith("/minha-conta");
+    expect(signIn).not.toHaveBeenCalled();
   });
 
-  it("slug invalido salvo nao redireciona nem gera atalho", async () => {
+  it("slug invalido salvo nao redireciona", async () => {
     localStorage.setItem("lastBarbershopSlug", "../admin");
-
     render(<LoginPage />);
 
     await waitFor(() => expect(localStorage.getItem("lastBarbershopSlug")).toBeNull());
     expect(routerMock.replace).not.toHaveBeenCalledWith("/../admin/agendar");
   });
 
-  it("renderiza a logo oficial do Tem Barber", async () => {
+  it("renderiza a logo oficial do Tem Barber", () => {
     render(<LoginPage />);
 
-    const logo = screen.getByAltText("Tem Barber Logo");
-    expect(logo).toBeInTheDocument();
-    expect(logo).toHaveAttribute("src", "/tem-barber-logo.png");
+    expect(screen.getByAltText("Tem Barber Logo")).toHaveAttribute("src", "/tem-barber-logo.png");
   });
 });

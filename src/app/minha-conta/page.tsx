@@ -60,6 +60,10 @@ function isClientAuthLevel(authLevel: string | undefined) {
   );
 }
 
+function isStrongClientAuthLevel(authLevel: string | undefined) {
+  return authLevel === "verified_link" || authLevel === "verified_otp";
+}
+
 export default function MinhaContaPage() {
   return (
     <Suspense
@@ -84,6 +88,9 @@ function MinhaContaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const barbershopParam = searchParams.get("barbershop");
+  const authLevel = (session?.user as ClientSessionUser | undefined)?.authLevel;
+  const isPhoneLookup = authLevel === "phone_lookup";
+  const hasStrongClientAccess = isStrongClientAuthLevel(authLevel);
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [linkedBarbershops, setLinkedBarbershops] = useState<string[]>([]);
@@ -101,7 +108,7 @@ function MinhaContaContent() {
   }, [status, router]);
 
   useEffect(() => {
-    if (status === "authenticated") {
+    if (status === "authenticated" && hasStrongClientAccess) {
       const appointmentsUrl = barbershopParam
         ? `/api/client/appointments?barbershop=${encodeURIComponent(barbershopParam)}`
         : "/api/client/appointments";
@@ -139,7 +146,7 @@ function MinhaContaContent() {
         })
         .finally(() => setLoading(false));
     }
-  }, [status, barbershopParam]);
+  }, [status, barbershopParam, hasStrongClientAccess]);
 
   const handleCancel = async (id: string) => {
     setCancelling(id);
@@ -168,7 +175,7 @@ function MinhaContaContent() {
     }
   };
 
-  if (status === "loading" || loading) {
+  if (status === "loading" || (loading && hasStrongClientAccess)) {
     return (
       <div className="min-h-screen bg-[var(--bg)] p-6 max-w-xl mx-auto">
         <div className="h-8 w-44 rounded-xl bg-[var(--surface-2)] animate-pulse mb-8" />
@@ -188,7 +195,7 @@ function MinhaContaContent() {
     (a) => !isFuture(a.dateTime) || ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
   );
   const clientSessionActive = isClientAuthLevel(
-    (session?.user as ClientSessionUser | undefined)?.authLevel
+    authLevel
   );
 
   const handleLogout = async () => {
@@ -211,6 +218,57 @@ function MinhaContaContent() {
       setLoggingOut(false);
     }
   };
+
+  if (isPhoneLookup) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)]">
+        <div className="sticky top-0 z-10 border-b border-[var(--border-subtle)] bg-[var(--bg)]/95 backdrop-blur">
+          <div className="mx-auto flex max-w-xl items-center gap-3 px-4 py-4">
+            <Link
+              href="/"
+              className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+              title="Voltar"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </Link>
+            <h1 className="font-serif text-lg font-bold">Minha Conta</h1>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="ml-auto rounded-xl bg-[var(--surface-2)] px-3 py-2 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-50"
+            >
+              {loggingOut ? "Saindo..." : "Sair"}
+            </button>
+          </div>
+        </div>
+
+        <main className="mx-auto max-w-xl px-4 py-10">
+          <div className="rounded-2xl border border-amber-500/30 bg-[var(--surface-1)] p-6 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 text-2xl" aria-hidden="true">
+              🔒
+            </div>
+            <h2 className="font-serif text-xl font-bold">Verificação necessária</h2>
+            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-[var(--text-muted)]">
+              Para proteger seus agendamentos, sua identidade precisa ser verificada antes de acessar o histórico.
+            </p>
+            <p className="mx-auto mt-2 max-w-md text-xs leading-5 text-[var(--text-muted)]">
+              A verificação segura ainda não está disponível. Você pode continuar usando o agendamento público normalmente.
+            </p>
+            <Link href="/" className="btn-gold mt-6 inline-flex min-h-[44px] items-center justify-center">
+              Agendar horário / escolher barbearia
+            </Link>
+          </div>
+
+          {logoutError && (
+            <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {logoutError}
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
 
   const renderCard = (a: AppointmentItem) => {
     const dt = new Date(a.dateTime);

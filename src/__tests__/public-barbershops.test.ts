@@ -103,46 +103,28 @@ describe("barbearias publicas", () => {
     );
   });
 
-  it("client lookup busca por variantes normalizadas do telefone", async () => {
-    await clientLookup(postLookup("+55 (79) 98824-0050"));
-
-    expect(prismaMock.user.findFirst).toHaveBeenCalledWith({
-      where: {
-        phone: {
-          in: expect.arrayContaining(["5579988240050", "79988240050"]),
-        },
-      },
-    });
-  });
-
-  it("client lookup retorna somente barbearias publicaveis vinculadas", async () => {
+  it("client lookup retorna resposta indistinguivel para telefone existente e inexistente", async () => {
     prismaMock.user.findFirst.mockResolvedValue({ id: "user-a" });
-    prismaMock.appointment.findMany.mockResolvedValue([
-      { barbershop: { id: "shop-a", name: "Don Brio", slug: "don-brio" } },
-    ]);
+    const existingResponse = await clientLookup(postLookup("(11) 99999-9999"));
 
-    const response = await clientLookup(postLookup("(11) 99999-9999"));
-    const data = await response.json();
+    prismaMock.user.findFirst.mockResolvedValue(null);
+    const missingResponse = await clientLookup(postLookup("(79) 98824-0050"));
 
-    expect(prismaMock.appointment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          customerId: "user-a",
-          barbershop: expect.objectContaining({ active: true }),
-        }),
-      })
-    );
-    expect(data.linkedBarbershops).toEqual([
-      { id: "shop-a", name: "Don Brio", slug: "don-brio" },
-    ]);
+    expect(existingResponse.status).toBe(200);
+    expect(missingResponse.status).toBe(200);
+    expect(await existingResponse.json()).toEqual({ ok: true });
+    expect(await missingResponse.json()).toEqual({ ok: true });
+    expect(prismaMock.user.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.comanda.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.barbershop.findMany).not.toHaveBeenCalled();
   });
 
-  it("client lookup sem vinculo nao retorna lista global", async () => {
-    const response = await clientLookup(postLookup("(79) 98824-0050"));
-    const data = await response.json();
+  it("client lookup preserva validacao sintatica sem consultar dados privados", async () => {
+    const response = await clientLookup(postLookup("telefone-invalido"));
 
-    expect(data.linkedBarbershops).toEqual([]);
-    expect(prismaMock.barbershop.findMany).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    expect(prismaMock.user.findFirst).not.toHaveBeenCalled();
   });
 
   it("aplica rate limit basico no client lookup", async () => {

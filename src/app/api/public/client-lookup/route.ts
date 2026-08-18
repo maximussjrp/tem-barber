@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { normalizePhone, phoneLookupVariants } from "@/lib/customers";
-import { publicBarbershopWhere, isPublicBarbershop } from "@/lib/public-barbershops";
+import { normalizePhone } from "@/lib/customers";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 
@@ -44,86 +42,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await prisma.user.findFirst({
-      where: { phone: { in: phoneLookupVariants(phone) } },
-    });
-
-    if (!user) {
-      return NextResponse.json({
-        linkedBarbershops: [],
-        phoneHint:
-          cleanPhone.length === 10
-            ? "Nao encontramos este telefone. Confira se o numero esta completo, incluindo o 9o digito quando for celular."
-            : undefined,
-      });
-    }
-
-    const publicWhere = publicBarbershopWhere();
-
-    const [appointments, comandas] = await Promise.all([
-      prisma.appointment.findMany({
-        where: {
-          customerId: user.id,
-          barbershop: publicWhere,
-        },
-        select: {
-          barbershop: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
-      }),
-      prisma.comanda.findMany({
-        where: {
-          customerId: user.id,
-          barbershop: publicWhere,
-        },
-        select: {
-          barbershop: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
-      }),
-    ]);
-
-    const barbershopMap = new Map<string, { id: string; name: string; slug: string }>();
-
-    for (const app of appointments) {
-      if (app.barbershop) {
-        barbershopMap.set(app.barbershop.id, {
-          id: app.barbershop.id,
-          name: app.barbershop.name,
-          slug: app.barbershop.slug,
-        });
-      }
-    }
-
-    for (const cmd of comandas) {
-      if (cmd.barbershop) {
-        barbershopMap.set(cmd.barbershop.id, {
-          id: cmd.barbershop.id,
-          name: cmd.barbershop.name,
-          slug: cmd.barbershop.slug,
-        });
-      }
-    }
-
-    const linkedBarbershops = Array.from(barbershopMap.values()).filter(isPublicBarbershop);
-
-    return NextResponse.json({
-      linkedBarbershops,
-      phoneHint:
-        linkedBarbershops.length === 0 && cleanPhone.length === 10
-          ? "Nao encontramos este telefone. Confira se o numero esta completo, incluindo o 9o digito quando for celular."
-          : undefined,
-    });
+    // A valid phone is only a booking identifier, never proof of identity.
+    // Keep the response constant and avoid querying private customer data.
+    return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Erro ao buscar vinculos do cliente:", error);
     return NextResponse.json({ error: "Erro interno do servidor." }, { status: 500 });

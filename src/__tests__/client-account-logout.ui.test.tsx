@@ -54,7 +54,25 @@ describe("logout em Minha Conta", () => {
 
     render(<MinhaContaPage />);
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await waitFor(() => expect(global.fetch).not.toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Sair" })).not.toBeInTheDocument();
+  });
+
+  it("phone_lookup nao consulta dados privados e mostra estado recuperavel", async () => {
+    sessionMock.mockReturnValue({
+      user: { id: "customer-a", name: "Cliente", authLevel: "phone_lookup" },
+    });
+
+    render(<MinhaContaPage />);
+
+    expect(await screen.findByText("Verificação necessária")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Para proteger seus agendamentos, sua identidade precisa ser verificada antes de acessar o histórico."
+    )).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Agendar horário / escolher barbearia" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("button", { name: "Sair" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/client/appointments");
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/client/linked-barbershops");
   });
 });

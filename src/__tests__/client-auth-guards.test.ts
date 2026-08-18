@@ -35,7 +35,7 @@ describe("client auth guards", () => {
     expect(response.status).toBe(401);
   });
 
-  it("permite GET /api/client/appointments para sessao phone_lookup", async () => {
+  it("bloqueia GET /api/client/appointments para sessao phone_lookup", async () => {
     getServerSessionMock.mockResolvedValue({
       user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
     });
@@ -43,22 +43,38 @@ describe("client auth guards", () => {
     const req = new NextRequest("http://localhost/api/client/appointments");
     const response = await getClientAppointments(req);
 
-    expect(response.status).toBe(200);
-    expect(prismaMock.appointment.findMany).toHaveBeenCalled();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Verificação necessária para acessar sua conta.",
+    });
+    expect(prismaMock.appointment.findMany).not.toHaveBeenCalled();
   });
 
-  it("permite GET /api/client/linked-barbershops para sessao phone_lookup", async () => {
+  it("bloqueia GET /api/client/linked-barbershops para sessao phone_lookup", async () => {
     getServerSessionMock.mockResolvedValue({
       user: { id: "customer-a", role: "USER", authLevel: "phone_lookup" },
     });
 
-    prismaMock.customerBarbershopLink.findMany.mockResolvedValue([{ barbershopId: "shop-a" }]);
-
     const response = await getLinkedBarbershops();
     const data = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(data.linkedBarbershopIds).toEqual(["shop-a"]);
+    expect(response.status).toBe(403);
+    expect(data).toEqual({ error: "Verificação necessária para acessar sua conta." });
+    expect(prismaMock.customerBarbershopLink.findMany).not.toHaveBeenCalled();
+  });
+
+  it("permite os GETs para verified_otp", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "customer-a", role: "USER", authLevel: "verified_otp" },
+    });
+
+    const appointmentsResponse = await getClientAppointments(
+      new NextRequest("http://localhost/api/client/appointments")
+    );
+    const linkedResponse = await getLinkedBarbershops();
+
+    expect(appointmentsResponse.status).toBe(200);
+    expect(linkedResponse.status).toBe(200);
   });
 
   it("permite GET /api/client/linked-barbershops para sessao forte", async () => {
@@ -74,5 +90,19 @@ describe("client auth guards", () => {
 
     expect(response.status).toBe(200);
     expect(data.linkedBarbershopIds).toEqual(["shop-a", "shop-b"]);
+  });
+
+  it("nao concede acesso client para sessao admin", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "owner-a", role: "OWNER", authLevel: "admin" },
+    });
+
+    const appointmentsResponse = await getClientAppointments(
+      new NextRequest("http://localhost/api/client/appointments")
+    );
+    const linkedResponse = await getLinkedBarbershops();
+
+    expect(appointmentsResponse.status).toBe(403);
+    expect(linkedResponse.status).toBe(403);
   });
 });

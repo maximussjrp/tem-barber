@@ -11,11 +11,7 @@ type SessionUser = {
 };
 
 function hasClientAccess(sessionUser: SessionUser | undefined) {
-  return (
-    sessionUser?.authLevel === "phone_lookup" ||
-    sessionUser?.authLevel === "verified_link" ||
-    sessionUser?.authLevel === "verified_otp"
-  );
+  return sessionUser?.authLevel === "verified_link" || sessionUser?.authLevel === "verified_otp";
 }
 
 function hasStrongClientAccess(sessionUser: SessionUser | undefined) {
@@ -31,7 +27,7 @@ export async function GET(request: NextRequest) {
 
   if (!hasClientAccess(session.user as SessionUser)) {
     return NextResponse.json(
-      { error: "Acesso restrito. Use um link seguro para acessar sua conta." },
+      { error: "Verificação necessária para acessar sua conta." },
       { status: 403 }
     );
   }
