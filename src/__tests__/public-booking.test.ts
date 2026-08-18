@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { resetRateLimitStore } from "@/lib/public-rate-limit";
 
 const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  barbershop: { findFirst: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
   barberService: { findMany: vi.fn() },
@@ -53,8 +54,28 @@ const services = [
   { id: "svc-b", price: "35.50", durationMin: 45 },
 ];
 
+function activeMemberWithSchedule(
+  workingHours: Array<{
+    startTime: string;
+    endTime: string;
+    breakStart: string | null;
+    breakEnd: string | null;
+  }> = [
+    { startTime: "09:00", endTime: "18:00", breakStart: null, breakEnd: null },
+  ]
+) {
+  return {
+    id: "member-a",
+    barbershopId: "shop-a",
+    isActive: true,
+    workingHours,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-20T14:30:00.000Z"));
   resetRateLimitStore();
   getServerSessionMock.mockResolvedValue(null);
   prismaMock.barbershop.findUnique.mockResolvedValue({
@@ -78,11 +99,8 @@ beforeEach(() => {
   txMock.idempotencyKey.update.mockResolvedValue({ id: "idem-a" });
   txMock.appointmentWhatsappConfirmation.create.mockResolvedValue({ id: "whatsapp-confirmation-a" });
   txMock.$executeRaw.mockResolvedValue(0);
-  txMock.barbershopMember.findFirst.mockResolvedValue({
-    id: "member-a",
-    barbershopId: "shop-a",
-    isActive: true,
-  });
+  txMock.barbershop.findFirst.mockResolvedValue({ id: "shop-a" });
+  txMock.barbershopMember.findFirst.mockResolvedValue(activeMemberWithSchedule());
   txMock.service.findMany.mockResolvedValue(services);
   txMock.barberService.findMany.mockResolvedValue([
     { serviceId: "svc-a" },
@@ -106,6 +124,10 @@ beforeEach(() => {
       service: { name: item.serviceId, durationMin: 30 },
     })),
   }));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("agendamento publico", () => {
@@ -245,7 +267,7 @@ describe("agendamento publico", () => {
     });
   });
 
-  it("rejeita profissional invalido", async () => {
+  it("rejeita profissional desativado depois da disponibilidade", async () => {
     txMock.barbershopMember.findFirst.mockResolvedValue(null);
 
     const response = await POST(request(validBody), params);
@@ -316,7 +338,7 @@ describe("agendamento publico", () => {
     );
   });
 
-  it("rejeita horario indisponivel por conflito ativo", async () => {
+  it("rejeita appointment criado depois da disponibilidade", async () => {
     txMock.$queryRaw.mockReset();
     txMock.$queryRaw.mockResolvedValueOnce([{ id: "conflict-a" }]);
 
@@ -328,7 +350,7 @@ describe("agendamento publico", () => {
     expect(txMock.appointment.create).not.toHaveBeenCalled();
   });
 
-  it("retorna 409 quando booking publico conflita com bloqueio de agenda", async () => {
+  it("rejeita timeOff criado depois da disponibilidade", async () => {
     txMock.timeOff.findMany.mockResolvedValue([
       {
         id: "block-a",
@@ -350,7 +372,7 @@ describe("agendamento publico", () => {
     expect(txMock.idempotencyKey.update).not.toHaveBeenCalled();
   });
 
-  it("rejeita profissional que nao executa todos os servicos", async () => {
+  it("rejeita capability removida depois da disponibilidade", async () => {
     txMock.barberService.findMany.mockResolvedValue([{ serviceId: "svc-a" }]);
 
     const response = await POST(request(validBody), params);
@@ -420,6 +442,30 @@ describe("agendamento publico", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           customerId: "customer-existing",
+        }),
+      })
+    );
+  });
+
+  it("preserva quantidades no calculo autoritativo de preco e duracao", async () => {
+    const response = await POST(
+      request({
+        ...validBody,
+        serviceIds: undefined,
+        services: [
+          { serviceId: "svc-a", quantity: 2 },
+          { serviceId: "svc-b", quantity: 1 },
+        ],
+      }),
+      params
+    );
+
+    expect(response.status).toBe(201);
+    expect(txMock.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPrice: 115.5,
+          durationMin: 105,
         }),
       })
     );
@@ -508,5 +554,144 @@ describe("agendamento publico", () => {
         }),
       })
     );
+  });
+
+  it("rejeita horario passado no dia atual", async () => {
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-20T11:00:00.000Z" }),
+      params
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("PUBLIC_SLOT_INVALID");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita horario antes da abertura", async () => {
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T08:30:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita horario no ou depois do encerramento", async () => {
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T18:00:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita appointment que comeca dentro do break", async () => {
+    txMock.barbershopMember.findFirst.mockResolvedValue(
+      activeMemberWithSchedule([
+        { startTime: "09:00", endTime: "18:00", breakStart: "12:00", breakEnd: "13:00" },
+      ])
+    );
+
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T12:00:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita appointment que cruza o inicio do break", async () => {
+    txMock.barbershopMember.findFirst.mockResolvedValue(
+      activeMemberWithSchedule([
+        { startTime: "09:00", endTime: "18:00", breakStart: "12:00", breakEnd: "13:00" },
+      ])
+    );
+
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T11:30:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita appointment que termina depois do fechamento", async () => {
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T17:00:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita dia sem workingHours", async () => {
+    txMock.barbershopMember.findFirst.mockResolvedValue(activeMemberWithSchedule([]));
+
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T13:00:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("revalida workingHours alterado depois da disponibilidade", async () => {
+    txMock.barbershopMember.findFirst
+      .mockResolvedValueOnce(activeMemberWithSchedule())
+      .mockResolvedValueOnce(
+        activeMemberWithSchedule([
+          { startTime: "14:00", endTime: "18:00", breakStart: null, breakEnd: null },
+        ])
+      );
+
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T13:00:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(422);
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("revalida elegibilidade publica do tenant dentro da transacao", async () => {
+    txMock.barbershop.findFirst.mockResolvedValue(null);
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("PUBLIC_BOOKING_UNAVAILABLE");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejeita servico desativado depois da disponibilidade", async () => {
+    txMock.service.findMany.mockResolvedValue([{ id: "svc-a", price: "40.00", durationMin: 30 }]);
+
+    const response = await POST(request(validBody), params);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("INVALID_SERVICE_SELECTION");
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("permite appointment adjacente sem sobreposicao", async () => {
+    txMock.$queryRaw.mockReset();
+    txMock.$queryRaw.mockResolvedValue([]);
+
+    const response = await POST(
+      request({ ...validBody, dateTime: "2026-07-21T10:30:00.000Z" }),
+      params
+    );
+
+    expect(response.status).toBe(201);
+    expect(txMock.appointment.create).toHaveBeenCalled();
   });
 });

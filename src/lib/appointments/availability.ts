@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
-import { startOfDayUTC, endOfDayUTC, nowBR, todayIsoBR } from "@/lib/time-utils";
+import { startOfDayUTC, endOfDayUTC, nowBR } from "@/lib/time-utils";
 import { isNormalizedTimeOffOverlapping, normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 import { findEligibleMembersForServices } from "./professional-service-capability";
+import { getPublicSlotInvalidReason } from "./public-booking-eligibility";
 
 export interface GetAvailabilityParams {
   barbershopId: string;
@@ -88,8 +89,6 @@ export async function getAvailableSlots({
 
     const workStart = toMinutes(wh.startTime);
     const workEnd = toMinutes(wh.endTime);
-    const breakStart = wh.breakStart ? toMinutes(wh.breakStart) : null;
-    const breakEnd = wh.breakEnd ? toMinutes(wh.breakEnd) : null;
 
     // Converter TimeOffs em intervalos ocupados de minutos no dia
     const timeOffBusy = member.timeOffs.filter((storedTimeOff) =>
@@ -137,25 +136,24 @@ export async function getAvailableSlots({
     const SLOT_INTERVAL = 30;
     const slots: string[] = [];
 
-    // BR Time check to block past slots on "today"
-    const isToday = dateStr === todayIsoBR();
     const brNow = nowBR();
-    const brNowMinutes = brNow.getUTCHours() * 60 + brNow.getUTCMinutes();
 
     for (let start = workStart; start + totalDuration <= workEnd; start += SLOT_INTERVAL) {
       const end = start + totalDuration;
 
-      // Skip if overlaps with break
-      if (breakStart !== null && breakEnd !== null) {
-        if (start < breakEnd && end > breakStart) continue;
-      }
+      const dateTime = new Date(Date.UTC(year, month - 1, day, Math.floor(start / 60), start % 60));
+      if (
+        getPublicSlotInvalidReason({
+          dateTime,
+          durationMin: totalDuration,
+          workingHours: wh,
+          now: brNow,
+        })
+      ) continue;
 
       // Skip if overlaps with existing appointment
       const conflict = busy.some((b) => start < b.end && end > b.start);
       if (conflict) continue;
-
-      // Skip past slots if checking today
-      if (isToday && start <= brNowMinutes) continue;
 
       const hh = String(Math.floor(start / 60)).padStart(2, "0");
       const mm = String(start % 60).padStart(2, "0");

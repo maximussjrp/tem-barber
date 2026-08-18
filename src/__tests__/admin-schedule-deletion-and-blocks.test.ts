@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { GET as getAdminAppointmentsHandler } from "@/app/api/admin/appointments/route";
 import { DELETE as deleteAppointmentHandler } from "@/app/api/admin/appointments/[id]/route";
@@ -72,6 +72,8 @@ async function deleteAppointment() {
 describe("Ajustes Operacionais da Agenda - Exclusao e Bloqueios", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
     ownerSession();
     baseAppointment();
     vi.mocked(prisma.review.findFirst).mockResolvedValue(null);
@@ -80,6 +82,10 @@ describe("Ajustes Operacionais da Agenda - Exclusao e Bloqueios", () => {
     vi.mocked(prisma.financialEntry.count).mockResolvedValue(0);
     vi.mocked(prisma.appointment.count).mockResolvedValue(0);
     vi.mocked(prisma.barbershop.findUnique).mockResolvedValue({ name: "Tem Barber", slug: "tem-barber" } as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("rejeita hard-delete por BARBER com 403", async () => {

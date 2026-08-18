@@ -17,7 +17,11 @@ import {
 } from "@/lib/appointments/errors";
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
-import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
+import {
+  PublicBookingUnavailableError,
+  PublicSlotInvalidError,
+  validatePublicBookingEligibility,
+} from "@/lib/appointments/public-booking-eligibility";
 import { stripMetadataFromNotes, buildNotesWithMetadata } from "@/lib/appointments/notes-metadata";
 import {
   findBarbershopCustomerById,
@@ -94,7 +98,9 @@ function jsonError(error: unknown) {
     error instanceof InvalidServiceSelectionError ||
     error instanceof ProfessionalNotAvailableError ||
     error instanceof ProfessionalServiceMismatchError ||
-    error instanceof ScheduleBlockConflictApptError
+    error instanceof ScheduleBlockConflictApptError ||
+    error instanceof PublicSlotInvalidError ||
+    error instanceof PublicBookingUnavailableError
   ) {
     return NextResponse.json(
       { error: error.code, message: error.message },
@@ -431,16 +437,12 @@ export async function POST(
 
       const targetServiceIds = normalizedServices.map((s) => s.serviceId);
 
-      const { services } = await validateProfessionalServiceCapability(tx, {
+      const { services } = await validatePublicBookingEligibility(tx, {
         barbershopId: barbershop.id,
         memberId,
         serviceIds: targetServiceIds,
-      });
-
-      // Apply quantities
-      const qtyMap = new Map(normalizedServices.map(s => [s.serviceId, s.quantity]));
-      services.forEach(s => {
-        s.quantity = qtyMap.get(s.id) ?? 1;
+        dateTime: requestedDateTime,
+        quantities: serviceQtyMap,
       });
 
       const { totalPrice, durationMin } = calculateAppointmentTotals(services);

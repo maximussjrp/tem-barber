@@ -117,6 +117,15 @@ async function seedTenant(label: string) {
   await prisma.barberService.create({
     data: { barberId: member.id, serviceId: service.id },
   });
+  await prisma.workingHour.create({
+    data: {
+      memberId: member.id,
+      dayOfWeek: 1,
+      startTime: "09:00",
+      endTime: "18:00",
+      isActive: true,
+    },
+  });
 
   return { shop, admin, owner, barberUser, customer, member, category, service };
 }
@@ -142,11 +151,31 @@ async function truncateDatabase() {
 
 describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
   beforeAll(async () => {
-    process.env.DATABASE_URL = testDatabaseUrl;
+    if (!testDatabaseUrl) {
+      throw new Error("TEST_DATABASE_URL is required for integration tests.");
+    }
+    const integrationDatabaseUrl = testDatabaseUrl;
+    process.env.DATABASE_URL = integrationDatabaseUrl;
     vi.resetModules();
     getServerSessionMock.mockResolvedValue(null);
 
-    prisma = (await import("@/lib/prisma")).default as PrismaClient;
+    const [{ PrismaClient }, { PrismaPg }, { Pool }] = await Promise.all([
+      import("@prisma/client"),
+      import("@prisma/adapter-pg"),
+      import("pg"),
+    ]);
+    const pool = new Pool({ connectionString: integrationDatabaseUrl });
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+    const [target] = await prisma.$queryRaw<Array<{ database: string; schema: string }>>`
+      SELECT current_database() AS database, current_schema() AS schema
+    `;
+    if (!target || !/match_barber_test/.test(target.database)) {
+      throw new Error("Integration tests require an isolated match_barber_test database.");
+    }
+    if (integrationDatabaseUrl.includes("tb_aud_002") && target.schema !== "tb_aud_002") {
+      throw new Error(`Integration test schema mismatch: ${target.schema}`);
+    }
+    vi.doMock("@/lib/prisma", () => ({ default: prisma }));
     publicBook = (await import("@/app/api/public/barbershop/[slug]/book/route")).POST;
     adminCreate = (await import("@/app/api/admin/appointments/route")).POST;
     adminUpdate = (await import("@/app/api/admin/appointments/[id]/route")).PUT;
@@ -166,7 +195,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const body = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-07-20T13:00:00.000Z",
+      dateTime: "2026-09-07T13:00:00.000Z",
       customerPhone: tenant.customer.phone,
     };
 
@@ -196,13 +225,13 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const body1 = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-07-20T14:00:00.000Z",
+      dateTime: "2026-09-07T14:00:00.000Z",
       customerPhone: tenant.customer.phone,
     };
     const body2 = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-07-20T14:00:00.000Z",
+      dateTime: "2026-09-07T14:00:00.000Z",
       customerPhone: customer2.phone,
     };
 
@@ -234,6 +263,15 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     await prisma.barberService.create({
       data: { barberId: secondMember.id, serviceId: tenantA.service.id },
     });
+    await prisma.workingHour.create({
+      data: {
+        memberId: secondMember.id,
+        dayOfWeek: 1,
+        startTime: "09:00",
+        endTime: "18:00",
+        isActive: true,
+      },
+    });
 
     const cust1 = await prisma.user.create({ data: { name: "Cust 1", phone: validTestPhone("booking", "cust-1") } });
     const cust2 = await prisma.user.create({ data: { name: "Cust 2", phone: validTestPhone("booking", "cust-2") } });
@@ -243,7 +281,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const responses = await Promise.all([
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust1.phone, memberId: tenantA.member.id, dateTime: "2026-07-20T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust1.phone, memberId: tenantA.member.id, dateTime: "2026-09-07T15:00:00.000Z" },
           "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
           tenantA.shop.slug
         ),
@@ -251,7 +289,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust2.phone, memberId: tenantA.member.id, dateTime: "2026-07-20T15:30:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust2.phone, memberId: tenantA.member.id, dateTime: "2026-09-07T15:30:00.000Z" },
           "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
           tenantA.shop.slug
         ),
@@ -259,7 +297,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust3.phone, memberId: secondMember.id, dateTime: "2026-07-20T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust3.phone, memberId: secondMember.id, dateTime: "2026-09-07T15:00:00.000Z" },
           "ffffffff-ffff-4fff-8fff-ffffffffffff",
           tenantA.shop.slug
         ),
@@ -270,7 +308,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
           {
             memberId: tenantB.member.id,
             serviceIds: [tenantB.service.id],
-            dateTime: "2026-07-20T15:00:00.000Z",
+            dateTime: "2026-09-07T15:00:00.000Z",
             customerPhone: cust4.phone,
           },
           "99999999-9999-4999-8999-999999999999",
@@ -301,7 +339,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
         serviceIds: [tenant.service.id],
-        dateTime: "2026-07-20T16:00:00.000Z",
+        dateTime: "2026-09-07T16:00:00.000Z",
       })
     );
     const conflict = await adminCreate(
@@ -309,7 +347,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
         serviceIds: [tenant.service.id],
-        dateTime: "2026-07-20T16:15:00.000Z",
+        dateTime: "2026-09-07T16:15:00.000Z",
       })
     );
     const second = await prisma.appointment.create({
@@ -317,14 +355,14 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         barbershopId: tenant.shop.id,
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
-        dateTime: new Date("2026-07-20T17:00:00.000Z"),
+        dateTime: new Date("2026-09-07T17:00:00.000Z"),
         totalPrice: "50.00",
         durationMin: 30,
         services: { create: [{ serviceId: tenant.service.id, priceApplied: "50.00" }] },
       },
     });
     const putConflict = await adminUpdate(adminPutRequest(second.id, {
-      dateTime: "2026-07-20T16:00:00.000Z",
+      dateTime: "2026-09-07T16:00:00.000Z",
     }), {
       params: Promise.resolve({ id: second.id }),
     });
@@ -333,6 +371,6 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     expect(first.status).toBe(201);
     expect(conflict.status).toBe(409);
     expect(putConflict.status).toBe(409);
-    expect(unchanged.dateTime.toISOString()).toBe("2026-07-20T17:00:00.000Z");
+    expect(unchanged.dateTime.toISOString()).toBe("2026-09-07T17:00:00.000Z");
   });
 });

@@ -50,6 +50,7 @@ const services = [
 interface AppointmentMemberSlot {
   id: string;
   freeSlots: number[];
+  serviceIds?: string[];
 }
 
 function adminSession(role = "OWNER", barbershopId = "shop-a") {
@@ -100,6 +101,25 @@ describe("agendamento administrativo", () => {
 
     expect(response.status).toBe(201);
     expect(prismaMock.appointment.create).toHaveBeenCalled();
+  });
+
+  it("preserva criacao administrativa retroativa", async () => {
+    const response = await POST(
+      jsonRequest({ ...body, dateTime: "2020-01-06T14:00:00.000Z" })
+    );
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.appointment.create).toHaveBeenCalled();
+  });
+
+  it("preserva criacao administrativa fora de workingHours", async () => {
+    const response = await POST(
+      jsonRequest({ ...body, dateTime: "2026-07-20T03:00:00.000Z" })
+    );
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.appointment.create).toHaveBeenCalled();
+    expect(prismaMock.barbershopMember.findFirst).toHaveBeenCalledTimes(1);
   });
 
   it("usuario sem permissao administrativa e rejeitado pelo guard", async () => {
@@ -321,7 +341,7 @@ describe("agendamento administrativo", () => {
       id: "appt-fitin-no-reason",
       bookingMode: "FIT_IN",
       fitInReason: null,
-    } as any);
+    });
 
     const response = await POST(
       jsonRequest({
@@ -441,7 +461,9 @@ describe("agendamento administrativo", () => {
     expect(data.barbershopName).toBe("Don Brio");
     expect(data.barbershopSlug).toBe("don-brio");
 
-    const maxMember = (data.members as any[]).find((m) => m.id === "member-max");
+    const maxMember = (data.members as AppointmentMemberSlot[]).find(
+      (member) => member.id === "member-max"
+    );
     expect(maxMember).toBeDefined();
     expect(maxMember?.freeSlots).toEqual([540, 570, 630]);
     expect(maxMember?.serviceIds).toEqual(["service-corte"]);

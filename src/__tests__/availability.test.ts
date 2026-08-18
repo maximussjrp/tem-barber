@@ -42,7 +42,8 @@ async function slots(query = "memberId=member-a&serviceIds=svc-a&date=2026-07-20
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.useRealTimers();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-19T15:00:00.000Z"));
   prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a", slug: "barbearia-a" });
   prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
   prismaMock.tenantSubscription.findFirst.mockResolvedValue({
@@ -199,5 +200,23 @@ describe("disponibilidade publica", () => {
 
     expect(body.results).toEqual([]);
     expect(body.totalDuration).toBe(60);
+  });
+
+  it("nao retorna slots para data anterior", async () => {
+    const { body } = await slots(
+      "memberId=member-a&serviceIds=svc-a&date=2026-07-18"
+    );
+
+    expect(body.results).toEqual([]);
+  });
+
+  it("nao retorna horario passado no dia atual", async () => {
+    vi.setSystemTime(new Date("2026-07-20T14:30:00.000Z"));
+
+    const { body } = await slots();
+
+    expect(body.results[0].slots).not.toContain("11:00");
+    expect(body.results[0].slots).not.toContain("11:30");
+    expect(body.results[0].slots).toContain("12:00");
   });
 });
