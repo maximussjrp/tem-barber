@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const { prismaMock, getServerSessionMock, getAdminSessionMock } = vi.hoisted(() => ({
@@ -39,6 +39,8 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
 
   prismaMock.$executeRaw.mockResolvedValue(1);
   prismaMock.$queryRaw.mockResolvedValue([]);
@@ -82,6 +84,9 @@ beforeEach(() => {
     barbershopId: "shop-dom-brio",
     isActive: true,
     user: { name: "Barbeiro João" },
+    workingHours: [
+      { startTime: "09:00", endTime: "18:00", breakStart: null, breakEnd: null },
+    ],
   });
 
   prismaMock.barberService.findMany.mockResolvedValue([
@@ -141,6 +146,10 @@ beforeEach(() => {
   });
 
   prismaMock.appointmentWhatsappConfirmation.findFirst.mockResolvedValue(null);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("HOTFIX — Cliente vinculado + Verificação WhatsApp única", () => {

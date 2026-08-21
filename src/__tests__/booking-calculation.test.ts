@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const txMock = {
   idempotencyKey: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  barbershop: { findFirst: vi.fn() },
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
   barberService: { findMany: vi.fn() },
@@ -44,6 +45,8 @@ function service(id: string, price: string, durationMin: number, barbershopId = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
   getServerSessionMock.mockResolvedValue(null);
   prismaMock.barbershop.findUnique.mockResolvedValue({
     id: "shop-a",
@@ -66,7 +69,14 @@ beforeEach(() => {
   txMock.idempotencyKey.update.mockResolvedValue({ id: "idem-a" });
   txMock.appointmentWhatsappConfirmation.create.mockResolvedValue({ id: "whatsapp-confirmation-a" });
   txMock.$executeRaw.mockResolvedValue(0);
-  txMock.barbershopMember.findFirst.mockResolvedValue({ id: "member-a", barbershopId: "shop-a" });
+  txMock.barbershop.findFirst.mockResolvedValue({ id: "shop-a" });
+  txMock.barbershopMember.findFirst.mockResolvedValue({
+    id: "member-a",
+    barbershopId: "shop-a",
+    workingHours: [
+      { startTime: "09:00", endTime: "18:00", breakStart: null, breakEnd: null },
+    ],
+  });
   txMock.barberService.findMany.mockImplementation(async ({ where }) =>
     (where.serviceId.in as string[]).map((serviceId) => ({ serviceId }))
   );
@@ -89,6 +99,10 @@ beforeEach(() => {
       service: { name: item.serviceId, durationMin: 30 },
     })),
   }));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("calculo de servicos no agendamento publico", () => {
