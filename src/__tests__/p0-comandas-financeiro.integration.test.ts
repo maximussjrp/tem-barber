@@ -17,6 +17,7 @@ const canRunIntegration =
 
 let prisma: PrismaClient;
 let callNextWaitlistEntry: typeof import("@/lib/waitlist/call-next").callNextWaitlistEntry;
+let startCalledWaitlistEntry: typeof import("@/lib/waitlist/call-next").startCalledWaitlistEntry;
 let itemsRoute: typeof import("@/app/api/admin/comandas/[id]/items/route");
 let finalizeRoute: typeof import("@/app/api/admin/comandas/[id]/finalize/route");
 let financialSummaryRoute: typeof import("@/app/api/admin/financial/summary/route");
@@ -185,6 +186,7 @@ describe("Gate P0 comandas e financeiro com PostgreSQL", () => {
     vi.resetModules();
     prisma = (await import("@/lib/prisma")).default as PrismaClient;
     callNextWaitlistEntry = (await import("@/lib/waitlist/call-next")).callNextWaitlistEntry;
+    startCalledWaitlistEntry = (await import("@/lib/waitlist/call-next")).startCalledWaitlistEntry;
     itemsRoute = await import("@/app/api/admin/comandas/[id]/items/route");
     finalizeRoute = await import("@/app/api/admin/comandas/[id]/finalize/route");
     financialSummaryRoute = await import("@/app/api/admin/financial/summary/route");
@@ -213,10 +215,18 @@ describe("Gate P0 comandas e financeiro com PostgreSQL", () => {
     });
     await seedWaitlistEntry(tenantA, 1);
 
-    const result = await callNextWaitlistEntry({
+    const called = await callNextWaitlistEntry({
       barbershopId: tenantA.shop.id,
       memberId: tenantA.barber.id,
       calledByUserId: tenantA.ownerUser.id,
+    });
+    expect(called.entry?.status).toBe("CALLED");
+
+    const result = await startCalledWaitlistEntry({
+      barbershopId: tenantA.shop.id,
+      memberId: tenantA.barber.id,
+      entryId: called.entry!.id,
+      startedByUserId: tenantA.ownerUser.id,
     });
 
     expect(result.appointment.bookingMode).toBe("FIT_IN");
@@ -446,19 +456,116 @@ describe("Gate P0 comandas e financeiro com PostgreSQL", () => {
       };
     });
     const failingCallNext = (await import("@/lib/waitlist/call-next")).callNextWaitlistEntry;
+    const failingStart = (await import("@/lib/waitlist/call-next")).startCalledWaitlistEntry;
 
-    await expect(
-      failingCallNext({
+    await failingCallNext({
         barbershopId: tenant.shop.id,
         memberId: tenant.barber.id,
         calledByUserId: tenant.ownerUser.id,
-      })
-    ).rejects.toThrow("SIMULATED_COMANDA_CREATE_FAILURE");
+      });
+    await expect(failingStart({
+      barbershopId: tenant.shop.id,
+      memberId: tenant.barber.id,
+      entryId: entry.id,
+      startedByUserId: tenant.ownerUser.id,
+    })).rejects.toThrow("SIMULATED_COMANDA_CREATE_FAILURE");
 
     expect(await prisma.appointment.count({ where: { bookingMode: "FIT_IN", barbershopId: tenant.shop.id } })).toBe(0);
     expect(await prisma.comanda.count({ where: { barbershopId: tenant.shop.id } })).toBe(0);
     const dbEntry = await prisma.onlineWaitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
-    expect(dbEntry.status).toBe("WAITING");
+    expect(dbEntry.status).toBe("CALLED");
     expect(dbEntry.fitInAppointmentId).toBeNull();
+  });
+
+  it("dois start-service simultâneos criam um único appointment e uma única comanda", async () => {
+    if (!canRunIntegration) return;
+    const tenant = await seedTenant("concurrent-start");
+    const { entry } = await seedWaitlistEntry(tenant, 10);
+    await callNextWaitlistEntry({
+      barbershopId: tenant.shop.id,
+      memberId: tenant.barber.id,
+      calledByUserId: tenant.ownerUser.id,
+    });
+
+    const results = await Promise.allSettled([
+      startCalledWaitlistEntry({
+        barbershopId: tenant.shop.id,
+        memberId: tenant.barber.id,
+        entryId: entry.id,
+        startedByUserId: tenant.ownerUser.id,
+      }),
+      startCalledWaitlistEntry({
+        barbershopId: tenant.shop.id,
+        memberId: tenant.barber.id,
+        entryId: entry.id,
+        startedByUserId: tenant.ownerUser.id,
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: "WAITLIST_ENTRY_ALREADY_STARTED" });
+    expect(await prisma.appointment.count({ where: { barbershopId: tenant.shop.id, bookingMode: "FIT_IN" } })).toBe(1);
+    expect(await prisma.comanda.count({ where: { barbershopId: tenant.shop.id } })).toBe(1);
+    expect((await prisma.onlineWaitlistEntry.findUniqueOrThrow({ where: { id: entry.id } })).fitInAppointmentId).toBeTruthy();
+  });
+
+  it("dois profissionais chamando simultaneamente distribuem entradas WAITING sem efeitos operacionais", async () => {
+    if (!canRunIntegration) return;
+    const tenant = await seedTenant("concurrent-call");
+    const secondUser = await prisma.user.create({ data: { name: "Barber B", phone: `119${Date.now()}991` } });
+    const secondMember = await prisma.barbershopMember.create({
+      data: { barbershopId: tenant.shop.id, userId: secondUser.id, role: "BARBER" },
+    });
+    await prisma.barberService.create({ data: { barberId: secondMember.id, serviceId: tenant.cut.id } });
+    const session = await prisma.onlineWaitlistSession.create({
+      data: { barbershopId: tenant.shop.id, status: "OPEN", defaultLockBeforeAppointmentMinutes: 0, createdById: tenant.ownerUser.id },
+    });
+    const entries = await Promise.all([1, 2].map((queueNumber) => prisma.onlineWaitlistEntry.create({
+      data: {
+        sessionId: session.id,
+        barbershopId: tenant.shop.id,
+        customerId: tenant.customer.id,
+        customerName: tenant.customer.name,
+        customerPhone: `${tenant.customer.phone}-${queueNumber}`,
+        serviceId: tenant.cut.id,
+        queueNumber,
+        positionWeight: queueNumber * 10,
+        publicTokenHash: `concurrent-call-${queueNumber}`,
+      },
+    })));
+
+    const results = await Promise.all([
+      callNextWaitlistEntry({ barbershopId: tenant.shop.id, memberId: tenant.barber.id, calledByUserId: tenant.ownerUser.id }),
+      callNextWaitlistEntry({ barbershopId: tenant.shop.id, memberId: secondMember.id, calledByUserId: tenant.ownerUser.id }),
+    ]);
+
+    expect(results.map((result) => result.entry?.id).sort()).toEqual(entries.map((entry) => entry.id).sort());
+    expect(new Set(results.map((result) => result.entry?.calledByMemberId)).size).toBe(2);
+    expect(await prisma.appointment.count({ where: { barbershopId: tenant.shop.id, bookingMode: "FIT_IN" } })).toBe(0);
+    expect(await prisma.comanda.count({ where: { barbershopId: tenant.shop.id } })).toBe(0);
+  });
+
+  it("dois profissionais chamando uma única entrada produzem um sucesso e um conflito controlado", async () => {
+    if (!canRunIntegration) return;
+    const tenant = await seedTenant("single-concurrent-call");
+    const secondUser = await prisma.user.create({ data: { name: "Barber C", phone: `119${Date.now()}992` } });
+    const secondMember = await prisma.barbershopMember.create({ data: { barbershopId: tenant.shop.id, userId: secondUser.id, role: "BARBER" } });
+    await prisma.barberService.create({ data: { barberId: secondMember.id, serviceId: tenant.cut.id } });
+    const { entry } = await seedWaitlistEntry(tenant, 11);
+
+    const results = await Promise.allSettled([
+      callNextWaitlistEntry({ barbershopId: tenant.shop.id, memberId: tenant.barber.id, calledByUserId: tenant.ownerUser.id }),
+      callNextWaitlistEntry({ barbershopId: tenant.shop.id, memberId: secondMember.id, calledByUserId: tenant.ownerUser.id }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: expect.stringMatching(/EMPTY_WAITLIST|WAITLIST_ENTRY_ALREADY_CALLED|CONCURRENCY_ERROR/) });
+    expect(await prisma.onlineWaitlistEntry.count({ where: { id: entry.id, status: "CALLED" } })).toBe(1);
+    expect(await prisma.appointment.count({ where: { barbershopId: tenant.shop.id, bookingMode: "FIT_IN" } })).toBe(0);
+    expect(await prisma.comanda.count({ where: { barbershopId: tenant.shop.id } })).toBe(0);
   });
 });

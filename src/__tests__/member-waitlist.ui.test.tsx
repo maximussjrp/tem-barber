@@ -83,8 +83,8 @@ describe("PR #23 - Member Waitlist Page UI (/member/fila)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Chamar próximo para mim" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Encaixe criado na sua agenda com sucesso!/i)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText(/Cliente chamado\. Confirme a presença antes de iniciar/i)).toBeInTheDocument();
     });
   });
 

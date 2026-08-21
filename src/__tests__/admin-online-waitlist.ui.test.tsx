@@ -197,8 +197,8 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Chamar próximo" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Cliente chamado com sucesso! Encaixe criado/i)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText(/Cliente chamado\. Confirme a presença antes de iniciar/i)).toBeInTheDocument();
     });
   });
 

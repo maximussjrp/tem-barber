@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   const { barbershopId, role } = auth.data;
 
-  if (!canManageWaitlist(role)) {
+  if (!canManageWaitlist(role) && role !== "BARBER") {
     return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   }
 
@@ -52,6 +52,9 @@ export async function GET(request: NextRequest) {
     id: m.id,
     name: m.user.name || "Profissional",
   }));
+  const currentMemberId = role === "BARBER"
+    ? teamMembers.find((member) => member.user.id === auth.data.userId)?.id ?? null
+    : null;
 
   const session = await prisma.onlineWaitlistSession.findFirst({
     where: { barbershopId },
@@ -81,6 +84,7 @@ export async function GET(request: NextRequest) {
       barbershop,
       publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
       members,
+      currentMemberId,
       session: null,
       summary: {
         total: 0,
@@ -155,6 +159,7 @@ export async function GET(request: NextRequest) {
     barbershop,
     publicUrl: barbershop ? getWaitlistPublicUrl(barbershop.slug, request) : null,
     members,
+    currentMemberId,
     session: sanitizedSession,
     summary,
   });

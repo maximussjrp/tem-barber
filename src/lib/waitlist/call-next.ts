@@ -4,6 +4,7 @@ import { ScheduleBlockConflictApptError } from "@/lib/appointments/errors";
 import { createFitInAppointmentWithScheduleLock } from "@/lib/appointments/create-fit-in-appointment";
 import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
 import { ensureComandaForAppointment } from "@/lib/operations/comandas";
+import { passCalledWaitlistEntry } from "@/lib/waitlist/positions";
 
 export interface CallNextWaitlistEntryInput {
   barbershopId: string;
@@ -185,75 +186,16 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
             );
           }
 
-          // 7. Ensure customer record exists
-          let customerId = entry.customerId;
-          if (!customerId) {
-            const user = await tx.user.findFirst({
-              where: { phone: entry.customerPhone },
-              select: { id: true },
-            });
-
-            if (user) {
-              customerId = user.id;
-            } else {
-              const newUser = await tx.user.create({
-                data: {
-                  name: entry.customerName,
-                  phone: entry.customerPhone,
-                  role: "USER",
-                },
-              });
-              customerId = newUser.id;
-            }
-          }
-
-          // 8. Create FIT_IN appointment with local operational date/time (America/Sao_Paulo)
-          const servicePrice = parseMoneyNumber(entry.service.price);
-          if (servicePrice === null || servicePrice < 0) {
-            throw new CallNextWaitlistError(
-              "INVALID_SERVICE_PRICE",
-              `O preÃ§o cadastrado para o serviÃ§o "${entry.service.name}" Ã© invÃ¡lido.`,
-              422
-            );
-          }
-
-          const appointmentDateTime = getCurrentSaoPauloDateTimeForAppointment(now);
-
-          const { appointment } = await createFitInAppointmentWithScheduleLock(tx, {
-            barbershopId: input.barbershopId,
-            memberId: member.id,
-            customerId: customerId,
-            dateTime: appointmentDateTime,
-            totalPrice: servicePrice,
-            durationMin: entry.service.durationMin,
-            services: [
-              {
-                id: entry.service.id,
-                price: servicePrice,
-                durationMin: entry.service.durationMin,
-              },
-            ],
-            fitInReason: `Fila Online - Senha #${entry.queueNumber}`,
-            fitInCreatedById: input.calledByUserId,
-          });
-
-          const comanda = await ensureComandaForAppointment(tx, {
-            barbershopId: input.barbershopId,
-            appointmentId: appointment.id,
-          });
-
-          // 9. Atomic update of OnlineWaitlistEntry
+          // 7. Claim the entry without creating operational records yet.
           const updateResult = await tx.onlineWaitlistEntry.updateMany({
             where: {
               id: entry.id,
               status: "WAITING",
-              fitInAppointmentId: null,
             },
             data: {
-              status: "FIT_IN_CREATED",
+              status: "CALLED",
               calledByMemberId: member.id,
               calledAt: now,
-              fitInAppointmentId: appointment.id,
               updatedAt: now,
             },
           });
@@ -278,14 +220,6 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
 
           return {
             entry: updatedEntry,
-            appointment,
-            comanda: {
-              id: comanda.id,
-              status: comanda.status,
-              total: comanda.total,
-              remainingTotal: comanda.remainingTotal,
-            },
-            comandaId: comanda.id,
             preferredMemberMismatch,
           };
         },
@@ -314,4 +248,123 @@ export async function callNextWaitlistEntry(input: CallNextWaitlistEntryInput) {
     "Não foi possível processar a chamada devido à alta concorrência. Tente novamente.",
     409
   );
+}
+
+export interface StartCalledWaitlistEntryInput {
+  barbershopId: string;
+  memberId: string;
+  entryId: string;
+  startedByUserId: string;
+}
+
+export async function startCalledWaitlistEntry(input: StartCalledWaitlistEntryInput) {
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await prisma.$transaction(
+      async (tx) => {
+        const member = await tx.barbershopMember.findFirst({
+          where: { id: input.memberId, barbershopId: input.barbershopId, isActive: true },
+          include: { user: { select: { id: true, name: true } } },
+        });
+        if (!member) throw new CallNextWaitlistError("MEMBER_NOT_FOUND", "Profissional não encontrado.");
+
+        const entry = await tx.onlineWaitlistEntry.findFirst({
+          where: { id: input.entryId, barbershopId: input.barbershopId },
+          include: {
+            service: true,
+            customer: { select: { id: true, name: true, phone: true } },
+          },
+        });
+        if (!entry) throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_FOUND", "Entrada da fila não encontrada.", 404);
+        if (entry.status === "FIT_IN_CREATED" || entry.fitInAppointmentId) {
+          throw new CallNextWaitlistError("WAITLIST_ENTRY_ALREADY_STARTED", "Este atendimento já foi iniciado.", 409);
+        }
+        if (entry.status !== "CALLED") throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_CALLED", "O cliente precisa estar chamado.", 409);
+        if (entry.calledByMemberId !== member.id) {
+          throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_ASSIGNED", "Este cliente foi chamado por outro profissional.", 403);
+        }
+
+        const capability = await tx.barberService.findUnique({
+          where: { barberId_serviceId: { barberId: member.id, serviceId: entry.serviceId } },
+        });
+        if (!capability) throw new CallNextWaitlistError("MEMBER_CANNOT_EXECUTE_SERVICE", "O profissional não realiza este serviço.");
+
+        const claim = await tx.onlineWaitlistEntry.updateMany({
+          where: { id: entry.id, status: "CALLED", calledByMemberId: member.id, fitInAppointmentId: null },
+          data: { updatedAt: new Date() },
+        });
+        if (claim.count === 0) throw new CallNextWaitlistError("WAITLIST_ENTRY_ALREADY_STARTED", "Este atendimento já foi iniciado.", 409);
+
+        let customerId = entry.customerId;
+        if (!customerId) {
+          const user = await tx.user.findFirst({ where: { phone: entry.customerPhone }, select: { id: true } });
+          customerId = user?.id ?? (await tx.user.create({
+            data: { name: entry.customerName, phone: entry.customerPhone, role: "USER" },
+          })).id;
+        }
+
+        const servicePrice = parseMoneyNumber(entry.service.price);
+        if (servicePrice === null || servicePrice < 0) {
+          throw new CallNextWaitlistError("INVALID_SERVICE_PRICE", "O preço cadastrado para o serviço é inválido.", 422);
+        }
+
+        const now = new Date();
+        const appointmentDateTime = getCurrentSaoPauloDateTimeForAppointment(now);
+        const { appointment } = await createFitInAppointmentWithScheduleLock(tx, {
+          barbershopId: input.barbershopId,
+          memberId: member.id,
+          customerId,
+          dateTime: appointmentDateTime,
+          totalPrice: servicePrice,
+          durationMin: entry.service.durationMin,
+          services: [{ id: entry.service.id, price: servicePrice, durationMin: entry.service.durationMin }],
+          fitInReason: `Fila Online - Senha #${entry.queueNumber}`,
+          fitInCreatedById: input.startedByUserId,
+        });
+        const comanda = await ensureComandaForAppointment(tx, { barbershopId: input.barbershopId, appointmentId: appointment.id });
+        const updatedEntry = await tx.onlineWaitlistEntry.update({
+          where: { id: entry.id },
+          data: { status: "FIT_IN_CREATED", fitInAppointmentId: appointment.id, updatedAt: now },
+        });
+
+        return { entry: updatedEntry, appointment, comanda, comandaId: comanda.id };
+      },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 }
+      );
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2034" &&
+        attempt < maxRetries
+      ) {
+        continue;
+      }
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034") {
+        throw new CallNextWaitlistError("WAITLIST_ENTRY_ALREADY_STARTED", "Este atendimento já foi iniciado por outro profissional.", 409);
+      }
+      if (err instanceof ScheduleBlockConflictApptError) throw new CallNextWaitlistError(err.code, err.message, err.status);
+      throw err;
+    }
+  }
+
+  throw new CallNextWaitlistError("CONCURRENCY_ERROR", "Não foi possível iniciar o atendimento devido à concorrência.", 409);
+}
+
+export interface PassTurnWaitlistEntryInput {
+  barbershopId: string;
+  memberId: string;
+  entryId: string;
+}
+
+export async function passTurnWaitlistEntry(input: PassTurnWaitlistEntryInput) {
+  return prisma.$transaction(async (tx) => {
+    const entry = await tx.onlineWaitlistEntry.findFirst({ where: { id: input.entryId, barbershopId: input.barbershopId } });
+    if (!entry) throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_FOUND", "Entrada da fila não encontrada.", 404);
+    if (entry.status !== "CALLED") throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_CALLED", "O cliente precisa estar chamado.", 409);
+    if (entry.calledByMemberId !== input.memberId) throw new CallNextWaitlistError("WAITLIST_ENTRY_NOT_ASSIGNED", "Este cliente foi chamado por outro profissional.", 403);
+    const updated = await passCalledWaitlistEntry(tx, entry.id);
+    if (!updated) throw new CallNextWaitlistError("WAITLIST_ENTRY_ALREADY_UPDATED", "A entrada já foi atualizada.", 409);
+    return { entry: updated };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10000 });
 }

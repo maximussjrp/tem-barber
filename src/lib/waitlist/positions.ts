@@ -130,3 +130,84 @@ export async function moveEntryToEnd(
 
   return { success: true };
 }
+
+export async function passCalledWaitlistEntry(
+  db: WaitlistDb,
+  entryId: string
+) {
+  const current = await db.onlineWaitlistEntry.findUnique({ where: { id: entryId } });
+  if (!current || current.status !== "CALLED") return null;
+
+  const waitingEntries = await db.onlineWaitlistEntry.findMany({
+    where: { sessionId: current.sessionId, status: "WAITING" },
+    orderBy: [{ positionWeight: "asc" }, { createdAt: "asc" }],
+  });
+  const nextIndex = waitingEntries.findIndex(
+    (entry) =>
+      entry.positionWeight > current.positionWeight ||
+      (entry.positionWeight === current.positionWeight && entry.createdAt > current.createdAt)
+  );
+  const nextEntry = nextIndex >= 0 ? waitingEntries[nextIndex] : null;
+
+  if (!nextEntry) {
+    return db.onlineWaitlistEntry.update({
+      where: { id: current.id },
+      data: {
+        status: "WAITING",
+        skipCount: { increment: 1 },
+        calledByMemberId: null,
+        calledAt: null,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  const hasWeightCollision = waitingEntries.filter(
+    (entry) => entry.positionWeight === nextEntry.positionWeight
+  ).length > 1 || current.positionWeight === nextEntry.positionWeight;
+
+  if (hasWeightCollision) {
+    const desiredOrder = [
+      ...waitingEntries.slice(0, nextIndex + 1),
+      current,
+      ...waitingEntries.slice(nextIndex + 1),
+    ];
+
+    for (const [index, entry] of desiredOrder.entries()) {
+      if (entry.id === current.id) continue;
+      await db.onlineWaitlistEntry.update({
+        where: { id: entry.id },
+        data: { positionWeight: (index + 1) * 10 },
+      });
+    }
+
+    return db.onlineWaitlistEntry.update({
+      where: { id: current.id },
+      data: {
+        status: "WAITING",
+        positionWeight: (desiredOrder.findIndex((entry) => entry.id === current.id) + 1) * 10,
+        skipCount: { increment: 1 },
+        calledByMemberId: null,
+        calledAt: null,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  await db.onlineWaitlistEntry.update({
+    where: { id: nextEntry.id },
+    data: { positionWeight: current.positionWeight },
+  });
+
+  return db.onlineWaitlistEntry.update({
+    where: { id: current.id },
+    data: {
+      status: "WAITING",
+      positionWeight: nextEntry.positionWeight,
+      skipCount: { increment: 1 },
+      calledByMemberId: null,
+      calledAt: null,
+      updatedAt: new Date(),
+    },
+  });
+}

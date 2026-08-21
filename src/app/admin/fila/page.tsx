@@ -32,6 +32,8 @@ interface WaitlistEntry {
   joinedAt: string;
   skipCount: number;
   noShowCount: number;
+  calledByMemberId: string | null;
+  calledByMemberName: string | null;
 }
 
 interface WaitlistSession {
@@ -237,13 +239,31 @@ export default function AdminWaitlistPage() {
       }
 
       setMismatchModal(null);
-      setCallNextSuccess(
-        `Cliente chamado com sucesso! Encaixe criado para ${payload.appointment?.barber?.user?.name || "o profissional"}.`
-      );
+      setCallNextSuccess("Cliente chamado. Confirme a presença antes de iniciar o atendimento.");
       window.setTimeout(() => setCallNextSuccess(null), 5000);
       await loadWaitlist();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível chamar o próximo cliente.");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleEntryAction(entryId: string, memberId: string, action: "start-service" | "pass-turn") {
+    setActionLoading(`${action}:${entryId}`);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/waitlist/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entryId, memberId }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Não foi possível atualizar a entrada."));
+      setCallNextSuccess(action === "start-service" ? "Atendimento criado na sua agenda com sucesso." : "Cliente passou a vez.");
+      await loadWaitlist();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível atualizar a entrada.");
     } finally {
       setActionLoading(null);
     }
@@ -528,6 +548,17 @@ export default function AdminWaitlistPage() {
                       Passes {entry.skipCount} / no-shows {entry.noShowCount}
                     </span>
                     <span className="text-xs text-stone-500">{formatDateTime(entry.joinedAt)}</span>
+                    {entry.status === "CALLED" && entry.calledByMemberId ? (
+                      <>
+                        <span className="text-xs text-amber-300">Chamado por {entry.calledByMemberName ?? "profissional"}</span>
+                        <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "start-service")} disabled={actionLoading !== null} className="rounded-md bg-emerald-500 px-2 py-1 text-xs font-semibold text-stone-950 disabled:opacity-60">
+                          {actionLoading === `start-service:${entry.id}` ? "Iniciando..." : "Iniciar atendimento"}
+                        </button>
+                        <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "pass-turn")} disabled={actionLoading !== null} className="rounded-md border border-stone-700 px-2 py-1 text-xs font-semibold text-stone-200 disabled:opacity-60">
+                          {actionLoading === `pass-turn:${entry.id}` ? "Passando..." : "Passar vez"}
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </article>
               ))}

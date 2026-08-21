@@ -25,9 +25,11 @@ interface WaitlistEntry {
   currentPosition: number | null;
   status: EntryStatus;
   joinedAt: string;
+  calledByMemberId: string | null;
 }
 
 interface MemberWaitlistResponse {
+  currentMemberId: string | null;
   session: {
     id: string;
     status: "OPEN" | "PAUSED" | "CLOSED";
@@ -109,7 +111,7 @@ export default function MemberWaitlistPage() {
       }
 
       setMismatchModal(null);
-      setSuccess("Encaixe criado na sua agenda com sucesso!");
+      setSuccess("Cliente chamado. Confirme a presença antes de iniciar o atendimento.");
       window.setTimeout(() => setSuccess(null), 5000);
       await loadWaitlist();
     } catch (err) {
@@ -119,10 +121,34 @@ export default function MemberWaitlistPage() {
     }
   }
 
+  async function handleEntryAction(entryId: string, action: "start-service" | "pass-turn") {
+    setCalling(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/member/waitlist/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entryId }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Não foi possível atualizar a entrada."));
+      setSuccess(action === "start-service" ? "Atendimento criado na sua agenda com sucesso." : "Cliente passou a vez.");
+      await loadWaitlist();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível atualizar a entrada.");
+    } finally {
+      setCalling(false);
+    }
+  }
+
   const entries = useMemo(() => data?.session?.entries ?? [], [data?.session?.entries]);
   const nextWaitingClient = useMemo(
     () => entries.find((entry) => entry.status === "WAITING"),
     [entries]
+  );
+  const calledClient = useMemo(
+    () => entries.find((entry) => entry.status === "CALLED" && entry.calledByMemberId === data?.currentMemberId),
+    [data?.currentMemberId, entries]
   );
   const waitingCount = useMemo(
     () => entries.filter((e) => e.status === "WAITING").length,
@@ -199,6 +225,22 @@ export default function MemberWaitlistPage() {
 
           {!isOpen ? (
             <p className="mt-4 text-sm text-stone-400">A fila online não está aberta no momento.</p>
+          ) : calledClient ? (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-md bg-stone-950 p-4 ring-1 ring-amber-900/60">
+                <span className="text-xs uppercase tracking-wide text-amber-300">Cliente chamado</span>
+                <h3 className="mt-1 text-xl font-semibold text-white">{calledClient.customerName}</h3>
+                <p className="text-sm text-stone-400">{calledClient.maskedPhone}</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={() => void handleEntryAction(calledClient.id, "start-service")} disabled={calling} className="rounded-md bg-emerald-500 px-4 py-3 text-sm font-semibold text-stone-950 disabled:opacity-60">
+                  {calling ? "Iniciando..." : "Iniciar atendimento"}
+                </button>
+                <button type="button" onClick={() => void handleEntryAction(calledClient.id, "pass-turn")} disabled={calling} className="rounded-md border border-stone-700 px-4 py-3 text-sm font-semibold text-stone-100 disabled:opacity-60">
+                  Passar vez
+                </button>
+              </div>
+            </div>
           ) : !nextWaitingClient ? (
             <p className="mt-4 text-sm text-stone-400">Nenhum cliente aguardando na fila.</p>
           ) : (

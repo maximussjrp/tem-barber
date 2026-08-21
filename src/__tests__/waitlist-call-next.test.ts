@@ -84,7 +84,12 @@ type CallNextResponseData = {
 
 import { POST as callNextAdmin } from "@/app/api/admin/waitlist/call-next/route";
 import { POST as callNextMember } from "@/app/api/member/waitlist/call-next/route";
+import { POST as startServiceAdmin } from "@/app/api/admin/waitlist/start-service/route";
+import { POST as startServiceMember } from "@/app/api/member/waitlist/start-service/route";
+import { POST as passTurnAdmin } from "@/app/api/admin/waitlist/pass-turn/route";
+import { POST as passTurnMember } from "@/app/api/member/waitlist/pass-turn/route";
 import { getCurrentSaoPauloDateTimeForAppointment } from "@/lib/time-utils";
+import { passCalledWaitlistEntry } from "@/lib/waitlist/positions";
 
 describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   beforeEach(() => {
@@ -220,8 +225,8 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
       serviceId: "service-corte",
       preferredMemberId: null,
       queueNumber: 7,
-      status: "FIT_IN_CREATED",
-      fitInAppointmentId: "app-fit-in-1",
+      status: "CALLED",
+      fitInAppointmentId: null,
       calledByMemberId: "member-barber-1",
       calledAt: new Date("2026-07-24T14:00:00.000Z"),
       service: { id: "service-corte", name: "Corte Tradicional", durationMin: 30, price: "50.00" },
@@ -232,7 +237,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     prismaMock.comanda.count.mockResolvedValue(0);
   });
 
-  it("1. OWNER chama próximo e cria agendamento FIT_IN", async () => {
+  it("1. OWNER chama próximo e apenas marca CALLED", async () => {
     getAdminSessionMock.mockResolvedValue({
       error: null,
       data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
@@ -247,16 +252,10 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.entry.status).toBe("FIT_IN_CREATED");
-    expect(data.entry.fitInAppointmentId).toBe("app-fit-in-1");
-    expect(data.appointment.bookingMode).toBe("FIT_IN");
-
-    // Valida que o dateTime do agendamento foi criado no fuso operacional America/Sao_Paulo
-    const createdAppointmentCall = prismaMock.appointment.create.mock.calls[0][0];
-    const createdDateTime = createdAppointmentCall.data.dateTime as Date;
-    expect(createdDateTime).toBeInstanceOf(Date);
-    // Para UTC 14:00Z, no fuso de SP (UTC-3) o horário operacional é 11:00 (11h UTC no padrão da agenda)
-    expect(createdDateTime.getUTCHours()).not.toBe(new Date().getUTCHours());
+    expect(data.entry.status).toBe("CALLED");
+    expect(data.entry.fitInAppointmentId).toBeNull();
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.comanda.create).not.toHaveBeenCalled();
   });
 
   it("2. MANAGER chama próximo e cria agendamento FIT_IN", async () => {
@@ -274,7 +273,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.entry.status).toBe("FIT_IN_CREATED");
+    expect(data.entry.status).toBe("CALLED");
   });
 
   it("3. BARBER tenta chamar via endpoint admin e recebe 403", async () => {
@@ -310,7 +309,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.entry.status).toBe("FIT_IN_CREATED");
+    expect(data.entry.status).toBe("CALLED");
   });
 
   it("5. Preferência divergente sem confirmação retorna HTTP 409 PREFERRED_MEMBER_MISMATCH e não cria agendamento", async () => {
@@ -383,7 +382,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.entry.status).toBe("FIT_IN_CREATED");
+    expect(data.entry.status).toBe("CALLED");
   });
 
   it("7. Fila sem entradas WAITING retorna EMPTY_WAITLIST (400)", async () => {
@@ -491,7 +490,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     expect(data.error).toBe("WAITLIST_ENTRY_ALREADY_CALLED");
   });
 
-  it("12. cria comanda automaticamente ao chamar o próximo", async () => {
+  it("12. não cria comanda automaticamente ao chamar o próximo", async () => {
     getAdminSessionMock.mockResolvedValue({
       error: null,
       data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" },
@@ -506,15 +505,9 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.comandaId).toBe("comanda-fit-in-1");
-    expect(prismaMock.comanda.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          appointmentId: "app-fit-in-1",
-          barbershopId: "shop-1",
-        }),
-      })
-    );
+    expect(data.entry.status).toBe("CALLED");
+    expect(data.comandaId).toBeUndefined();
+    expect(prismaMock.comanda.create).not.toHaveBeenCalled();
   });
 
   it("13. Confirma que publicTokenHash não vaza no payload da API", async () => {
@@ -567,10 +560,10 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const res = await callNextAdmin(req);
     const data = await res.json();
 
-    expect(res.status).toBe(409);
-    expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
+    expect(res.status).toBe(200);
+    expect(data.entry.status).toBe("CALLED");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
-    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalled();
   });
 
@@ -598,10 +591,10 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     const res = await callNextMember(req);
     const data = await res.json();
 
-    expect(res.status).toBe(409);
-    expect(data.error).toBe("SCHEDULE_BLOCK_CONFLICT");
+    expect(res.status).toBe(200);
+    expect(data.entry.status).toBe("CALLED");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
-    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).toHaveBeenCalled();
   });
 
   function mockBarbaWaitlistPrice(price: unknown) {
@@ -615,7 +608,8 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
       serviceId: "service-barba",
       preferredMemberId: null,
       queueNumber: 2,
-      status: "WAITING",
+      status: "CALLED",
+      calledByMemberId: "member-barber-1",
       publicTokenHash: "secret-token-hash",
       service: { id: "service-barba", name: "Barba", durationMin: 30, price },
       customer: { id: "cust-1", name: "Carlos Cliente", phone: "5517999998888" },
@@ -707,6 +701,11 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
       calledByMember: { user: { id: "u-barber-1", name: "Barbeiro Joao" } },
       preferredMember: null,
     });
+    prismaMock.onlineWaitlistEntry.update.mockResolvedValue({
+      id: "entry-barba",
+      status: "FIT_IN_CREATED",
+      fitInAppointmentId: "app-fit-in-1",
+    });
   }
 
   async function callNextAsOwner() {
@@ -721,6 +720,14 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
     });
 
     return callNextAdmin(req);
+  }
+
+  async function startServiceAsOwner() {
+    const req = new NextRequest("http://localhost/api/admin/waitlist/start-service", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-barba", memberId: "member-barber-1" }),
+    });
+    return startServiceAdmin(req);
   }
 
   function expectBarbaPriceApplied(data: CallNextResponseData) {
@@ -738,7 +745,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   it("17. call-next usa preco Decimal do servico ao criar FIT_IN e comanda", async () => {
     mockBarbaWaitlistPrice(new Prisma.Decimal("35.00"));
 
-    const res = await callNextAsOwner();
+    const res = await startServiceAsOwner();
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -748,7 +755,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   it("18. call-next usa preco string do servico ao criar FIT_IN e comanda", async () => {
     mockBarbaWaitlistPrice("35.00");
 
-    const res = await callNextAsOwner();
+    const res = await startServiceAsOwner();
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -758,7 +765,7 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   it("19. call-next usa preco number do servico ao criar FIT_IN e comanda", async () => {
     mockBarbaWaitlistPrice(35);
 
-    const res = await callNextAsOwner();
+    const res = await startServiceAsOwner();
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -768,13 +775,269 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   it("20. preco invalido nao cria appointment nem altera fila", async () => {
     mockBarbaWaitlistPrice({ toString: () => "valor-invalido" });
 
-    const res = await callNextAsOwner();
+    const res = await startServiceAsOwner();
     const data = await res.json();
 
     expect(res.status).toBe(422);
     expect(data.error).toBe("INVALID_SERVICE_PRICE");
     expect(prismaMock.appointment.create).not.toHaveBeenCalled();
     expect(prismaMock.comanda.create).not.toHaveBeenCalled();
-    expect(prismaMock.onlineWaitlistEntry.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.onlineWaitlistEntry.updateMany).toHaveBeenCalled();
+  });
+
+  it("21. start-service rejeita segundo claim antes de criar efeitos", async () => {
+    mockBarbaWaitlistPrice("35.00");
+    prismaMock.onlineWaitlistEntry.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await startServiceAsOwner();
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("WAITLIST_ENTRY_ALREADY_STARTED");
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.comanda.create).not.toHaveBeenCalled();
+  });
+
+  it("22. passar vez retorna CALLED para WAITING abaixo do próximo", async () => {
+    const update = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        id: "called",
+        status: "WAITING",
+        positionWeight: 20,
+        skipCount: 1,
+        calledByMemberId: null,
+        calledAt: null,
+      });
+    const db = {
+      onlineWaitlistEntry: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "called",
+          sessionId: "session-1",
+          status: "CALLED",
+          positionWeight: 10,
+          createdAt: new Date("2026-08-21T12:00:00.000Z"),
+          skipCount: 0,
+        }),
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "next",
+            sessionId: "session-1",
+            status: "WAITING",
+            positionWeight: 20,
+            createdAt: new Date("2026-08-21T12:01:00.000Z"),
+          },
+        ]),
+        findFirst: vi.fn().mockResolvedValue({
+          id: "next",
+          sessionId: "session-1",
+          status: "WAITING",
+          positionWeight: 20,
+          createdAt: new Date("2026-08-21T12:01:00.000Z"),
+        }),
+        update,
+      },
+    } as never;
+
+    const result = await passCalledWaitlistEntry(db, "called");
+
+    expect(result?.status).toBe("WAITING");
+    expect(result?.calledByMemberId).toBeNull();
+    expect(result?.calledAt).toBeNull();
+    expect(update).toHaveBeenNthCalledWith(1, { where: { id: "next" }, data: { positionWeight: 10 } });
+    expect(update).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: { id: "called" } }));
+  });
+
+  it("26. pesos iguais produzem ordem Pedro, Joao, Carlos", async () => {
+    const entries = [
+      { id: "pedro", status: "WAITING", positionWeight: 10, createdAt: new Date("2026-08-21T10:01:00Z") },
+      { id: "carlos", status: "WAITING", positionWeight: 20, createdAt: new Date("2026-08-21T10:02:00Z") },
+    ];
+    const state = {
+      id: "joao",
+      sessionId: "session-1",
+      status: "CALLED",
+      positionWeight: 10,
+      createdAt: new Date("2026-08-21T10:00:00Z"),
+      skipCount: 0,
+    };
+    const finalWeights = new Map<string, number>();
+    const db = {
+      onlineWaitlistEntry: {
+        findUnique: vi.fn().mockResolvedValue(state),
+        findMany: vi.fn().mockResolvedValue(entries),
+        update: vi.fn().mockImplementation(async ({ where, data }: { where: { id: string }; data: { positionWeight?: number } }) => {
+          finalWeights.set(where.id, data.positionWeight ?? 0);
+          return { ...state, id: where.id, status: "WAITING", positionWeight: data.positionWeight ?? 0 };
+        }),
+      },
+    } as never;
+
+    await passCalledWaitlistEntry(db, "joao");
+    expect([...finalWeights.entries()].sort((left, right) => left[1] - right[1])).toEqual([
+      ["pedro", 10],
+      ["joao", 20],
+      ["carlos", 30],
+    ]);
+  });
+
+  it("27. pass-turn sem proximo retorna WAITING na posição 1", async () => {
+    const update = vi.fn().mockResolvedValue({
+      id: "joao",
+      status: "WAITING",
+      positionWeight: 10,
+      skipCount: 1,
+      calledByMemberId: null,
+      calledAt: null,
+    });
+    const db = {
+      onlineWaitlistEntry: {
+        findUnique: vi.fn().mockResolvedValue({ id: "joao", sessionId: "session-1", status: "CALLED", positionWeight: 10, createdAt: new Date(), skipCount: 0 }),
+        findMany: vi.fn().mockResolvedValue([]),
+        update,
+      },
+    } as never;
+
+    const result = await passCalledWaitlistEntry(db, "joao");
+    expect(result).toMatchObject({ status: "WAITING", positionWeight: 10, skipCount: 1, calledByMemberId: null, calledAt: null });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("29. três pesos iguais mantêm ordem determinística após pass-turn", async () => {
+    const entries = [
+      { id: "pedro", status: "WAITING", positionWeight: 10, createdAt: new Date("2026-08-21T10:01:00Z") },
+      { id: "carlos", status: "WAITING", positionWeight: 10, createdAt: new Date("2026-08-21T10:02:00Z") },
+    ];
+    const finalWeights = new Map<string, number>();
+    const db = {
+      onlineWaitlistEntry: {
+        findUnique: vi.fn().mockResolvedValue({ id: "joao", sessionId: "session-1", status: "CALLED", positionWeight: 10, createdAt: new Date("2026-08-21T10:00:00Z"), skipCount: 0 }),
+        findMany: vi.fn().mockResolvedValue(entries),
+        update: vi.fn().mockImplementation(async ({ where, data }: { where: { id: string }; data: { positionWeight?: number } }) => {
+          finalWeights.set(where.id, data.positionWeight ?? 0);
+          return { id: where.id, status: "WAITING", positionWeight: data.positionWeight ?? 0 };
+        }),
+      },
+    } as never;
+
+    await passCalledWaitlistEntry(db, "joao");
+    expect([...finalWeights.entries()].sort((left, right) => left[1] - right[1])).toEqual([
+      ["pedro", 10],
+      ["joao", 20],
+      ["carlos", 30],
+    ]);
+  });
+
+  it("28. P2034 esgotado retorna 409 após exatamente três tentativas", async () => {
+    const conflict = new Prisma.PrismaClientKnownRequestError("serialization conflict", { code: "P2034", clientVersion: "7.8.0" });
+    prismaMock.$transaction.mockRejectedValue(conflict);
+    getAdminSessionMock.mockResolvedValue({ error: null, data: { userId: "admin-1", barbershopId: "shop-1", role: "OWNER" } });
+
+    const response = await startServiceAdmin(new NextRequest("http://localhost/api/admin/waitlist/start-service", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-1", memberId: "member-barber-1" }),
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("WAITLIST_ENTRY_ALREADY_STARTED");
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(3);
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+    expect(prismaMock.comanda.create).not.toHaveBeenCalled();
+  });
+
+  it("23. membro diferente não pode iniciar nem passar entrada de outro membro", async () => {
+    getMemberSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: "u-barber-2", barbershopId: "shop-1", memberId: "member-barber-2", role: "BARBER" },
+    });
+    prismaMock.barbershopMember.findFirst.mockResolvedValue({
+      id: "member-barber-2",
+      barbershopId: "shop-1",
+      isActive: true,
+      user: { id: "u-barber-2", name: "Barbeiro Pedro" },
+    });
+    prismaMock.onlineWaitlistEntry.findFirst.mockResolvedValue({
+      id: "entry-1",
+      barbershopId: "shop-1",
+      status: "CALLED",
+      calledByMemberId: "member-barber-1",
+      fitInAppointmentId: null,
+      serviceId: "service-corte",
+      customerId: "cust-1",
+      customerName: "Carlos Cliente",
+      customerPhone: "5517999998888",
+      queueNumber: 7,
+      service: { id: "service-corte", durationMin: 30, price: "50.00" },
+    });
+
+    const startResponse = await startServiceMember(new NextRequest("http://localhost/api/member/waitlist/start-service", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-1" }),
+    }));
+    const passResponse = await passTurnMember(new NextRequest("http://localhost/api/member/waitlist/pass-turn", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-1" }),
+    }));
+
+    expect(startResponse.status).toBe(403);
+    expect(passResponse.status).toBe(403);
+    expect(prismaMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("24. admin não pode iniciar ou passar entrada com membro de outro tenant", async () => {
+    getAdminSessionMock.mockResolvedValue({
+      error: null,
+      data: { userId: "owner-a", barbershopId: "shop-a", role: "OWNER" },
+    });
+    prismaMock.barbershopMember.findFirst.mockResolvedValue(null);
+    prismaMock.onlineWaitlistEntry.findFirst.mockResolvedValue({
+      id: "entry-b",
+      barbershopId: "shop-b",
+      status: "CALLED",
+      calledByMemberId: "member-a",
+    });
+
+    const startResponse = await startServiceAdmin(new NextRequest("http://localhost/api/admin/waitlist/start-service", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-b", memberId: "member-b" }),
+    }));
+    const passResponse = await passTurnAdmin(new NextRequest("http://localhost/api/admin/waitlist/pass-turn", {
+      method: "POST",
+      body: JSON.stringify({ entryId: "entry-b", memberId: "member-b" }),
+    }));
+
+    expect(startResponse.status).toBe(400);
+    expect(passResponse.status).toBe(403);
+  });
+
+  it("25. cinco pass-turns mantêm a entrada WAITING e apenas incrementam skipCount", async () => {
+    let state = { id: "called", status: "CALLED", positionWeight: 10, skipCount: 0, calledByMemberId: "member-a" };
+    const db = {
+      onlineWaitlistEntry: {
+        findUnique: vi.fn().mockImplementation(async () => state),
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+          state = {
+            ...state,
+            status: data.status as string,
+            positionWeight: data.positionWeight as number,
+            skipCount: state.skipCount + 1,
+            calledByMemberId: data.calledByMemberId as string | null,
+          };
+          return { ...state, calledAt: null };
+        }),
+      },
+    } as never;
+
+    for (let index = 0; index < 5; index++) {
+      if (state.status !== "CALLED") state = { ...state, status: "CALLED", calledByMemberId: "member-a" };
+      await passCalledWaitlistEntry(db, "called");
+    }
+
+    expect(state.status).toBe("WAITING");
+    expect(state.skipCount).toBe(5);
+    expect(state.calledByMemberId).toBeNull();
   });
 });
