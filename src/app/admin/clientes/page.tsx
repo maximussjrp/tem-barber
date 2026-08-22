@@ -71,6 +71,32 @@ interface ContactMetrics {
   recentlyContacted: number;
 }
 
+type ImportStatus = "VALID" | "DUPLICATE" | "DUPLICATE_IN_FILE" | "INVALID";
+
+interface ImportPreviewRow {
+  rowNumber: number;
+  name: string;
+  phoneOriginal: string;
+  status: ImportStatus;
+  reason: string | null;
+}
+
+interface ImportPreview {
+  totalRows: number;
+  valid: number;
+  duplicates: number;
+  invalid: number;
+  rows: ImportPreviewRow[];
+}
+
+interface ImportResult {
+  totalRows: number;
+  imported: number;
+  duplicates: number;
+  invalid: number;
+  failed: number;
+}
+
 function formatPhone(phone: string) {
   const d = phone.replace(/\D/g, "");
   const local = d.startsWith("55") ? d.slice(2) : d;
@@ -117,6 +143,14 @@ export default function ClientesPage() {
   const [filter, setFilter] = useState<ClientFilter>("all");
   const [page, setPage] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState("");
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [confirmingImport, setConfirmingImport] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -198,6 +232,58 @@ export default function ClientesPage() {
     }
   };
 
+  const openImport = () => {
+    setImportFile(null);
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError("");
+    setShowImportModal(true);
+  };
+
+  const requestImport = async (endpoint: "preview" | "confirm") => {
+    if (!importFile) throw new Error("Selecione um arquivo CSV ou XLSX.");
+    const formData = new FormData();
+    formData.append("file", importFile);
+    const response = await fetch(`/api/admin/clients/import/${endpoint}`, {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message ?? payload.error ?? "Falha ao importar clientes.");
+    return payload;
+  };
+
+  const loadImportPreview = async () => {
+    setLoadingPreview(true);
+    setImportError("");
+    try {
+      setImportPreview(await requestImport("preview"));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Falha ao analisar arquivo.");
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (confirmingImport || !importPreview?.valid) return;
+    setConfirmingImport(true);
+    setImportError("");
+    try {
+      setImportResult(await requestImport("confirm"));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Falha ao importar clientes.");
+    } finally {
+      setConfirmingImport(false);
+    }
+  };
+
+  const finishImport = async () => {
+    setShowImportModal(false);
+    setPage(1);
+    await fetchClients(search, 1, filter);
+  };
+
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-6xl">
@@ -209,13 +295,50 @@ export default function ClientesPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
-        >
-          Novo cliente
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={openImport}
+            className="px-4 py-2 rounded-lg bg-stone-900 border border-stone-700 text-stone-200 text-sm font-bold hover:bg-stone-800"
+          >
+            Importar clientes
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowExportMenu((current) => !current)}
+              className="px-4 py-2 rounded-lg bg-stone-900 border border-stone-700 text-stone-200 text-sm font-bold hover:bg-stone-800"
+              aria-expanded={showExportMenu}
+            >
+              Exportar clientes
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-lg border border-stone-700 bg-stone-900 shadow-xl">
+                <a
+                  href="/api/admin/clients/export?format=xlsx"
+                  className="block px-4 py-3 text-sm text-stone-200 hover:bg-stone-800"
+                  onClick={() => setShowExportMenu(false)}
+                >
+                  Excel (.xlsx)
+                </a>
+                <a
+                  href="/api/admin/clients/export?format=csv"
+                  className="block px-4 py-3 text-sm text-stone-200 hover:bg-stone-800"
+                  onClick={() => setShowExportMenu(false)}
+                >
+                  CSV (.csv)
+                </a>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
+          >
+            Novo cliente
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -496,6 +619,171 @@ export default function ClientesPage() {
           </div>
         </div>
       )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4">
+          <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-lg border border-stone-800 bg-stone-900 p-4 sm:p-6">
+            {!importPreview && !importResult && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-stone-100">Importar clientes</h3>
+                  <p className="mt-1 text-sm text-stone-400">
+                    Envie uma planilha CSV ou Excel com até 1.000 clientes.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-dashed border-stone-700 bg-stone-950/50 p-5">
+                  <label htmlFor="customer-import-file" className="block text-sm font-bold text-stone-200">
+                    Selecionar arquivo
+                  </label>
+                  <input
+                    id="customer-import-file"
+                    type="file"
+                    accept=".csv,.xlsx"
+                    onChange={(event) => {
+                      setImportFile(event.target.files?.[0] ?? null);
+                      setImportError("");
+                    }}
+                    className="mt-3 block w-full text-sm text-stone-400 file:mr-4 file:rounded-lg file:border-0 file:bg-amber-500 file:px-4 file:py-2 file:font-bold file:text-stone-950"
+                  />
+                  <p className="mt-2 text-xs text-stone-500">CSV / XLSX · máx. 5 MB</p>
+                  {importFile && <p className="mt-2 text-sm text-stone-300">{importFile.name}</p>}
+                </div>
+                <a
+                  href="/api/admin/clients/export?format=template"
+                  className="inline-flex text-sm font-semibold text-amber-400 hover:text-amber-300"
+                >
+                  Baixar planilha modelo
+                </a>
+                {importError && <p className="text-sm text-red-400">{importError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowImportModal(false)}
+                    className="rounded-lg bg-stone-800 px-4 py-2 text-sm font-semibold text-stone-300"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={loadImportPreview}
+                    disabled={!importFile || loadingPreview}
+                    className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-stone-950 disabled:opacity-50"
+                  >
+                    {loadingPreview ? "Analisando..." : "Visualizar clientes"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importPreview && !importResult && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-stone-100">Preview da importação</h3>
+                  <p className="mt-1 text-xs text-stone-500">Nenhuma alteração foi feita no banco.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <ImportMetric label="Total" value={importPreview.totalRows} tone="text-stone-100" />
+                  <ImportMetric label="Válidos" value={importPreview.valid} tone="text-emerald-400" />
+                  <ImportMetric label="Duplicados" value={importPreview.duplicates} tone="text-amber-400" />
+                  <ImportMetric label="Inválidos" value={importPreview.invalid} tone="text-red-400" />
+                </div>
+                <div className="max-h-80 overflow-auto rounded-lg border border-stone-800">
+                  <table className="w-full min-w-[680px] text-left text-xs">
+                    <thead className="sticky top-0 bg-stone-950 text-stone-500">
+                      <tr>
+                        <th className="px-3 py-2">Linha</th>
+                        <th className="px-3 py-2">Nome</th>
+                        <th className="px-3 py-2">Telefone</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800">
+                      {importPreview.rows.map((row) => (
+                        <tr key={row.rowNumber}>
+                          <td className="px-3 py-2 text-stone-500">{row.rowNumber}</td>
+                          <td className="px-3 py-2 text-stone-200">{row.name || "-"}</td>
+                          <td className="px-3 py-2 text-stone-300">{row.phoneOriginal || "-"}</td>
+                          <td className="px-3 py-2">
+                            <span className={`font-bold ${importStatusTone(row.status)}`}>
+                              {importStatusLabel(row.status)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-stone-500">{row.reason ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {importError && <p className="text-sm text-red-400">{importError}</p>}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setImportPreview(null)}
+                    disabled={confirmingImport}
+                    className="rounded-lg bg-stone-800 px-4 py-2 text-sm font-semibold text-stone-300 disabled:opacity-50"
+                  >
+                    Voltar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmImport}
+                    disabled={importPreview.valid === 0 || confirmingImport}
+                    className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-stone-950 disabled:opacity-50"
+                  >
+                    {confirmingImport ? "Importando..." : `Importar ${importPreview.valid} clientes`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importResult && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-stone-100">Importação concluída</h3>
+                  <p className="mt-1 text-sm text-stone-400">A confirmação foi revalidada pelo servidor.</p>
+                </div>
+                <div className="space-y-2 rounded-lg border border-stone-800 bg-stone-950/50 p-5 text-sm">
+                  <p className="text-emerald-400"><strong>{importResult.imported}</strong> clientes importados</p>
+                  <p className="text-amber-400"><strong>{importResult.duplicates}</strong> duplicados ignorados</p>
+                  <p className="text-red-400"><strong>{importResult.invalid}</strong> linhas inválidas</p>
+                  {importResult.failed > 0 && <p className="text-red-400"><strong>{importResult.failed}</strong> falhas</p>}
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={finishImport}
+                    className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-stone-950"
+                  >
+                    Concluir
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function ImportMetric({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className="rounded-lg border border-stone-800 bg-stone-950/50 p-3">
+      <p className="text-[10px] font-bold uppercase text-stone-500">{label}</p>
+      <p className={`text-xl font-bold ${tone}`}>{value}</p>
+    </div>
+  );
+}
+
+function importStatusLabel(status: ImportStatus) {
+  if (status === "VALID") return "Válido";
+  if (status === "INVALID") return "Inválido";
+  return "Duplicado";
+}
+
+function importStatusTone(status: ImportStatus) {
+  if (status === "VALID") return "text-emerald-400";
+  if (status === "INVALID") return "text-red-400";
+  return "text-amber-400";
 }

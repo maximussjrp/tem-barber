@@ -264,4 +264,91 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
       notes: "Observacao atualizada",
     });
   });
+
+  it("exibe importacao, planilha modelo e exportacao CSV/XLSX", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ clients: [], total: 0, page: 1, pageSize: 30 }),
+    }) as unknown as typeof fetch;
+
+    render(<ClientesPage />);
+    await screen.findByText("Nenhum cliente encontrado.");
+    await userEvent.click(screen.getByRole("button", { name: "Exportar clientes" }));
+    expect(screen.getByRole("link", { name: "Excel (.xlsx)" })).toHaveAttribute(
+      "href",
+      "/api/admin/clients/export?format=xlsx"
+    );
+    expect(screen.getByRole("link", { name: "CSV (.csv)" })).toHaveAttribute(
+      "href",
+      "/api/admin/clients/export?format=csv"
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Importar clientes" }));
+    expect(screen.getByText("Envie uma planilha CSV ou Excel com até 1.000 clientes.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Baixar planilha modelo" })).toHaveAttribute(
+      "href",
+      "/api/admin/clients/export?format=template"
+    );
+    expect(screen.getByLabelText("Selecionar arquivo")).toHaveAttribute("accept", ".csv,.xlsx");
+  });
+
+  it("faz preview read-only, confirma uma vez, mostra resultado e recarrega clientes", async () => {
+    let resolveConfirm: ((value: unknown) => void) | undefined;
+    const confirmResponse = new Promise((resolve) => {
+      resolveConfirm = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/import/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            totalRows: 3,
+            valid: 1,
+            duplicates: 1,
+            invalid: 1,
+            rows: [
+              { rowNumber: 2, name: "Novo", phoneOriginal: "17991089190", status: "VALID", reason: null },
+              { rowNumber: 3, name: "Duplicado", phoneOriginal: "17991089191", status: "DUPLICATE", reason: "Cliente ja pertence" },
+              { rowNumber: 4, name: "Ruim", phoneOriginal: "123", status: "INVALID", reason: "Telefone invalido" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/import/confirm")) return confirmResponse;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ clients: [], total: 0, page: 1, pageSize: 30 }),
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<ClientesPage />);
+    await screen.findByText("Nenhum cliente encontrado.");
+    await userEvent.click(screen.getByRole("button", { name: "Importar clientes" }));
+    const file = new File(["Nome,Telefone\nNovo,17991089190"], "clientes.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("Selecionar arquivo"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Visualizar clientes" }));
+
+    expect(await screen.findByText("Preview da importação")).toBeInTheDocument();
+    expect(screen.getByText("Cliente ja pertence")).toBeInTheDocument();
+    const previewCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/import/preview"));
+    expect(previewCall?.[1]?.method).toBe("POST");
+    expect((previewCall?.[1]?.body as FormData).get("barbershopId")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Importar 1 clientes" }));
+    const importingButton = screen.getByRole("button", { name: "Importando..." });
+    expect(importingButton).toBeDisabled();
+    fireEvent.click(importingButton);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/import/confirm"))).toHaveLength(1);
+
+    resolveConfirm?.({
+      ok: true,
+      json: async () => ({ totalRows: 3, imported: 1, duplicates: 1, invalid: 1, failed: 0 }),
+    });
+    expect(await screen.findByText("Importação concluída")).toBeInTheDocument();
+    expect(screen.getByText(/clientes importados/)).toHaveTextContent("1 clientes importados");
+    await userEvent.click(screen.getByRole("button", { name: "Concluir" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("page=1"))).toHaveLength(2));
+  });
 });
