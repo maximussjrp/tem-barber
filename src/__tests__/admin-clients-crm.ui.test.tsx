@@ -53,6 +53,8 @@ const detailPayload = {
   email: "ana@test.com",
   phone: "5517991089190",
   createdAt: "2026-08-01T00:00:00.000Z",
+  birthDate: "1990-05-10",
+  notes: "<script>alert(1)</script>",
   barbershopName: "Barbearia A",
   bookingUrl: "/barbearia-a/agendar",
   contactHistoryConfigured: false,
@@ -139,11 +141,18 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Novo cliente" }));
     await userEvent.type(screen.getByLabelText("Nome"), "Cliente Novo");
     await userEvent.type(screen.getByLabelText("WhatsApp"), "(17) 99108-9190");
+    await userEvent.type(screen.getByLabelText("Data de nascimento opcional"), "1992-05-14");
+    await userEvent.type(screen.getByLabelText("Observações opcionais"), "Cliente VIP");
     await userEvent.click(screen.getByRole("button", { name: "Salvar cliente" }));
 
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith("/admin/clientes/client-new"));
     const body = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(body).toMatchObject({ name: "Cliente Novo", phone: "(17) 99108-9190" });
+    expect(body).toMatchObject({
+      name: "Cliente Novo",
+      phone: "(17) 99108-9190",
+      birthDate: "1992-05-14",
+      notes: "Cliente VIP",
+    });
     expect(body).not.toHaveProperty("barbershopId");
   });
 
@@ -219,5 +228,40 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
       "noopener,noreferrer"
     );
     openSpy.mockRestore();
+  });
+
+  it("edita data de nascimento e observacoes apenas pelo perfil da barbearia", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => detailPayload })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ logs: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ birthDate: "1993-06-15", notes: "Observacao atualizada" }),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { container } = render(<ClienteDetailPage />);
+    const birthDate = await screen.findByLabelText("Data de nascimento");
+    expect(birthDate).toHaveValue("1990-05-10");
+    await userEvent.clear(birthDate);
+    await userEvent.type(birthDate, "1993-06-15");
+    const notes = screen.getByLabelText("Observações");
+    expect(notes).toHaveValue("<script>alert(1)</script>");
+    expect(container.querySelector("script")).toBeNull();
+    await userEvent.clear(notes);
+    await userEvent.type(notes, "Observacao atualizada");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar perfil" }));
+
+    await screen.findByText("Perfil da barbearia salvo.");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/admin/clients/client-1",
+      expect.objectContaining({ method: "PATCH" })
+    );
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+      birthDate: "1993-06-15",
+      notes: "Observacao atualizada",
+    });
   });
 });

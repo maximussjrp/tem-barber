@@ -6,7 +6,9 @@ import { computeClientMetrics } from "@/lib/clients/client-metrics";
 import {
   buildClientWhatsappLink,
   buildClientWhatsappMessage,
+  formatCustomerBirthDate,
   phoneLookupVariants,
+  validateCustomerBarbershopProfile,
 } from "@/lib/customers";
 import { WHATSAPP_TEMPLATES } from "@/lib/customer-whatsapp-templates";
 
@@ -34,7 +36,7 @@ export async function GET(
   const [link, appointmentCountRaw, comandaCountRaw, clubCountRaw] = await Promise.all([
     prisma.customerBarbershopLink?.findUnique({
       where: { barbershopId_customerId: { barbershopId, customerId } },
-      select: { id: true },
+      select: { id: true, birthDate: true, notes: true },
     }) ?? Promise.resolve(null),
     prisma.appointment.count({ where: { customerId, barbershopId } }),
     prisma.comanda?.count({ where: { customerId, barbershopId } }) ?? Promise.resolve(0),
@@ -184,6 +186,8 @@ export async function GET(
     phone: user.phone,
     email: user.email,
     createdAt: user.createdAt.toISOString(),
+    birthDate: formatCustomerBirthDate(link?.birthDate),
+    notes: link?.notes ?? null,
     barbershopName: barbershop?.name ?? "Barbearia",
     bookingUrl,
     contactHistoryConfigured: true,
@@ -213,5 +217,86 @@ export async function GET(
     },
     metrics,
     history,
+  });
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { error: sessionError, data: sessionData } = await getAdminSession();
+  if (sessionError) return sessionError;
+
+  const barbershopId = sessionData!.barbershopId;
+  if (!barbershopId) {
+    return NextResponse.json({ error: "Barbearia nao vinculada." }, { status: 403 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Body invalido." }, { status: 400 });
+  }
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Body invalido." }, { status: 400 });
+  }
+
+  const payload = body as { birthDate?: string | null; notes?: string | null };
+  if (
+    (payload.birthDate !== undefined && payload.birthDate !== null && typeof payload.birthDate !== "string") ||
+    (payload.notes !== undefined && payload.notes !== null && typeof payload.notes !== "string")
+  ) {
+    return NextResponse.json({ error: "Perfil do cliente invalido." }, { status: 400 });
+  }
+  if (payload.birthDate === undefined && payload.notes === undefined) {
+    return NextResponse.json({ error: "Nenhum campo de perfil informado." }, { status: 400 });
+  }
+  const profileResult = validateCustomerBarbershopProfile(payload);
+  if ("error" in profileResult) {
+    return NextResponse.json(
+      { error: profileResult.error, message: profileResult.message },
+      { status: 400 }
+    );
+  }
+
+  const { id: customerId } = await params;
+  const [link, appointmentCountRaw, comandaCountRaw, clubCountRaw] = await Promise.all([
+    prisma.customerBarbershopLink.findUnique({
+      where: { barbershopId_customerId: { barbershopId, customerId } },
+      select: { id: true },
+    }),
+    prisma.appointment.count({ where: { customerId, barbershopId } }),
+    prisma.comanda.count({ where: { customerId, barbershopId } }),
+    prisma.customerClubSubscription.count({ where: { customerId, barbershopId } }),
+  ]);
+
+  if (!link && Number(appointmentCountRaw ?? 0) === 0 && Number(comandaCountRaw ?? 0) === 0 && Number(clubCountRaw ?? 0) === 0) {
+    return NextResponse.json(
+      { error: "Cliente nao encontrado ou sem historico nesta barbearia." },
+      { status: 404 }
+    );
+  }
+
+  const profile = await prisma.customerBarbershopLink.upsert({
+    where: { barbershopId_customerId: { barbershopId, customerId } },
+    create: {
+      barbershopId,
+      customerId,
+      birthDate: profileResult.profile.birthDate,
+      notes: profileResult.profile.notes,
+    },
+    update: {
+      ...(profileResult.profile.birthDate !== undefined
+        ? { birthDate: profileResult.profile.birthDate }
+        : {}),
+      ...(profileResult.profile.notes !== undefined ? { notes: profileResult.profile.notes } : {}),
+    },
+    select: { birthDate: true, notes: true },
+  });
+
+  return NextResponse.json({
+    birthDate: formatCustomerBirthDate(profile.birthDate),
+    notes: profile.notes,
   });
 }

@@ -48,7 +48,7 @@ vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
 
 import { GET as listClients, POST as createClient } from "@/app/api/admin/clients/route";
 import { GET as searchClients } from "@/app/api/admin/clients/search/route";
-import { GET as getClientDetail } from "@/app/api/admin/clients/[id]/route";
+import { GET as getClientDetail, PATCH as updateClientProfile } from "@/app/api/admin/clients/[id]/route";
 
 function req(url: string, method = "GET", body?: unknown) {
   return new NextRequest(url, {
@@ -76,11 +76,17 @@ function emptyStatsQueries() {
 describe("P1 Clientes/CRM LOTE A API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    prismaMock.customerBarbershopLink.findMany.mockResolvedValue([]);
     session();
   });
 
   it("lista clientes por link, legado por appointment e deduplica por User.id", async () => {
     prismaMock.customerBarbershopLink.findMany.mockResolvedValueOnce([{ customerId: "manual-1" }]);
+    prismaMock.customerBarbershopLink.findMany.mockResolvedValueOnce([{
+      customerId: "manual-1",
+      birthDate: new Date("1992-05-14T00:00:00.000Z"),
+      notes: "Notas tenant A",
+    }]);
     prismaMock.appointment.findMany.mockResolvedValueOnce([
       { customerId: "legacy-1" },
       { customerId: "manual-1" },
@@ -99,7 +105,15 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(data.total).toBe(2);
     expect(data.clients.map((c: { id: string }) => c.id)).toEqual(["legacy-1", "manual-1"]);
     expect(data.clients.find((c: { id: string }) => c.id === "manual-1").sources.link).toBe(true);
+    expect(data.clients.find((c: { id: string }) => c.id === "manual-1")).toMatchObject({
+      birthDate: "1992-05-14",
+      notes: "Notas tenant A",
+    });
     expect(data.clients.find((c: { id: string }) => c.id === "legacy-1").sources.appointment).toBe(true);
+    expect(data.clients.find((c: { id: string }) => c.id === "legacy-1")).toMatchObject({
+      birthDate: null,
+      notes: null,
+    });
   });
 
   it("filtra sem agendamento e não vaza cliente de outro tenant", async () => {
@@ -225,7 +239,7 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     vi.useRealTimers();
   });
 
-  it("cria User novo, normaliza telefone e cria CustomerBarbershopLink do tenant da sessão", async () => {
+  it("cria o vínculo tenant e preserva o round-trip exato da data civil e notes como texto", async () => {
     prismaMock.barbershopBlockedCustomer.findFirst.mockResolvedValueOnce(null);
     prismaMock.user.upsert.mockResolvedValueOnce({
       id: "new-user",
@@ -234,17 +248,26 @@ describe("P1 Clientes/CRM LOTE A API", () => {
       email: null,
       createdAt: new Date("2026-01-01T00:00:00Z"),
     });
-    prismaMock.customerBarbershopLink.upsert.mockResolvedValueOnce({ id: "link-1", createdAt: new Date() });
+    prismaMock.customerBarbershopLink.upsert.mockResolvedValueOnce({
+      id: "link-1",
+      createdAt: new Date(),
+      birthDate: new Date("1990-05-10T00:00:00.000Z"),
+      notes: "<script>alert(1)</script>",
+    });
 
     const response = await createClient(req("http://localhost/api/admin/clients", "POST", {
       name: "Novo Cliente",
       phone: "(17) 99108-9190",
+      birthDate: "1990-05-10",
+      notes: "  <script>alert(1)</script>  ",
       barbershopId: "evil-shop",
     }));
     const data = await response.json();
 
     expect(response.status).toBe(201);
     expect(data.id).toBe("new-user");
+    expect(data.birthDate).toBe("1990-05-10");
+    expect(data.notes).toBe("<script>alert(1)</script>");
     expect(prismaMock.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { phone: "5517991089190" },
@@ -253,6 +276,11 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(prismaMock.customerBarbershopLink.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { barbershopId_customerId: { barbershopId: "shop-a", customerId: "new-user" } },
+        create: expect.objectContaining({
+          barbershopId: "shop-a",
+          birthDate: new Date("1990-05-10T00:00:00.000Z"),
+          notes: "<script>alert(1)</script>",
+        }),
       })
     );
   });
@@ -266,15 +294,23 @@ describe("P1 Clientes/CRM LOTE A API", () => {
       email: "cliente@test.com",
       createdAt: new Date(),
     });
-    prismaMock.customerBarbershopLink.upsert.mockResolvedValueOnce({ id: "existing-link", createdAt: new Date() });
+    prismaMock.customerBarbershopLink.upsert.mockResolvedValueOnce({
+      id: "existing-link",
+      createdAt: new Date(),
+      birthDate: null,
+      notes: null,
+    });
 
     const response = await createClient(req("http://localhost/api/admin/clients", "POST", {
       name: "Cliente Existente",
       phone: "5517991089190",
       email: "cliente@test.com",
     }));
+    const data = await response.json();
 
     expect(response.status).toBe(201);
+    expect(data.birthDate).toBeNull();
+    expect(data.notes).toBeNull();
     expect(prismaMock.user.upsert).toHaveBeenCalledTimes(1);
     expect(prismaMock.customerBarbershopLink.upsert).toHaveBeenCalledTimes(1);
   });
@@ -296,6 +332,93 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(prismaMock.customerBarbershopLink.upsert).not.toHaveBeenCalled();
   });
 
+  it("rejeita data futura, data civil invalida e observacoes acima de 1000 caracteres", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-22T12:00:00.000Z"));
+
+    for (const birthDate of ["2026-08-23", "2025-02-30", "1899-12-31"]) {
+      const response = await createClient(req("http://localhost/api/admin/clients", "POST", {
+        name: "Cliente",
+        phone: "5517991089190",
+        birthDate,
+      }));
+      expect(response.status).toBe(400);
+    }
+    vi.setSystemTime(new Date("2026-08-23T01:00:00.000Z"));
+    const timezoneBoundaryResponse = await createClient(req("http://localhost/api/admin/clients", "POST", {
+      name: "Cliente",
+      phone: "5517991089190",
+      birthDate: "2026-08-23",
+    }));
+    expect(timezoneBoundaryResponse.status).toBe(400);
+    const notesResponse = await createClient(req("http://localhost/api/admin/clients", "POST", {
+      name: "Cliente",
+      phone: "5517991089190",
+      notes: "x".repeat(1001),
+    }));
+    expect(notesResponse.status).toBe(400);
+    expect(prismaMock.user.upsert).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("mantem birthDate e notes independentes para o mesmo User em dois tenants", async () => {
+    const profiles = new Map([
+      ["shop-a", { birthDate: new Date("1990-01-01T00:00:00.000Z"), notes: "Cliente A" }],
+      ["shop-b", { birthDate: new Date("1991-02-02T00:00:00.000Z"), notes: "Cliente B" }],
+    ]);
+    prismaMock.customerBarbershopLink.findUnique.mockImplementation(({ where }) => {
+      const key = where.barbershopId_customerId.barbershopId;
+      return Promise.resolve(profiles.has(key) ? { id: `link-${key}` } : null);
+    });
+    prismaMock.appointment.count.mockResolvedValue(0);
+    prismaMock.comanda.count.mockResolvedValue(0);
+    prismaMock.customerClubSubscription.count.mockResolvedValue(0);
+    prismaMock.customerBarbershopLink.upsert.mockImplementation(({ where, update }) => {
+      const key = where.barbershopId_customerId.barbershopId;
+      const current = profiles.get(key)!;
+      const updated = { ...current, ...update };
+      profiles.set(key, updated);
+      return Promise.resolve(updated);
+    });
+
+    const responseA = await updateClientProfile(req("http://localhost/api/admin/clients/shared-user", "PATCH", {
+      birthDate: "1990-05-10",
+      notes: "Cliente A atualizado",
+    }), { params: Promise.resolve({ id: "shared-user" }) });
+    expect(profiles.get("shop-b")).toEqual({
+      birthDate: new Date("1991-02-02T00:00:00.000Z"),
+      notes: "Cliente B",
+    });
+
+    getAdminSessionMock.mockResolvedValueOnce({
+      error: null,
+      data: { userId: "admin-2", role: "OWNER", memberId: "member-2", barbershopId: "shop-b" },
+    });
+    const responseB = await updateClientProfile(req("http://localhost/api/admin/clients/shared-user", "PATCH", {
+      birthDate: "1991-03-03",
+      notes: "Cliente B atualizado",
+    }), { params: Promise.resolve({ id: "shared-user" }) });
+
+    await expect(responseA.json()).resolves.toEqual({ birthDate: "1990-05-10", notes: "Cliente A atualizado" });
+    await expect(responseB.json()).resolves.toEqual({ birthDate: "1991-03-03", notes: "Cliente B atualizado" });
+    expect(profiles.get("shop-a")).toEqual({
+      birthDate: new Date("1990-05-10T00:00:00.000Z"),
+      notes: "Cliente A atualizado",
+    });
+    expect(profiles.get("shop-b")).toEqual({
+      birthDate: new Date("1991-03-03T00:00:00.000Z"),
+      notes: "Cliente B atualizado",
+    });
+    expect(prismaMock.customerBarbershopLink.upsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ where: { barbershopId_customerId: { barbershopId: "shop-a", customerId: "shared-user" } } })
+    );
+    expect(prismaMock.customerBarbershopLink.upsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { barbershopId_customerId: { barbershopId: "shop-b", customerId: "shared-user" } } })
+    );
+  });
+
   it("busca cliente manual por nome e telefone sem depender apenas de Appointment", async () => {
     prismaMock.customerBarbershopLink.findMany.mockResolvedValueOnce([{ customerId: "manual-1" }]);
     prismaMock.appointment.findMany.mockResolvedValueOnce([]);
@@ -315,7 +438,11 @@ describe("P1 Clientes/CRM LOTE A API", () => {
   });
 
   it("detalhe abre cliente manual sem appointment e bloqueia cliente sem vínculo tenant", async () => {
-    prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+    prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({
+      id: "link-1",
+      birthDate: new Date("1992-05-14T00:00:00.000Z"),
+      notes: "Notas tenant A",
+    });
     prismaMock.appointment.count.mockResolvedValueOnce(0);
     prismaMock.comanda.count.mockResolvedValueOnce(0);
     prismaMock.customerClubSubscription.count.mockResolvedValueOnce(0);
@@ -340,6 +467,8 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     expect(ok.status).toBe(200);
     expect(okData.history).toEqual([]);
     expect(okData.contactHistoryConfigured).toBe(true);
+    expect(okData.birthDate).toBe("1992-05-14");
+    expect(okData.notes).toBe("Notas tenant A");
 
     prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce(null);
     prismaMock.appointment.count.mockResolvedValueOnce(0);

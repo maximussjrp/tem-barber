@@ -36,7 +36,15 @@ export type ManualClientInput = {
   name?: string | null;
   phone?: string | null;
   email?: string | null;
+  birthDate?: string | null;
+  notes?: string | null;
 };
+
+export type CustomerBarbershopProfileInput = Pick<ManualClientInput, "birthDate" | "notes">;
+
+type CustomerBarbershopProfileValidation =
+  | { profile: { birthDate: Date | null | undefined; notes: string | null | undefined } }
+  | { error: "INVALID_BIRTH_DATE" | "NOTES_TOO_LONG"; message: string };
 
 export type AdminClientListItem = {
   id: string;
@@ -44,6 +52,8 @@ export type AdminClientListItem = {
   email: string | null;
   phone: string;
   createdAt: Date;
+  birthDate: string | null;
+  notes: string | null;
   sources: {
     link: boolean;
     appointment: boolean;
@@ -69,6 +79,57 @@ export type AdminClientListItem = {
 
 export function normalizePhone(phone: string | null | undefined): string {
   return normalizeBrazilianMobilePhone(phone) ?? "";
+}
+
+export function formatCustomerBirthDate(value: Date | null | undefined): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+function currentCivilDateInSaoPaulo(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+export function validateCustomerBarbershopProfile(
+  input: CustomerBarbershopProfileInput,
+  now = new Date()
+): CustomerBarbershopProfileValidation {
+  let birthDate: Date | null | undefined;
+  if (input.birthDate !== undefined) {
+    const value = input.birthDate?.trim() ?? "";
+    if (!value) {
+      birthDate = null;
+    } else {
+      const matchesCivilDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      const parsed = matchesCivilDate ? new Date(`${value}T00:00:00.000Z`) : null;
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+        return { error: "INVALID_BIRTH_DATE" as const, message: "Informe uma data de nascimento valida." };
+      }
+      if (value < "1900-01-01" || value > currentCivilDateInSaoPaulo(now)) {
+        return {
+          error: "INVALID_BIRTH_DATE" as const,
+          message: "A data de nascimento deve estar entre 01/01/1900 e hoje.",
+        };
+      }
+      birthDate = parsed;
+    }
+  }
+
+  let notes: string | null | undefined;
+  if (input.notes !== undefined) {
+    notes = input.notes?.trim() || null;
+    if (notes && notes.length > 1000) {
+      return { error: "NOTES_TOO_LONG" as const, message: "As observacoes devem ter no maximo 1000 caracteres." };
+    }
+  }
+
+  return { profile: { birthDate, notes } };
 }
 
 export function phoneLookupVariants(phone: string | null | undefined): string[] {
@@ -280,6 +341,7 @@ export async function createManualBarbershopClient(
   const name = input.name?.trim();
   const normalizedPhone = normalizePhone(input.phone);
   const email = input.email?.trim() || null;
+  const profileResult = validateCustomerBarbershopProfile(input);
 
   if (!name || name.length < 2) {
     return { error: "INVALID_NAME" as const, message: "Informe o nome do cliente." };
@@ -287,6 +349,7 @@ export async function createManualBarbershopClient(
   if (!validateBrazilianMobilePhone(normalizedPhone)) {
     return { error: "INVALID_PHONE" as const, message: "Informe um WhatsApp valido com DDD." };
   }
+  if ("error" in profileResult) return profileResult;
 
   const activeBlock = await client.barbershopBlockedCustomer.findFirst({
     where: {
@@ -328,9 +391,16 @@ export async function createManualBarbershopClient(
     create: {
       barbershopId,
       customerId: user.id,
+      birthDate: profileResult.profile.birthDate,
+      notes: profileResult.profile.notes,
     },
-    update: {},
-    select: { id: true, createdAt: true },
+    update: {
+      ...(profileResult.profile.birthDate !== undefined
+        ? { birthDate: profileResult.profile.birthDate }
+        : {}),
+      ...(profileResult.profile.notes !== undefined ? { notes: profileResult.profile.notes } : {}),
+    },
+    select: { id: true, createdAt: true, birthDate: true, notes: true },
   });
 
   return {
@@ -341,6 +411,8 @@ export async function createManualBarbershopClient(
       email: user.email,
       createdAt: user.createdAt,
       linkId: link.id,
+      birthDate: formatCustomerBirthDate(link.birthDate),
+      notes: link.notes,
     },
   };
 }
@@ -417,7 +489,11 @@ export async function listBarbershopClients(
   }
 
   const now = new Date();
-  const [appointments, comandas, clubSubscriptions, blocks, contactGroups] = await Promise.all([
+  const [profiles, appointments, comandas, clubSubscriptions, blocks, contactGroups] = await Promise.all([
+    client.customerBarbershopLink.findMany({
+      where: { barbershopId: params.barbershopId, customerId: { in: matchingIds } },
+      select: { customerId: true, birthDate: true, notes: true },
+    }),
     client.appointment.findMany({
       where: { barbershopId: params.barbershopId, customerId: { in: matchingIds } },
       select: { customerId: true, status: true, dateTime: true },
@@ -456,6 +532,8 @@ export async function listBarbershopClients(
       _count: { _all: true },
     }),
   ]);
+
+  const profilesByCustomerId = new Map(profiles.map((profile) => [profile.customerId, profile]));
 
   const statsMap = new Map<string, AdminClientListItem["stats"]>();
   const usersById = new Map(matchingUsers.map((user) => [user.id, user]));
@@ -534,6 +612,8 @@ export async function listBarbershopClients(
       email: user.email,
       phone: user.phone,
       createdAt: user.createdAt,
+      birthDate: formatCustomerBirthDate(profilesByCustomerId.get(user.id)?.birthDate),
+      notes: profilesByCustomerId.get(user.id)?.notes ?? null,
       sources: {
         link: sourceSets.link.has(user.id),
         appointment: sourceSets.appointment.has(user.id),

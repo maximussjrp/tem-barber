@@ -120,6 +120,8 @@ export default function ClientesPage() {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newBirthDate, setNewBirthDate] = useState("");
+  const [newNotes, setNewNotes] = useState("");
   const [createError, setCreateError] = useState("");
   const [submittingCreate, setSubmittingCreate] = useState(false);
 
@@ -173,6 +175,8 @@ export default function ClientesPage() {
           name: newName,
           phone: newPhone,
           email: newEmail || undefined,
+          birthDate: newBirthDate || undefined,
+          notes: newNotes || undefined,
         }),
       });
       const payload = await res.json();
@@ -183,6 +187,8 @@ export default function ClientesPage() {
       setNewName("");
       setNewPhone("");
       setNewEmail("");
+      setNewBirthDate("");
+      setNewNotes("");
       await fetchClients(search, page, filter);
       router.push(`/admin/clientes/${payload.id}`);
     } catch (err) {
@@ -438,6 +444,30 @@ export default function ClientesPage() {
                   onChange={(e) => setNewEmail(e.target.value)}
                   className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
                 />
+              </div>
+              <div>
+                <label htmlFor="new-client-birth-date" className="block text-xs font-semibold text-stone-400 mb-1">Data de nascimento opcional</label>
+                <input
+                  id="new-client-birth-date"
+                  type="date"
+                  min="1900-01-01"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={newBirthDate}
+                  onChange={(e) => setNewBirthDate(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="new-client-notes" className="block text-xs font-semibold text-stone-400 mb-1">Observações opcionais</label>
+                <textarea
+                  id="new-client-notes"
+                  value={newNotes}
+                  onChange={(e) => setNewNotes(e.target.value)}
+                  maxLength={1000}
+                  rows={3}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                />
+                <p className="mt-1 text-right text-[10px] text-stone-600">{newNotes.length}/1000</p>
               </div>
 
               {createError && (

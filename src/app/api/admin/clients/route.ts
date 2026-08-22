@@ -49,11 +49,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Body inválido." }, { status: 400 });
   }
 
-  const payload = body as { name?: string; phone?: string; email?: string };
+  const payload = body as {
+    name?: string;
+    phone?: string;
+    email?: string;
+    birthDate?: string | null;
+    notes?: string | null;
+  };
+  if (
+    (payload.birthDate !== undefined && payload.birthDate !== null && typeof payload.birthDate !== "string") ||
+    (payload.notes !== undefined && payload.notes !== null && typeof payload.notes !== "string")
+  ) {
+    return NextResponse.json({ error: "Perfil do cliente invalido." }, { status: 400 });
+  }
   const result = await createManualBarbershopClient(prisma, barbershopId, {
     name: payload.name,
     phone: payload.phone,
     email: payload.email,
+    birthDate: payload.birthDate,
+    notes: payload.notes,
   });
 
   if ("error" in result) {

@@ -375,6 +375,8 @@ model CustomerBarbershopLink {
   id                         String                                 @id @default(uuid())
   barbershopId               String                                 @map("barbershop_id")
   customerId                 String                                 @map("customer_id")
+  birthDate                  DateTime?                              @map("birth_date") @db.Date
+  notes                      String?
   whatsappVerifiedAt         DateTime?                              @map("whatsapp_verified_at")
   whatsappVerifiedById       String?                                @map("whatsapp_verified_by_id")
   whatsappVerificationMethod AppointmentWhatsappConfirmationMethod? @map("whatsapp_verification_method")

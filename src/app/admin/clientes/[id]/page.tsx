@@ -58,6 +58,8 @@ interface ClientData {
   phone: string;
   email: string | null;
   createdAt: string;
+  birthDate: string | null;
+  notes: string | null;
   barbershopName: string;
   bookingUrl: string | null;
   contactHistoryConfigured: boolean;
@@ -321,6 +323,11 @@ export default function Cliente360Page() {
   const [contactedAt, setContactedAt] = useState(() => toDatetimeLocalValue());
   const [contactError, setContactError] = useState("");
   const [submittingContact, setSubmittingContact] = useState(false);
+  const [profileBirthDate, setProfileBirthDate] = useState("");
+  const [profileNotes, setProfileNotes] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [profileNotice, setProfileNotice] = useState("");
+  const [submittingProfile, setSubmittingProfile] = useState(false);
 
   const loadContactLogs = useCallback(async () => {
     setLoadingContactLogs(true);
@@ -344,6 +351,8 @@ export default function Cliente360Page() {
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error ?? "Erro ao carregar dados do cliente.");
       setData(payload);
+      setProfileBirthDate(payload.birthDate ?? "");
+      setProfileNotes(payload.notes ?? "");
       await loadContactLogs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
@@ -355,6 +364,33 @@ export default function Cliente360Page() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const submitProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSubmittingProfile(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      const res = await fetch(`/api/admin/clients/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          birthDate: profileBirthDate || null,
+          notes: profileNotes,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.message ?? payload.error ?? "Erro ao salvar perfil.");
+      setProfileBirthDate(payload.birthDate ?? "");
+      setProfileNotes(payload.notes ?? "");
+      setData((current) => current ? { ...current, birthDate: payload.birthDate, notes: payload.notes } : current);
+      setProfileNotice("Perfil da barbearia salvo.");
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Erro ao salvar perfil.");
+    } finally {
+      setSubmittingProfile(false);
+    }
+  };
 
   const handleBlockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -545,6 +581,48 @@ export default function Cliente360Page() {
           )}
         </div>
       </div>
+
+      <form onSubmit={submitProfile} className="bg-stone-900 border border-stone-800 rounded-lg p-6 space-y-4">
+        <div>
+          <h2 className="text-base font-bold text-stone-200">Perfil nesta barbearia</h2>
+          <p className="mt-1 text-xs text-stone-500">Estes dados pertencem somente a esta barbearia.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="profile-birth-date" className="block text-xs font-semibold text-stone-400 mb-1">Data de nascimento</label>
+            <input
+              id="profile-birth-date"
+              type="date"
+              min="1900-01-01"
+              max={new Date().toISOString().slice(0, 10)}
+              value={profileBirthDate}
+              onChange={(e) => setProfileBirthDate(e.target.value)}
+              className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label htmlFor="profile-notes" className="block text-xs font-semibold text-stone-400 mb-1">Observações</label>
+            <textarea
+              id="profile-notes"
+              value={profileNotes}
+              onChange={(e) => setProfileNotes(e.target.value)}
+              maxLength={1000}
+              rows={3}
+              className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+            />
+            <p className="mt-1 text-right text-[10px] text-stone-600">{profileNotes.length}/1000</p>
+          </div>
+        </div>
+        {profileError && <p className="text-xs text-red-400">{profileError}</p>}
+        {profileNotice && <p className="text-xs text-emerald-400">{profileNotice}</p>}
+        <button
+          type="submit"
+          disabled={submittingProfile}
+          className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 disabled:opacity-50"
+        >
+          {submittingProfile ? "Salvando..." : "Salvar perfil"}
+        </button>
+      </form>
 
       {copyNotice && (
         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
