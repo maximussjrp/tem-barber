@@ -451,6 +451,7 @@ function PublicWaitlistContent() {
     const statusLabel = getStatusLabel(trackingEntry.status);
     const isWaiting = trackingEntry.status === "WAITING";
     const isCalled = trackingEntry.status === "CALLED";
+    const isNoShow = trackingEntry.status === "NO_SHOW";
     const canLeave = isWaiting || isCalled;
 
     return (
@@ -477,7 +478,14 @@ function PublicWaitlistContent() {
                 Número da fila: {trackingEntry.queueNumber}
               </p>
             </div>
-          ) : (
+          ) : isNoShow ? (
+            <div className="mt-5 rounded-lg border border-red-500/25 bg-red-500/10 p-5 text-center">
+              <h2 className="text-xl font-bold text-red-300">Você foi marcado como não compareceu.</h2>
+              <p className="mt-2 text-sm leading-relaxed text-stone-300">
+                Esta entrada foi removida da fila.
+              </p>
+            </div>
+          ) : isWaiting ? (
             <div className="mt-5 rounded-lg border border-stone-800 bg-[#1c1c1f] p-5 text-center">
               <p className="text-xs font-semibold uppercase text-stone-400">Posição atual</p>
               <p className="mt-2 text-5xl font-black text-amber-400">
@@ -490,7 +498,7 @@ function PublicWaitlistContent() {
                 Número da fila: {trackingEntry.queueNumber}
               </p>
             </div>
-          )}
+          ) : null}
 
           <div className="mt-5 space-y-3 rounded-lg border border-stone-800 bg-[#1a1a1d] p-4 text-sm">
             <div className="flex items-center justify-between gap-4 border-b border-stone-800/70 pb-3">

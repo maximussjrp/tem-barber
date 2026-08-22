@@ -445,4 +445,40 @@ describe("PR #20 - tela pública da fila online", () => {
     expect(screen.queryByText("Outro Cliente")).not.toBeInTheDocument();
     expect(screen.queryByText(/551799888/)).not.toBeInTheDocument();
   });
+
+  it("17. NO_SHOW mostra mensagem coerente sem posição nem ação de saída", async () => {
+    searchParamsMock.get.mockImplementation((key: string) => {
+      if (key === "entryId") return "entry-no-show";
+      if (key === "token") return "OWL-token-no-show";
+      return null;
+    });
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/entry-no-show")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            entry: {
+              ...mockTrackingEntry,
+              entryId: "entry-no-show",
+              status: "NO_SHOW",
+              currentPosition: 0,
+              noShowCount: 1,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockOpenStatusResponse),
+      });
+    }) as unknown as typeof fetch;
+
+    render(<PublicWaitlistPage />);
+
+    expect(await screen.findByText("Você foi marcado como não compareceu.")).toBeInTheDocument();
+    expect(screen.queryByText("Posição atual")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sair da fila" })).not.toBeInTheDocument();
+  });
 });

@@ -249,18 +249,27 @@ export default function AdminWaitlistPage() {
     }
   }
 
-  async function handleEntryAction(entryId: string, memberId: string, action: "start-service" | "pass-turn") {
+  async function handleEntryAction(entryId: string, memberId: string, action: "start-service" | "pass-turn" | "no-show") {
+    if (action === "no-show" && !window.confirm("Marcar este cliente como não compareceu e removê-lo da fila?")) {
+      return;
+    }
     setActionLoading(`${action}:${entryId}`);
     setError(null);
     try {
       const response = await fetch(`/api/admin/waitlist/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId, memberId }),
+        body: JSON.stringify(action === "no-show" ? { entryId } : { entryId, memberId }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getErrorMessage(payload, "Não foi possível atualizar a entrada."));
-      setCallNextSuccess(action === "start-service" ? "Atendimento criado na sua agenda com sucesso." : "Cliente passou a vez.");
+      setCallNextSuccess(
+        action === "start-service"
+          ? "Atendimento criado na sua agenda com sucesso."
+          : action === "no-show"
+            ? "Cliente marcado como não compareceu."
+            : "Cliente passou a vez."
+      );
       await loadWaitlist();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível atualizar a entrada.");
@@ -556,6 +565,9 @@ export default function AdminWaitlistPage() {
                         </button>
                         <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "pass-turn")} disabled={actionLoading !== null} className="rounded-md border border-stone-700 px-2 py-1 text-xs font-semibold text-stone-200 disabled:opacity-60">
                           {actionLoading === `pass-turn:${entry.id}` ? "Passando..." : "Passar vez"}
+                        </button>
+                        <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "no-show")} disabled={actionLoading !== null} className="rounded-md border border-red-700 bg-red-950/30 px-2 py-1 text-xs font-semibold text-red-200 hover:bg-red-950/60 disabled:opacity-60">
+                          {actionLoading === `no-show:${entry.id}` ? "Marcando..." : "Não apareceu"}
                         </button>
                       </>
                     ) : null}

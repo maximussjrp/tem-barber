@@ -1012,7 +1012,13 @@ describe("PR #23 - Chamar próximo criando encaixe (FIT_IN)", () => {
   });
 
   it("25. cinco pass-turns mantêm a entrada WAITING e apenas incrementam skipCount", async () => {
-    let state = { id: "called", status: "CALLED", positionWeight: 10, skipCount: 0, calledByMemberId: "member-a" };
+    let state: { id: string; status: string; positionWeight: number; skipCount: number; calledByMemberId: string | null } = {
+      id: "called",
+      status: "CALLED",
+      positionWeight: 10,
+      skipCount: 0,
+      calledByMemberId: "member-a",
+    };
     const db = {
       onlineWaitlistEntry: {
         findUnique: vi.fn().mockImplementation(async () => state),

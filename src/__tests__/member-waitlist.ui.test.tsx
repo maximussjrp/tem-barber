@@ -35,6 +35,22 @@ const openResponse = {
   },
 };
 
+const calledResponse = {
+  ...openResponse,
+  currentMemberId: "member-1",
+  session: {
+    ...openResponse.session,
+    entries: [
+      {
+        ...openResponse.session.entries[0],
+        status: "CALLED",
+        currentPosition: null,
+        calledByMemberId: "member-1",
+      },
+    ],
+  },
+};
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve({
     ok: status >= 200 && status < 300,
@@ -45,10 +61,12 @@ function jsonResponse(body: unknown, status = 200) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("confirm", vi.fn(() => true));
 });
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe("PR #23 - Member Waitlist Page UI (/member/fila)", () => {
@@ -134,5 +152,46 @@ describe("PR #23 - Member Waitlist Page UI (/member/fila)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Este profissional tem um agendamento próximo e não pode chamar a fila agora."
     );
+  });
+
+  it("5. mostra e executa não apareceu somente para cliente chamado pelo próprio membro", async () => {
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/member/waitlist/no-show" && init?.method === "POST") {
+        return jsonResponse({ entry: { id: "entry-1", status: "NO_SHOW" } });
+      }
+      return jsonResponse(calledResponse);
+    });
+
+    render(<MemberWaitlistPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Não apareceu" }));
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      "Marcar este cliente como não compareceu e removê-lo da fila?"
+    );
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/member/waitlist/no-show",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ entryId: "entry-1" }),
+        })
+      );
+    });
+    expect(await screen.findByText("Cliente marcado como não compareceu.")).toBeInTheDocument();
+  });
+
+  it("6. não mostra ação para cliente chamado por outro profissional", async () => {
+    global.fetch = vi.fn().mockImplementation(() => jsonResponse({
+      ...calledResponse,
+      session: {
+        ...calledResponse.session,
+        entries: [{ ...calledResponse.session.entries[0], calledByMemberId: "member-2" }],
+      },
+    }));
+
+    render(<MemberWaitlistPage />);
+
+    await screen.findByText("Fila Online");
+    expect(screen.queryByRole("button", { name: "Não apareceu" })).not.toBeInTheDocument();
   });
 });

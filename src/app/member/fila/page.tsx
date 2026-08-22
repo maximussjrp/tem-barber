@@ -121,7 +121,10 @@ export default function MemberWaitlistPage() {
     }
   }
 
-  async function handleEntryAction(entryId: string, action: "start-service" | "pass-turn") {
+  async function handleEntryAction(entryId: string, action: "start-service" | "pass-turn" | "no-show") {
+    if (action === "no-show" && !window.confirm("Marcar este cliente como não compareceu e removê-lo da fila?")) {
+      return;
+    }
     setCalling(true);
     setError(null);
     try {
@@ -132,7 +135,13 @@ export default function MemberWaitlistPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getErrorMessage(payload, "Não foi possível atualizar a entrada."));
-      setSuccess(action === "start-service" ? "Atendimento criado na sua agenda com sucesso." : "Cliente passou a vez.");
+      setSuccess(
+        action === "start-service"
+          ? "Atendimento criado na sua agenda com sucesso."
+          : action === "no-show"
+            ? "Cliente marcado como não compareceu."
+            : "Cliente passou a vez."
+      );
       await loadWaitlist();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível atualizar a entrada.");
@@ -238,6 +247,9 @@ export default function MemberWaitlistPage() {
                 </button>
                 <button type="button" onClick={() => void handleEntryAction(calledClient.id, "pass-turn")} disabled={calling} className="rounded-md border border-stone-700 px-4 py-3 text-sm font-semibold text-stone-100 disabled:opacity-60">
                   Passar vez
+                </button>
+                <button type="button" onClick={() => void handleEntryAction(calledClient.id, "no-show")} disabled={calling} className="rounded-md border border-red-700 bg-red-950/30 px-4 py-3 text-sm font-semibold text-red-200 hover:bg-red-950/60 disabled:opacity-60">
+                  Não apareceu
                 </button>
               </div>
             </div>
