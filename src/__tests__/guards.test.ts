@@ -4,6 +4,7 @@ const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopMember: { findMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn() },
+    $transaction: vi.fn(),
   },
   getServerSessionMock: vi.fn(),
 }));
@@ -13,9 +14,11 @@ vi.mock("next-auth", () => ({ getServerSession: getServerSessionMock }));
 
 import { getAdminSession } from "@/lib/api-auth";
 import { getMemberSession } from "@/lib/member-api-auth";
+import { POST as createComanda } from "@/app/api/admin/comandas/route";
+import { NextRequest } from "next/server";
 
-function session(role: string, id = "user-a") {
-  return { user: { id, role } };
+function session(role: string, id = "user-a", email?: string) {
+  return { user: { id, role, email } };
 }
 
 beforeEach(() => {
@@ -178,5 +181,84 @@ describe("guards e isolamento", () => {
     expect(result.error?.status).toBe(409);
     await expect(result.error?.json()).resolves.toMatchObject({ error: "TENANT_SELECTION_REQUIRED" });
     expect(result.data).toBeNull();
+  });
+
+  it.each(["OWNER", "MANAGER", "BARBER"])(
+    "platform admin com membership %s preserva o papel operacional",
+    async (role) => {
+      getServerSessionMock.mockResolvedValue(
+        session(role, "platform-user", "max.guarinieri@gmail.com")
+      );
+      prismaMock.barbershopMember.findMany.mockResolvedValue([{
+        id: "platform-member",
+        userId: "platform-user",
+        barbershopId: "shop-a",
+        role,
+        isActive: true,
+      }]);
+
+      const result = await getMemberSession();
+      const adminResult = await getAdminSession();
+
+      expect(result.error).toBeNull();
+      expect(result.data).toMatchObject({
+        role,
+        memberId: "platform-member",
+        barbershopId: "shop-a",
+      });
+      expect(adminResult.error).toBeNull();
+      expect(adminResult.data?.role).toBe(role);
+    }
+  );
+
+  it("platform admin sem membership nao recebe contexto operacional artificial", async () => {
+    getServerSessionMock.mockResolvedValue(
+      session("SUPER_ADMIN", "platform-user", "max.guarinieri@gmail.com")
+    );
+    prismaMock.barbershopMember.findMany.mockResolvedValue([]);
+
+    const result = await getMemberSession();
+
+    expect(result.error?.status).toBe(403);
+    expect(result.data).toBeNull();
+  });
+
+  it("platform admin com multiplas memberships continua exigindo selecao de tenant", async () => {
+    getServerSessionMock.mockResolvedValue(
+      session("OWNER", "platform-user", "max.guarinieri@gmail.com")
+    );
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      { id: "member-a", userId: "platform-user", barbershopId: "shop-a", role: "OWNER", isActive: true },
+      { id: "member-b", userId: "platform-user", barbershopId: "shop-b", role: "OWNER", isActive: true },
+    ]);
+
+    const result = await getMemberSession();
+
+    expect(result.error?.status).toBe(409);
+    await expect(result.error?.json()).resolves.toMatchObject({ error: "TENANT_SELECTION_REQUIRED" });
+    expect(result.data).toBeNull();
+  });
+
+  it("platform admin OWNER passa pela permissao de criacao de comanda", async () => {
+    getServerSessionMock.mockResolvedValue(
+      session("OWNER", "platform-user", "max.guarinieri@gmail.com")
+    );
+    prismaMock.barbershopMember.findMany.mockResolvedValue([{
+      id: "platform-member",
+      userId: "platform-user",
+      barbershopId: "shop-a",
+      role: "OWNER",
+      isActive: true,
+    }]);
+
+    const response = await createComanda(new NextRequest("http://localhost/api/admin/comandas", {
+      method: "POST",
+      body: "{",
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Body invalido." });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });

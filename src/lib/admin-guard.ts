@@ -33,9 +33,9 @@ export async function requireAdmin() {
     redirect("/acesso-negado");
   }
 
-  const role = isPlatform ? "SUPER_ADMIN" : member?.role ?? sessionRole;
+  const role = member?.role ?? "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role)) {
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
     redirect("/acesso-negado");
   }
 

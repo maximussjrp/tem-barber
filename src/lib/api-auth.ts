@@ -51,9 +51,9 @@ export async function getAdminSession() {
     };
   }
 
-  const role = isPlatform ? "SUPER_ADMIN" : member?.role ?? sessionRole;
+  const role = member?.role ?? "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role)) {
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
     return {
       error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
       data: null,
