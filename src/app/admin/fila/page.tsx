@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
 
 type WaitlistStatus =
   | "OPEN"
@@ -126,6 +127,16 @@ function buildEmptyResponse(): WaitlistResponse {
   };
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    '"': "&quot;",
+  })[character]!);
+}
+
 export default function AdminWaitlistPage() {
   const [data, setData] = useState<WaitlistResponse>(buildEmptyResponse);
   const [loading, setLoading] = useState(true);
@@ -144,7 +155,10 @@ export default function AdminWaitlistPage() {
     customerName: string;
     memberId: string;
   } | null>(null);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const noShowSubmittingRef = useRef(false);
+  const qrSvgRef = useRef<SVGSVGElement | null>(null);
+  const qrDownloadCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const loadWaitlist = useCallback(async () => {
     try {
@@ -296,6 +310,31 @@ export default function AdminWaitlistPage() {
     return null;
   }, [data.publicUrl, data.barbershop?.slug]);
 
+  const qrPublicUrl = useMemo(() => {
+    if (!publicUrl || !data.barbershop?.slug) return null;
+
+    try {
+      const parsedUrl = new URL(publicUrl);
+      const isPublicWaitlistPath = parsedUrl.pathname === `/${data.barbershop.slug}/fila`;
+      const isSafeHttpUrl = parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:";
+
+      if (
+        !isSafeHttpUrl ||
+        !isPublicWaitlistPath ||
+        parsedUrl.username ||
+        parsedUrl.password ||
+        parsedUrl.search ||
+        parsedUrl.hash
+      ) {
+        return null;
+      }
+
+      return publicUrl;
+    } catch {
+      return null;
+    }
+  }, [data.barbershop?.slug, publicUrl]);
+
   async function copyPublicUrl() {
     if (!publicUrl) return;
 
@@ -306,6 +345,67 @@ export default function AdminWaitlistPage() {
     } catch {
       setError("Não foi possível copiar o link automaticamente.");
     }
+  }
+
+  function downloadQrCode() {
+    if (!qrPublicUrl || !data.barbershop?.slug || !qrDownloadCanvasRef.current) return;
+
+    try {
+      const safeSlug = data.barbershop.slug.replace(/[^a-z0-9-]/gi, "-");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = `fila-tem-barber-${safeSlug}.png`;
+      downloadLink.href = qrDownloadCanvasRef.current.toDataURL("image/png");
+      downloadLink.click();
+    } catch {
+      setError("Não foi possível baixar o QR Code.");
+    }
+  }
+
+  function printQrCode() {
+    if (!qrPublicUrl || !data.barbershop || !qrSvgRef.current) return;
+
+    const printWindow = window.open("", "_blank", "width=900,height=1100");
+    if (!printWindow) {
+      setError("Não foi possível abrir a janela de impressão.");
+      return;
+    }
+
+    const qrMarkup = new XMLSerializer().serializeToString(qrSvgRef.current);
+    const barbershopName = escapeHtml(data.barbershop.name);
+    const publicWaitlistUrl = escapeHtml(qrPublicUrl);
+
+    printWindow.document.write(`<!doctype html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8" />
+          <title>QR Code da fila - ${barbershopName}</title>
+          <style>
+            @page { size: A4; margin: 18mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; color: #111; background: #fff; font-family: Arial, sans-serif; }
+            main { min-height: 250mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+            h1 { margin: 0 0 16px; font-size: 28px; }
+            h2 { margin: 0 0 28px; font-size: 24px; letter-spacing: .08em; }
+            svg { width: 150mm; max-width: 100%; height: auto; padding: 8mm; background: #fff; }
+            p { margin: 22px 0 0; font-size: 18px; line-height: 1.45; }
+            .url { margin-top: 14px; font-size: 14px; overflow-wrap: anywhere; }
+            footer { margin-top: 28px; font-size: 16px; font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>${barbershopName}</h1>
+            <h2>ESCANEIE PARA ENTRAR NA FILA</h2>
+            ${qrMarkup}
+            <p>Aponte a câmera do celular para entrar na fila online.</p>
+            <p class="url">${publicWaitlistUrl}</p>
+            <footer>Tem Barber</footer>
+          </main>
+        </body>
+      </html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   }
 
   const entries = useMemo(() => data.session?.entries ?? [], [data.session?.entries]);
@@ -461,13 +561,24 @@ export default function AdminWaitlistPage() {
                 <p className="mt-2 break-all rounded-md bg-stone-950 p-3 text-sm text-stone-200 ring-1 ring-stone-800">
                   {publicUrl}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void copyPublicUrl()}
-                  className="mt-3 rounded-md border border-stone-700 px-3 py-2 text-sm font-semibold text-stone-100 hover:bg-stone-800"
-                >
-                  {copied ? "Link copiado" : "Copiar link"}
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyPublicUrl()}
+                    className="rounded-md border border-stone-700 px-3 py-2 text-sm font-semibold text-stone-100 hover:bg-stone-800"
+                  >
+                    {copied ? "Link copiado" : "Copiar link"}
+                  </button>
+                  {qrPublicUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setQrModalOpen(true)}
+                      className="rounded-md bg-amber-400 px-3 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-300"
+                    >
+                      Gerar QR Code
+                    </button>
+                  ) : null}
+                </div>
               </>
             ) : (
               <p className="mt-2 text-sm text-stone-400">Link indisponível para esta barbearia.</p>
@@ -649,6 +760,79 @@ export default function AdminWaitlistPage() {
                 {actionLoading === `no-show:${noShowModal.entryId}`
                   ? "Confirmando..."
                   : "Confirmar não comparecimento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {qrModalOpen && qrPublicUrl && data.barbershop ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-waitlist-qr-modal-title"
+            className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-xl border border-stone-700 bg-stone-900 p-5 text-stone-100 shadow-xl sm:p-6"
+          >
+            <h3 id="admin-waitlist-qr-modal-title" className="text-xl font-semibold text-white">
+              QR Code da fila
+            </h3>
+            <p className="mt-2 text-base font-semibold text-amber-300">{data.barbershop.name}</p>
+            <p className="mt-1 text-sm text-stone-300">Escaneie para entrar na fila online</p>
+
+            <div className="mx-auto mt-5 flex w-full max-w-[352px] justify-center rounded-xl bg-white p-4">
+              <QRCodeSVG
+                ref={qrSvgRef}
+                value={qrPublicUrl}
+                size={320}
+                bgColor="#ffffff"
+                fgColor="#000000"
+                level="M"
+                marginSize={2}
+                title="QR Code para entrar na fila online"
+                className="h-auto w-full max-w-[320px]"
+              />
+            </div>
+            <QRCodeCanvas
+              ref={qrDownloadCanvasRef}
+              value={qrPublicUrl}
+              size={1024}
+              bgColor="#ffffff"
+              fgColor="#000000"
+              level="M"
+              marginSize={4}
+              className="hidden"
+              aria-hidden="true"
+            />
+
+            <p className="mt-4 break-all rounded-md bg-stone-950 p-3 text-center text-sm text-stone-200 ring-1 ring-stone-800">
+              {qrPublicUrl}
+            </p>
+            <p className="mt-3 text-center text-sm text-stone-300">
+              Escaneie este código com a câmera do celular para entrar na fila.
+            </p>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={downloadQrCode}
+                className="rounded-md bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-300"
+              >
+                Baixar QR Code
+              </button>
+              <button
+                type="button"
+                onClick={printQrCode}
+                className="rounded-md border border-stone-600 px-4 py-2 text-sm font-semibold text-stone-100 hover:bg-stone-800"
+              >
+                Imprimir
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrModalOpen(false)}
+                className="rounded-md border border-stone-600 px-4 py-2 text-sm font-semibold text-stone-100 hover:bg-stone-800"
+              >
+                Fechar
               </button>
             </div>
           </div>

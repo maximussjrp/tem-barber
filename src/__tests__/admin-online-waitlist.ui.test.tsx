@@ -1,7 +1,28 @@
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminWaitlistPage from "@/app/admin/fila/page";
+
+vi.mock("qrcode.react", async () => {
+  const ReactModule = await vi.importActual<typeof import("react")>("react");
+
+  return {
+    QRCodeSVG: ReactModule.forwardRef<SVGSVGElement, { value: string }>(
+      ({ value }, ref) => ReactModule.createElement("svg", {
+        ref,
+        "data-testid": "waitlist-qr-svg",
+        "data-value": value,
+      })
+    ),
+    QRCodeCanvas: ReactModule.forwardRef<HTMLCanvasElement, { value: string }>(
+      ({ value }, ref) => ReactModule.createElement("canvas", {
+        ref,
+        "data-testid": "waitlist-qr-download-canvas",
+        "data-value": value,
+      })
+    ),
+  };
+});
 
 const emptyResponse = {
   barbershop: { id: "shop-1", name: "Dom Brio", slug: "don-brio" },
@@ -186,6 +207,49 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     await waitFor(() => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://app.tembarber.com.br/don-brio/fila");
     });
+  });
+
+  it("abre e fecha o modal de QR Code usando somente o publicUrl exato", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(screen.queryByRole("dialog", { name: "QR Code da fila" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Gerar QR Code" }));
+
+    const dialog = screen.getByRole("dialog", { name: "QR Code da fila" });
+    const qrCode = within(dialog).getByTestId("waitlist-qr-svg");
+    const qrValue = qrCode.getAttribute("data-value");
+
+    expect(within(dialog).getByText("Dom Brio")).toBeInTheDocument();
+    expect(qrValue).toBe("https://app.tembarber.com.br/don-brio/fila");
+    expect(qrValue).not.toMatch(/entryId|token|tracking|session/i);
+    expect(within(dialog).getByRole("button", { name: "Baixar QR Code" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Imprimir" })).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Fechar" }));
+    expect(screen.queryByRole("dialog", { name: "QR Code da fila" })).not.toBeInTheDocument();
+  });
+
+  it("baixa o QR Code em PNG com o nome baseado no slug", async () => {
+    const toDataUrlSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,qr-code");
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gerar QR Code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar QR Code" }));
+
+    expect(toDataUrlSpy).toHaveBeenCalledOnce();
+    expect(toDataUrlSpy).toHaveBeenCalledWith("image/png");
+    expect(anchorClickSpy).toHaveBeenCalledOnce();
+    const downloadAnchor = anchorClickSpy.mock.instances[0] as HTMLAnchorElement;
+    expect(downloadAnchor.download).toBe("fila-tem-barber-don-brio.png");
+    expect(downloadAnchor.href).toBe("data:image/png;base64,qr-code");
   });
 
   it("mostra botão Chamar próximo e seletor de profissional quando a fila está aberta", async () => {
