@@ -1,8 +1,8 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
+import { resolveSingleActiveMembership } from "@/lib/tenant-context";
 
 export async function getAdminSession() {
   const session = await getServerSession(authOptions);
@@ -15,25 +15,47 @@ export async function getAdminSession() {
   }
 
   const userId = (session.user as any).id as string;
-  const role = (session.user as any).role as string;
+  const sessionRole = (session.user as any).role as string;
   const email = session.user?.email as string | null;
 
-  const isPlatform = isPlatformAdmin(email) || role === "SUPER_ADMIN";
+  const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(sessionRole) && !isPlatform) {
     return {
       error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
       data: null,
     };
   }
 
-  const member = await prisma.barbershopMember.findFirst({
-    where: { userId, isActive: true },
-  });
+  const membershipResolution = await resolveSingleActiveMembership(userId);
+
+  if (membershipResolution.status === "MULTIPLE") {
+    return {
+      error: NextResponse.json(
+        {
+          error: "TENANT_SELECTION_REQUIRED",
+          message: "Existe mais de uma barbearia ativa para este usuário.",
+        },
+        { status: 409 }
+      ),
+      data: null,
+    };
+  }
+
+  const member = membershipResolution.membership;
 
   if (!member && !isPlatform) {
     return {
       error: NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 }),
+      data: null,
+    };
+  }
+
+  const role = isPlatform ? "SUPER_ADMIN" : member?.role ?? sessionRole;
+
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role)) {
+    return {
+      error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
       data: null,
     };
   }

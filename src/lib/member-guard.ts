@@ -1,8 +1,8 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
+import { resolveSingleActiveMembership } from "@/lib/tenant-context";
 
 const MEMBER_ROLES = ["OWNER", "MANAGER", "BARBER"];
 
@@ -14,21 +14,30 @@ export async function requireMember() {
   }
 
   const userId = (session.user as any).id as string;
-  const role = (session.user as any).role as string;
+  const sessionRole = (session.user as any).role as string;
   const email = session.user?.email as string | null;
 
-  const isPlatform = isPlatformAdmin(email) || role === "SUPER_ADMIN";
+  const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
 
-  if (!MEMBER_ROLES.includes(role) && !isPlatform) {
+  if (!MEMBER_ROLES.includes(sessionRole) && !isPlatform) {
     redirect("/acesso-negado");
   }
 
-  const member = await prisma.barbershopMember.findFirst({
-    where: { userId, isActive: true },
-    include: { barbershop: true, user: true },
-  });
+  const membershipResolution = await resolveSingleActiveMembership(userId);
+
+  if (membershipResolution.status === "MULTIPLE") {
+    redirect("/acesso-negado?error=TENANT_SELECTION_REQUIRED");
+  }
+
+  const member = membershipResolution.membership;
 
   if (!member) {
+    redirect("/acesso-negado");
+  }
+
+  const role = isPlatform ? "SUPER_ADMIN" : member.role ?? sessionRole;
+
+  if (!MEMBER_ROLES.includes(role) && !isPlatform) {
     redirect("/acesso-negado");
   }
 

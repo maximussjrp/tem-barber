@@ -7,6 +7,7 @@ import {
   validateBrazilianMobilePhone,
   getBrazilianPhoneVariants
 } from "./phone/br-phone";
+import { resolveSingleActiveMembership } from "./tenant-context";
 
 interface CustomAuthUser {
   id: string;
@@ -112,9 +113,13 @@ export const authOptions: NextAuthOptions = {
           }
 
           // Buscar o cargo operacional do usuário na barbearia
-          const member = await prisma.barbershopMember.findFirst({
-            where: { userId: user.id },
-          });
+          const membershipResolution = await resolveSingleActiveMembership(user.id);
+
+          if (membershipResolution.status === "MULTIPLE") {
+            throw new Error("TENANT_SELECTION_REQUIRED");
+          }
+
+          const member = membershipResolution.membership;
 
           if (!member && user.role !== "SUPER_ADMIN") {
             throw new Error("Acesso administrativo negado. Você não possui cargos vinculados.");
