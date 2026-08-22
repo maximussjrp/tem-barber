@@ -348,7 +348,45 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     expect(screen.getByText("Rafael Souza")).toBeInTheDocument();
   });
 
-  it("confirma e marca cliente chamado como não apareceu", async () => {
+  it("mostra o texto correto sobre chamar e iniciar atendimento", async () => {
+    mockFetchWithData(openResponse);
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findByText("Chame o próximo cliente e confirme a presença antes de iniciar o atendimento.")).toBeInTheDocument();
+    expect(screen.queryByText(/agendamento de encaixe.*criado automaticamente/i)).not.toBeInTheDocument();
+  });
+
+  it("abre modal de não comparecimento sem executar POST", async () => {
+    mockFetchWithData(calledResponse);
+
+    render(<AdminWaitlistPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Não apareceu" }));
+
+    expect(screen.getByRole("dialog", { name: "Cliente não apareceu?" })).toBeInTheDocument();
+    expect(screen.getByText("Este cliente será removido da fila e marcado como não compareceu.")).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/admin/waitlist/no-show",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("cancela modal sem executar POST", async () => {
+    mockFetchWithData(calledResponse);
+
+    render(<AdminWaitlistPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Não apareceu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("dialog", { name: "Cliente não apareceu?" })).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/admin/waitlist/no-show",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("confirma não comparecimento uma única vez, fecha modal e mostra sucesso", async () => {
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url === "/api/admin/waitlist/no-show" && init?.method === "POST") {
         return jsonResponse({ entry: { id: "entry-1", status: "NO_SHOW" } });
@@ -359,11 +397,12 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
     render(<AdminWaitlistPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Não apareceu" }));
-
-    expect(window.confirm).toHaveBeenCalledWith(
-      "Marcar este cliente como não compareceu e removê-lo da fila?"
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar não comparecimento" }));
     await waitFor(() => {
+      const noShowPosts = vi.mocked(global.fetch).mock.calls.filter(([url, init]) =>
+        url === "/api/admin/waitlist/no-show" && init?.method === "POST"
+      );
+      expect(noShowPosts).toHaveLength(1);
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/admin/waitlist/no-show",
         expect.objectContaining({
@@ -373,5 +412,6 @@ describe("PR #21 - Painel Admin da Fila Online", () => {
       );
     });
     expect(await screen.findByText("Cliente marcado como não compareceu.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Cliente não apareceu?" })).not.toBeInTheDocument();
   });
 });

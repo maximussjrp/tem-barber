@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type WaitlistStatus =
   | "OPEN"
@@ -139,6 +139,12 @@ export default function AdminWaitlistPage() {
     memberId: string;
     preferredMemberName: string;
   } | null>(null);
+  const [noShowModal, setNoShowModal] = useState<{
+    entryId: string;
+    customerName: string;
+    memberId: string;
+  } | null>(null);
+  const noShowSubmittingRef = useRef(false);
 
   const loadWaitlist = useCallback(async () => {
     try {
@@ -250,8 +256,9 @@ export default function AdminWaitlistPage() {
   }
 
   async function handleEntryAction(entryId: string, memberId: string, action: "start-service" | "pass-turn" | "no-show") {
-    if (action === "no-show" && !window.confirm("Marcar este cliente como não compareceu e removê-lo da fila?")) {
-      return;
+    if (action === "no-show") {
+      if (noShowSubmittingRef.current) return;
+      noShowSubmittingRef.current = true;
     }
     setActionLoading(`${action}:${entryId}`);
     setError(null);
@@ -263,6 +270,7 @@ export default function AdminWaitlistPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getErrorMessage(payload, "Não foi possível atualizar a entrada."));
+      if (action === "no-show") setNoShowModal(null);
       setCallNextSuccess(
         action === "start-service"
           ? "Atendimento criado na sua agenda com sucesso."
@@ -272,8 +280,10 @@ export default function AdminWaitlistPage() {
       );
       await loadWaitlist();
     } catch (err) {
+      if (action === "no-show") setNoShowModal(null);
       setError(err instanceof Error ? err.message : "Não foi possível atualizar a entrada.");
     } finally {
+      if (action === "no-show") noShowSubmittingRef.current = false;
       setActionLoading(null);
     }
   }
@@ -477,7 +487,7 @@ export default function AdminWaitlistPage() {
           <div className="flex flex-col gap-4 border-b border-stone-800 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Clientes na fila</h2>
-              <p className="text-sm text-stone-400">Ao chamar, um agendamento de encaixe (FIT_IN) é criado automaticamente.</p>
+              <p className="text-sm text-stone-400">Chame o próximo cliente e confirme a presença antes de iniciar o atendimento.</p>
             </div>
 
             {isOpen && waitingEntries.length > 0 ? (
@@ -566,8 +576,8 @@ export default function AdminWaitlistPage() {
                         <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "pass-turn")} disabled={actionLoading !== null} className="rounded-md border border-stone-700 px-2 py-1 text-xs font-semibold text-stone-200 disabled:opacity-60">
                           {actionLoading === `pass-turn:${entry.id}` ? "Passando..." : "Passar vez"}
                         </button>
-                        <button type="button" onClick={() => void handleEntryAction(entry.id, entry.calledByMemberId!, "no-show")} disabled={actionLoading !== null} className="rounded-md border border-red-700 bg-red-950/30 px-2 py-1 text-xs font-semibold text-red-200 hover:bg-red-950/60 disabled:opacity-60">
-                          {actionLoading === `no-show:${entry.id}` ? "Marcando..." : "Não apareceu"}
+                        <button type="button" onClick={() => setNoShowModal({ entryId: entry.id, customerName: entry.customerName, memberId: entry.calledByMemberId! })} disabled={actionLoading !== null} className="rounded-md border border-red-700 bg-red-950/30 px-2 py-1 text-xs font-semibold text-red-200 hover:bg-red-950/60 disabled:opacity-60">
+                          Não apareceu
                         </button>
                       </>
                     ) : null}
@@ -600,6 +610,45 @@ export default function AdminWaitlistPage() {
                 className="rounded-md bg-amber-400 px-4 py-2 text-sm font-semibold text-stone-950 hover:bg-amber-300"
               >
                 Confirmar e chamar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {noShowModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-no-show-modal-title"
+            className="w-full max-w-md rounded-xl border border-red-900/60 bg-stone-900 p-6 text-stone-100 shadow-xl"
+          >
+            <h3 id="admin-no-show-modal-title" className="text-lg font-semibold text-red-200">
+              Cliente não apareceu?
+            </h3>
+            <p className="mt-3 text-sm text-stone-300">
+              Este cliente será removido da fila e marcado como não compareceu.
+            </p>
+            <p className="mt-2 text-sm font-medium text-stone-100">{noShowModal.customerName}</p>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setNoShowModal(null)}
+                disabled={actionLoading === `no-show:${noShowModal.entryId}`}
+                className="rounded-md border border-stone-700 px-4 py-2 text-sm font-medium text-stone-300 hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleEntryAction(noShowModal.entryId, noShowModal.memberId, "no-show")}
+                disabled={actionLoading === `no-show:${noShowModal.entryId}`}
+                className="rounded-md border border-red-700 bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {actionLoading === `no-show:${noShowModal.entryId}`
+                  ? "Confirmando..."
+                  : "Confirmar não comparecimento"}
               </button>
             </div>
           </div>
