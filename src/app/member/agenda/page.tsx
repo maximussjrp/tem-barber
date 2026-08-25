@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
 import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
 import { extractServiceQuantities } from "@/lib/appointments/notes-metadata";
+import { CheckoutModal } from "./checkout-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ interface Appointment {
   customer: { name: string; phone: string };
   barbershop?: { name: string };
   services: AppointmentService[];
+  operationalState?: "ACTIVE" | "AWAITING_PAYMENT" | "COMPLETED";
 }
 
 interface ScheduleBlock {
@@ -107,6 +109,7 @@ function AppointmentCard({
   onStatusChange: (id: string, status: string) => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   const changeStatus = async (status: string) => {
     setLoading(true);
@@ -119,6 +122,39 @@ function AppointmentCard({
       if (res.ok) {
         const updated = await res.json();
         onStatusChange(appointment.id, updated.status);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFinalize = async (mode: "pay_now" | "leave_for_cash", method?: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/member/agenda/${appointment.id}/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          method,
+          idempotencyKey: `${appointment.id}-${Date.now()}`,
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        // Update appointment state
+        if (mode === "pay_now") {
+          onStatusChange(appointment.id, "COMPLETED");
+        } else if (mode === "leave_for_cash") {
+          // Refresh to get operationalState
+          onStatusChange(appointment.id, appointment.status);
+        }
+        // Show toast/notification
+        const message = result.message || (mode === "pay_now" ? "Atendimento finalizado e pagamento registrado." : "Atendimento concluído. Pagamento pendente no caixa.");
+        alert(message); // TODO: replace with toast notification
+      } else {
+        const error = await res.json();
+        alert(`Erro: ${error.message || error.error}`);
       }
     } finally {
       setLoading(false);
@@ -229,13 +265,20 @@ function AppointmentCard({
             </button>
           )}
           {appointment.status === "CONFIRMED" && (
-            <button
-              onClick={() => changeStatus("COMPLETED")}
-              disabled={loading}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-900/50 text-emerald-400 hover:bg-emerald-900 border border-emerald-800/60 transition-colors disabled:opacity-50"
-            >
-              ✓ Finalizar
-            </button>
+            <>
+              <button
+                onClick={() => setCheckoutOpen(true)}
+                disabled={loading}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-900/50 text-emerald-400 hover:bg-emerald-900 border border-emerald-800/60 transition-colors disabled:opacity-50"
+              >
+                ✓ Finalizar atendimento
+              </button>
+              {appointment.operationalState === "AWAITING_PAYMENT" && (
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-950/50 text-amber-400 border border-amber-800/60">
+                  Aguardando pagamento
+                </span>
+              )}
+            </>
           )}
           {["PENDING", "CONFIRMED"].includes(appointment.status) && (
             <>
@@ -257,6 +300,12 @@ function AppointmentCard({
           )}
         </div>
       )}
+      <CheckoutModal
+        appointment={appointment}
+        isOpen={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        onFinalize={handleFinalize}
+      />
     </div>
   );
 }
@@ -373,8 +422,10 @@ function AgendaContent() {
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
   const pending = appointments.filter((a) => a.status === "PENDING").length;
   const completed = appointments.filter((a) => a.status === "COMPLETED").length;
-  const revenue = appointments
-    .filter((a) => a.status === "COMPLETED")
+  const productionAppointments = appointments.filter(
+    (a) => a.operationalState === "AWAITING_PAYMENT" || a.operationalState === "COMPLETED"
+  );
+  const revenue = productionAppointments
     .reduce((sum, a) => sum + parseFloat(a.totalPrice), 0);
 
   return (
@@ -416,7 +467,7 @@ function AgendaContent() {
           { label: "Confirmados", value: confirmed, color: "text-sky-400" },
           { label: "Pendentes", value: pending, color: "text-amber-400" },
           {
-            label: "Faturado",
+            label: "Produção",
             value: revenue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
             color: "text-emerald-400",
           },

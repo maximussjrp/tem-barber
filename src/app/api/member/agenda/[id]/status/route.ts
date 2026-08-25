@@ -59,6 +59,17 @@ export async function PATCH(
     );
   }
 
+  // DECISION #11: Block direct COMPLETED bypass
+  if (status === "COMPLETED") {
+    return NextResponse.json(
+      {
+        error: "CHECKOUT_REQUIRED",
+        message: "Finalize o atendimento pelo fluxo de atendimento e pagamento.",
+      },
+      { status: 422 }
+    );
+  }
+
   const updated = await prisma.appointment.update({
     where: { id },
     data: { status: status as ValidStatus },
