@@ -7,6 +7,11 @@ export async function GET() {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
   const session = await getCurrentCashSession(prisma, data!.barbershopId);
+  if (data!.role === "BARBER") {
+    return NextResponse.json({
+      session: session ? { id: session.id, status: session.status } : null,
+    });
+  }
   return NextResponse.json({ session });
 }
 

@@ -10,6 +10,15 @@ function money(value: number) {
 export async function GET(request: NextRequest) {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
+  if (data!.role === "BARBER") {
+    return NextResponse.json(
+      {
+        error: "FINANCIAL_TEAM_SCOPE_FORBIDDEN",
+        message: "O resumo financeiro da equipe não está disponível para este perfil.",
+      },
+      { status: 403 }
+    );
+  }
   const date = request.nextUrl.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
   const [y, m, d] = date.split("-").map(Number);
   const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));

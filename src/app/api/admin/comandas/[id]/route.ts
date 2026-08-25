@@ -3,7 +3,16 @@ import prisma from "@/lib/prisma";
 import { ComandaStatus } from "@prisma/client";
 import { closeComanda } from "@/lib/operations/payments";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
-import { canManageComandas, canReopenComandas, canRefundPayments, canCancelComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import {
+  canManageComandas,
+  canReopenComandas,
+  canRefundPayments,
+  canCancelComandas,
+  comandaScopeForbidden,
+  forbidden,
+  isLegacyOwnComanda,
+  requireOperationalSession,
+} from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
@@ -27,8 +36,8 @@ export async function GET(
     include: comandaInclude,
   });
   if (!comanda) return NextResponse.json({ error: "Comanda nao encontrada." }, { status: 404 });
-  if (data!.role === "BARBER" && !comanda.items.some((item) => item.executorId === data!.memberId)) {
-    return forbidden();
+  if (data!.role === "BARBER" && !isLegacyOwnComanda(comanda, data!.memberId)) {
+    return comandaScopeForbidden();
   }
   return NextResponse.json({
     ...comanda,
@@ -67,10 +76,8 @@ export async function PATCH(
       include: { items: true, appointment: true }
     });
     if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
-    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
-    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
-    if (!isExecutorOfAppt && !isExecutorOfItem) {
-      return forbidden();
+    if (!isLegacyOwnComanda(comanda, data!.memberId)) {
+      return comandaScopeForbidden();
     }
   }
 

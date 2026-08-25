@@ -7,7 +7,14 @@ import {
   upsertDiscountItem,
   OperationalError,
 } from "@/lib/operations/comandas";
-import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import {
+  canManageComandas,
+  comandaScopeForbidden,
+  discountPermissionRequired,
+  forbidden,
+  isLegacyOwnComanda,
+  requireOperationalSession,
+} from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 interface ItemBody {
@@ -39,11 +46,8 @@ export async function POST(
       include: { items: true, appointment: true }
     });
     if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
-    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
-    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
-    const isCreator = comanda.customerId === null && comanda.items.length === 0;
-    if (!isExecutorOfAppt && !isExecutorOfItem && !isCreator) {
-      return forbidden();
+    if (!isLegacyOwnComanda(comanda, data!.memberId)) {
+      return comandaScopeForbidden();
     }
   }
 
@@ -52,6 +56,15 @@ export async function POST(
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Body invalido." }, { status: 400 });
+  }
+
+  if (
+    data!.role === "BARBER" &&
+    ((body.type === "DISCOUNT" && Number(body.amount ?? 0) > 0) ||
+      ((body.type === "SERVICE" || body.type === "PRODUCT") &&
+        Number(body.discountAmount ?? 0) > 0))
+  ) {
+    return discountPermissionRequired();
   }
 
   try {

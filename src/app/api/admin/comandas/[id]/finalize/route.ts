@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
-import { requireOperationalSession } from "@/lib/operations/permissions";
+import { isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { registerPayment, closeComanda } from "@/lib/operations/payments";
@@ -67,11 +67,12 @@ export async function POST(
 
       // Validação de acesso do BARBER: deve estar associado à comanda ou agendamento
       if (data!.role === "BARBER") {
-        const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
-        const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
-        const isCreator = comanda.customerId === null && comanda.items.length === 0;
-        if (!isExecutorOfAppt && !isExecutorOfItem && !isCreator) {
-          throw new OperationalError("FORBIDDEN", "Acesso negado para esta comanda.", 403);
+        if (!isLegacyOwnComanda(comanda, data!.memberId)) {
+          throw new OperationalError(
+            "COMANDA_SCOPE_FORBIDDEN",
+            "Esta comanda não pertence ao profissional autenticado.",
+            403
+          );
         }
       }
 

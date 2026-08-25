@@ -3,7 +3,13 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { recalculateComandaTotals, OperationalError } from "@/lib/operations/comandas";
 import { syncCommissionReleaseForComanda } from "@/lib/operations/commissions";
-import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import {
+  canManageComandas,
+  comandaScopeForbidden,
+  forbidden,
+  isLegacyOwnComanda,
+  requireOperationalSession,
+} from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 export async function PATCH(
@@ -118,10 +124,8 @@ export async function DELETE(
       include: { items: true, appointment: true }
     });
     if (!comanda) return NextResponse.json({ error: "Comanda não encontrada." }, { status: 404 });
-    const isExecutorOfAppt = comanda.appointment?.memberId === data!.memberId;
-    const isExecutorOfItem = comanda.items.some(item => item.executorId === data!.memberId);
-    if (!isExecutorOfAppt && !isExecutorOfItem) {
-      return forbidden();
+    if (!isLegacyOwnComanda(comanda, data!.memberId)) {
+      return comandaScopeForbidden();
     }
   }
 

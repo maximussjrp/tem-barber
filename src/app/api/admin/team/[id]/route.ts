@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
+import {
+  assertCanManageMember,
+  MemberManagementError,
+  type TenantMemberRole,
+} from "@/lib/team/member-management";
 
 async function findMember(id: string, barbershopId: string) {
   const m = await prisma.barbershopMember.findUnique({ where: { id } });
@@ -57,6 +62,16 @@ export async function PUT(
       return NextResponse.json({ error: "Cargo inválido." }, { status: 400 });
     }
 
+    assertCanManageMember(
+      {
+        memberId: data!.memberId,
+        role: data!.role,
+        barbershopId: data!.barbershopId!,
+      },
+      member,
+      { requestedRole: role as TenantMemberRole | undefined }
+    );
+
     let updatedCareerLevelId: string | null | undefined = undefined;
     if (careerLevelId !== undefined) {
       if (careerLevelId === null || careerLevelId === "") {
@@ -90,7 +105,13 @@ export async function PUT(
     });
 
     return NextResponse.json(updated);
-  } catch {
+  } catch (err) {
+    if (err instanceof MemberManagementError) {
+      return NextResponse.json(
+        { error: err.code, message: err.message },
+        { status: 403 }
+      );
+    }
     return NextResponse.json({ error: "Erro ao atualizar colaborador." }, { status: 500 });
   }
 }
@@ -112,13 +133,29 @@ export async function PATCH(
       return NextResponse.json({ error: "Campo isActive inválido." }, { status: 400 });
     }
 
+    assertCanManageMember(
+      {
+        memberId: data!.memberId,
+        role: data!.role,
+        barbershopId: data!.barbershopId!,
+      },
+      member,
+      { requestedIsActive: body.isActive }
+    );
+
     const updated = await prisma.barbershopMember.update({
       where: { id },
       data: { isActive: body.isActive },
     });
 
     return NextResponse.json(updated);
-  } catch {
+  } catch (err) {
+    if (err instanceof MemberManagementError) {
+      return NextResponse.json(
+        { error: err.code, message: err.message },
+        { status: 403 }
+      );
+    }
     return NextResponse.json({ error: "Erro ao atualizar status." }, { status: 500 });
   }
 }

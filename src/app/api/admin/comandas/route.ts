@@ -42,7 +42,14 @@ export async function GET(request: NextRequest) {
   }
 
   if (data!.role === "BARBER") {
-    where.items = { some: { executorId: data!.memberId } };
+    where.AND = [
+      {
+        OR: [
+          { appointment: { memberId: data!.memberId } },
+          { items: { some: { executorId: data!.memberId } } },
+        ],
+      },
+    ];
   }
 
   const comandas = await prisma.comanda.findMany({
@@ -70,10 +77,35 @@ export async function POST(request: NextRequest) {
   try {
     const result = await prisma.$transaction(async (tx) => {
       if (body.appointmentId) {
+        if (data!.role === "BARBER") {
+          const ownAppointment = await tx.appointment.findFirst({
+            where: {
+              id: body.appointmentId,
+              barbershopId: data!.barbershopId,
+              memberId: data!.memberId,
+            },
+            select: { id: true },
+          });
+          if (!ownAppointment) {
+            throw new OperationalError(
+              "COMANDA_SCOPE_FORBIDDEN",
+              "O agendamento não pertence ao profissional autenticado.",
+              403
+            );
+          }
+        }
         return ensureComandaForAppointment(tx, {
           barbershopId: data!.barbershopId,
           appointmentId: body.appointmentId,
         });
+      }
+
+      if (data!.role === "BARBER") {
+        throw new OperationalError(
+          "COMANDA_SCOPE_FORBIDDEN",
+          "Comandas avulsas exigem um responsável identificado.",
+          403
+        );
       }
 
       let customerId = body.customerId;

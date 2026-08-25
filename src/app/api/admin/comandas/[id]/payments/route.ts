@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
 import { registerPayment } from "@/lib/operations/payments";
-import { canManageComandas, forbidden, requireOperationalSession } from "@/lib/operations/permissions";
+import { OperationalError } from "@/lib/operations/comandas";
+import {
+  canManageComandas,
+  forbidden,
+  isLegacyOwnComanda,
+  requireOperationalSession,
+} from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 
 export async function POST(
@@ -27,16 +33,38 @@ export async function POST(
 
   try {
     const idempotencyKey = request.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? null;
-    const result = await prisma.$transaction((tx) =>
-      registerPayment(tx, {
+    const result = await prisma.$transaction(async (tx) => {
+      if (data!.role === "BARBER") {
+        const comanda = await tx.comanda.findFirst({
+          where: { id, barbershopId: data!.barbershopId },
+          select: {
+            appointment: { select: { memberId: true } },
+            items: { select: { executorId: true } },
+          },
+        });
+
+        if (!comanda) {
+          throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
+        }
+
+        if (!isLegacyOwnComanda(comanda, data!.memberId)) {
+          throw new OperationalError(
+            "COMANDA_SCOPE_FORBIDDEN",
+            "Esta comanda não pertence ao profissional autenticado.",
+            403
+          );
+        }
+      }
+
+      return registerPayment(tx, {
         barbershopId: data!.barbershopId,
         comandaId: id,
         method: body.method!,
         amount: body.amount!,
         userId: data!.userId,
         idempotencyKey,
-      })
-    );
+      });
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     return operationErrorResponse(err);
