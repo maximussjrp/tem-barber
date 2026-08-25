@@ -266,17 +266,18 @@ function AppointmentCard({
           )}
           {appointment.status === "CONFIRMED" && (
             <>
-              <button
-                onClick={() => setCheckoutOpen(true)}
-                disabled={loading}
-                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-900/50 text-emerald-400 hover:bg-emerald-900 border border-emerald-800/60 transition-colors disabled:opacity-50"
-              >
-                ✓ Finalizar atendimento
-              </button>
-              {appointment.operationalState === "AWAITING_PAYMENT" && (
+              {appointment.operationalState === "AWAITING_PAYMENT" ? (
                 <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-950/50 text-amber-400 border border-amber-800/60">
                   Aguardando pagamento
                 </span>
+              ) : (
+                <button
+                  onClick={() => setCheckoutOpen(true)}
+                  disabled={loading}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-900/50 text-emerald-400 hover:bg-emerald-900 border border-emerald-800/60 transition-colors disabled:opacity-50"
+                >
+                  ✓ Finalizar atendimento
+                </button>
               )}
             </>
           )}

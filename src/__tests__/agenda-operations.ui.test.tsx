@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminSchedulePage from "@/app/admin/agendamentos/page";
 import MemberAgendaPage from "@/app/member/agenda/page";
+import { CheckoutModal } from "@/app/member/agenda/checkout-modal";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -121,6 +122,21 @@ function mockMemberFetch() {
   });
 }
 
+function mockCheckoutFetch() {
+  global.fetch = vi.fn().mockImplementation((url: string) => {
+    if (url.endsWith("/checkout")) {
+      return jsonResponse({
+        comanda: { id: "comanda-1", total: "35.00", paidTotal: "0.00", remainingTotal: "35.00" },
+        items: [{ id: "item-1", description: "Corte", quantity: "1", unitPrice: "35.00", status: "PENDING" }],
+        canPayNow: true,
+        canLeaveForCash: true,
+        hasTeamPendingService: false,
+      });
+    }
+    return jsonResponse({});
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("confirm", vi.fn(() => true));
@@ -224,5 +240,32 @@ describe("Agenda operations UI", () => {
     expect(await screen.findByText("Reuniao")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Excluir" }));
     await waitFor(() => expect(screen.queryByText("Reuniao")).not.toBeInTheDocument());
+  });
+
+  it("checkout usa items no nivel raiz do DTO e renderiza os itens", async () => {
+    mockCheckoutFetch();
+    render(
+      <CheckoutModal
+        appointment={{ id: "appt-1", customer: { name: "Ana Cliente" } }}
+        isOpen
+        onClose={vi.fn()}
+        onFinalize={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(await screen.findByText("Corte")).toBeInTheDocument();
+    expect(screen.getAllByText("R$ 35,00").length).toBeGreaterThan(0);
+  });
+
+  it("não oferece finalização comum quando aguarda pagamento", async () => {
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith("/api/member/agenda?")) return jsonResponse([{ ...memberAppointments[0], operationalState: "AWAITING_PAYMENT" }]);
+      if (url.startsWith("/api/member/schedule-blocks")) return jsonResponse(memberBlocks);
+      return jsonResponse({});
+    });
+    render(<MemberAgendaPage />);
+
+    expect(await screen.findByText("Aguardando pagamento")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Finalizar atendimento/i })).not.toBeInTheDocument();
   });
 });

@@ -3,11 +3,22 @@ import { useState, useEffect, useCallback } from "react";
 interface CheckoutContextType {
   comanda: {
     id: string;
+    status?: string;
     total: string;
     paidTotal: string;
     remainingTotal: string;
-    items: Array<{ description: string; unitPrice: string; quantity: string; status: string }>;
   };
+  items: Array<{
+    id?: string;
+    type?: string;
+    description: string;
+    unitPrice: string;
+    quantity: string;
+    total?: string;
+    status: string;
+    executorId?: string | null;
+  }>;
+  operationalState?: "ACTIVE" | "AWAITING_PAYMENT" | "COMPLETED";
   canPayNow: boolean;
   canLeaveForCash: boolean;
   hasTeamPendingService: boolean;
@@ -121,11 +132,11 @@ export function CheckoutModal({
               </div>
 
               {/* Items */}
-              {context.comanda.items.length > 0 && (
+              {context.items.length > 0 && (
                 <div>
                   <p className="text-xs uppercase text-stone-600 font-semibold tracking-wider mb-2">Itens</p>
                   <div className="space-y-1">
-                    {context.comanda.items.map((item) => (
+                    {context.items.map((item) => (
                       <div key={item.description} className="flex justify-between text-xs text-stone-400">
                         <span className="truncate">
                           {item.description}
