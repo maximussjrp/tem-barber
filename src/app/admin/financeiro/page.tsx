@@ -35,6 +35,7 @@ type FinancialSummaryData = {
   };
   totals: {
     grossRevenue: number;
+    serviceProductionGross: number;
     totalDiscounts: number;
     totalSurcharges: number;
     netRevenue: number;
@@ -411,12 +412,22 @@ export default function FinanceiroPage() {
             {/* 1. Faturamento Bruto */}
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
               <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Faturamento Bruto
+                Comandas Fechadas — Bruto
               </p>
               <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
                 {formatBRL(data.totals.grossRevenue)}
               </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Antes de descontos e acréscimos</p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Subtotal de comandas fechadas no período</p>
+            </div>
+
+            <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
+              <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                Produção de Serviços
+              </p>
+              <p className="text-xl font-bold text-emerald-400 mt-2">
+                {formatBRL(data.totals.serviceProductionGross)}
+              </p>
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">Valor dos serviços concluídos no período</p>
             </div>
 
             {/* 2. Descontos */}
@@ -439,7 +450,7 @@ export default function FinanceiroPage() {
                 {formatBRL(data.totals.netRevenue)}
               </p>
               <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Bruto - descontos + acréscimos
+                Comandas fechadas: bruto - descontos + acréscimos
               </p>
             </div>
 
@@ -479,13 +490,13 @@ export default function FinanceiroPage() {
             {/* 5. A Receber */}
             <div className="rounded-xl border border-amber-500/20 bg-[var(--surface)] p-4 shadow-sm">
               <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                A Receber
+                A Receber Total
               </p>
               <p className="text-xl font-bold text-amber-400 mt-2">
                 {formatBRL(data.totals.totalReceivable)}
               </p>
               <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                {data.openCommands.count} comandas abertas
+                Saldo aberto atual da barbearia · {data.openCommands.count} comandas
               </p>
             </div>
 
@@ -593,7 +604,7 @@ export default function FinanceiroPage() {
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div className="rounded-lg border border-amber-500/20 bg-[var(--surface-raised)] p-3 space-y-1">
                   <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                    Abertas / A Receber
+                    Abertas / A Receber — Total
                   </p>
                   <p className="text-lg font-bold text-[var(--text-primary)]">
                     {data.openCommands.count} <span className="text-xs font-normal text-[var(--text-muted)]">comandas</span>

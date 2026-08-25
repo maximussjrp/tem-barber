@@ -16,6 +16,9 @@ vi.mock("@/lib/prisma", () => {
       comanda: {
         findMany: vi.fn(),
       },
+      comandaItem: {
+        findMany: vi.fn(),
+      },
       payment: {
         findMany: vi.fn(),
       },
@@ -31,6 +34,7 @@ vi.mock("@/lib/prisma", () => {
 
 const mockedRequireOperationalSession = vi.mocked(requireOperationalSession);
 const mockedComanda = vi.mocked(prisma.comanda);
+const mockedComandaItem = vi.mocked(prisma.comandaItem);
 const mockedPayment = vi.mocked(prisma.payment);
 const mockedFinancialEntry = vi.mocked(prisma.financialEntry);
 const mockedCommissionEntry = vi.mocked(prisma.commissionEntry);
@@ -40,6 +44,7 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedComandaItem.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -292,6 +297,40 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     expect(body.openCommands.amount).toBe(130);
     expect(body.totals.totalReceivable).toBe(130);
     expect(body.totals.totalReceived).toBe(0);
+  });
+
+  it("11.1. Produção de serviços usa itens DONE concluídos dentro da fronteira de São Paulo", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: "u-owner", role: "OWNER", memberId: "m-owner", barbershopId: barbershopId1 },
+    } as any);
+    mockedComanda.findMany.mockResolvedValue([]);
+    mockedComandaItem.findMany.mockResolvedValue([
+      { total: new Prisma.Decimal("35.00") },
+    ] as any);
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const req = createRequest({ startDate: "2026-08-25", endDate: "2026-08-25" });
+    const res = await getFinancialSummary(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.totals.serviceProductionGross).toBe(35);
+    expect(mockedComandaItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          barbershopId: barbershopId1,
+          type: "SERVICE",
+          status: "DONE",
+          completedAt: {
+            gte: new Date("2026-08-25T03:00:00.000Z"),
+            lt: new Date("2026-08-26T03:00:00.000Z"),
+          },
+        }),
+      })
+    );
   });
 
   it("12. Comandas canceladas (CANCELLED) não entram no faturamento", async () => {

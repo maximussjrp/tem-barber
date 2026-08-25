@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
   try {
     const [
       closedComandas,
+      serviceProductionItems,
       openComandas,
       payments,
       financialEntries,
@@ -85,6 +86,17 @@ export async function GET(request: NextRequest) {
             },
           },
         },
+      }),
+
+      // Services actually completed in the selected period, independent of comanda closure.
+      prisma.comandaItem.findMany({
+        where: {
+          barbershopId,
+          type: "SERVICE",
+          status: "DONE",
+          completedAt: { gte: start, lt: endExclusive },
+        },
+        select: { total: true },
       }),
 
       // Currently open/receivable comandas
@@ -145,6 +157,10 @@ export async function GET(request: NextRequest) {
 
     // 1. Calculations for Comandas & Items
     let grossRevenueCents = 0;
+    const serviceProductionGrossCents = serviceProductionItems.reduce(
+      (sum, item) => sum + toCents(item.total),
+      0
+    );
     let totalDiscountsCents = 0;
     let totalSurchargesCents = 0;
 
@@ -331,6 +347,7 @@ export async function GET(request: NextRequest) {
       },
       totals: {
         grossRevenue: money(grossRevenueCents),
+        serviceProductionGross: money(serviceProductionGrossCents),
         totalDiscounts: money(totalDiscountsCents),
         totalSurcharges: money(totalSurchargesCents),
         netRevenue: money(netRevenueCents),

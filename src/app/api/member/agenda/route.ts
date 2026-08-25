@@ -4,6 +4,8 @@ import { getMemberSession } from "@/lib/member-api-auth";
 
 import { stripMetadataFromNotes } from "@/lib/appointments/notes-metadata";
 import { deriveOperationalState } from "@/lib/operations/member-checkout";
+import { toCents } from "@/lib/operations/money";
+import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await getMemberSession();
@@ -25,6 +27,11 @@ export async function GET(request: NextRequest) {
   startOfDay.setUTCHours(0, 0, 0, 0);
   const endOfDay = new Date(targetDate);
   endOfDay.setUTCHours(23, 59, 59, 999);
+  const productionDate = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    ? dateStr
+    : `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, "0")}-${String(targetDate.getUTCDate()).padStart(2, "0")}`;
+  const productionStart = localDateToUTCBoundary(productionDate);
+  const productionEnd = localDateToUTCBoundary(shiftDateISO(productionDate, 1));
 
   const appointments = await prisma.appointment.findMany({
     where: {
@@ -58,6 +65,16 @@ export async function GET(request: NextRequest) {
       const hasOwnCompletedService = comanda?.items.some(
         (item) => item.executorId === data!.memberId && item.status === "DONE"
       );
+      const productionItems = comanda?.items.filter(
+        (item) =>
+          item.type === "SERVICE" &&
+          item.status === "DONE" &&
+          item.executorId === data!.memberId &&
+          item.completedAt &&
+          item.completedAt >= productionStart &&
+          item.completedAt < productionEnd
+      ) ?? [];
+      const productionValue = productionItems.reduce((sum, item) => sum + toCents(item.total), 0) / 100;
 
       const operationalState = deriveOperationalState(
         a,
@@ -70,6 +87,7 @@ export async function GET(request: NextRequest) {
         ...a,
         notes: stripMetadataFromNotes(a.notes),
         operationalState,
+        productionValue,
       };
     })
   );

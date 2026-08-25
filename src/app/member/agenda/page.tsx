@@ -26,6 +26,7 @@ interface Appointment {
   barbershop?: { name: string };
   services: AppointmentService[];
   operationalState?: "ACTIVE" | "AWAITING_PAYMENT" | "COMPLETED";
+  productionValue?: number;
 }
 
 interface ScheduleBlock {
@@ -104,9 +105,11 @@ function formatBlockPeriod(block: ScheduleBlock) {
 function AppointmentCard({
   appointment,
   onStatusChange,
+  onCheckoutSuccess,
 }: {
   appointment: Appointment;
   onStatusChange: (id: string, status: string) => void;
+  onCheckoutSuccess: () => Promise<void>;
 }) {
   const [loading, setLoading] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -142,13 +145,7 @@ function AppointmentCard({
       });
       if (res.ok) {
         const result = await res.json();
-        // Update appointment state
-        if (mode === "pay_now") {
-          onStatusChange(appointment.id, "COMPLETED");
-        } else if (mode === "leave_for_cash") {
-          // Refresh to get operationalState
-          onStatusChange(appointment.id, appointment.status);
-        }
+        await onCheckoutSuccess();
         // Show toast/notification
         const message = result.message || (mode === "pay_now" ? "Atendimento finalizado e pagamento registrado." : "Atendimento concluído. Pagamento pendente no caixa.");
         alert(message); // TODO: replace with toast notification
@@ -423,11 +420,7 @@ function AgendaContent() {
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
   const pending = appointments.filter((a) => a.status === "PENDING").length;
   const completed = appointments.filter((a) => a.status === "COMPLETED").length;
-  const productionAppointments = appointments.filter(
-    (a) => a.operationalState === "AWAITING_PAYMENT" || a.operationalState === "COMPLETED"
-  );
-  const revenue = productionAppointments
-    .reduce((sum, a) => sum + parseFloat(a.totalPrice), 0);
+  const revenue = appointments.reduce((sum, a) => sum + (a.productionValue ?? 0), 0);
 
   return (
     <div className="p-4 md:p-8 max-w-2xl mx-auto">
@@ -571,7 +564,7 @@ function AgendaContent() {
           {appointments
             .filter((a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
             .map((a) => (
-              <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} />
+              <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} onCheckoutSuccess={() => fetchAppointments(currentDate)} />
             ))}
           {/* Completed / terminal */}
           {appointments.filter((a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
@@ -584,7 +577,7 @@ function AgendaContent() {
                 {appointments
                   .filter((a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
                   .map((a) => (
-                    <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} />
+                    <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} onCheckoutSuccess={() => fetchAppointments(currentDate)} />
                   ))}
               </div>
             </div>

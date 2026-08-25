@@ -268,4 +268,44 @@ describe("Agenda operations UI", () => {
     expect(await screen.findByText("Aguardando pagamento")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Finalizar atendimento/i })).not.toBeInTheDocument();
   });
+
+  it("refaz a agenda após PAY_NOW e atualiza produção pelo valor server-side", async () => {
+    let agendaCalls = 0;
+    global.alert = vi.fn();
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/member/agenda?") && !init?.method) {
+        agendaCalls += 1;
+        return jsonResponse([
+          {
+            ...memberAppointments[0],
+            operationalState: agendaCalls > 1 ? "COMPLETED" : "ACTIVE",
+            productionValue: agendaCalls > 1 ? 35 : 0,
+          },
+        ]);
+      }
+      if (url.startsWith("/api/member/schedule-blocks")) return jsonResponse(memberBlocks);
+      if (url.endsWith("/checkout") && !init?.method) {
+        return jsonResponse({
+          comanda: { id: "comanda-1", total: "35.00", paidTotal: "0.00", remainingTotal: "35.00" },
+          items: [{ id: "item-1", description: "Corte", quantity: "1", unitPrice: "35.00", status: "PENDING" }],
+          canPayNow: true,
+          canLeaveForCash: true,
+          hasTeamPendingService: false,
+        });
+      }
+      if (url.endsWith("/checkout") && init?.method === "POST") return jsonResponse({ message: "Pagamento registrado." });
+      return jsonResponse({});
+    });
+
+    render(<MemberAgendaPage />);
+    await screen.findByText("Ana Cliente");
+    fireEvent.click(screen.getByRole("button", { name: /Finalizar atendimento/i }));
+    await screen.findByText("Método de Pagamento");
+    fireEvent.click(screen.getByRole("button", { name: "Pix" }));
+    fireEvent.click(screen.getByRole("button", { name: /Receber R\$ 35,00 e finalizar/i }));
+
+    await waitFor(() => expect(agendaCalls).toBeGreaterThan(1));
+    expect(await screen.findByText("R$ 35,00")).toBeInTheDocument();
+    expect(global.alert).toHaveBeenCalledWith("Pagamento registrado.");
+  });
 });
