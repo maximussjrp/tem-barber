@@ -1,6 +1,5 @@
 import type { Prisma } from "@prisma/client";
 import { nowBR } from "@/lib/time-utils";
-import { publicBarbershopWhere } from "@/lib/public-barbershops";
 import { lockAppointmentSchedule } from "./appointment-lock";
 import {
   type ValidatedProfessionalServiceCapability,
@@ -111,7 +110,7 @@ export async function validatePublicBookingEligibility(
   await lockAppointmentSchedule(tx, input.barbershopId, input.memberId);
 
   const publicBarbershop = await tx.barbershop.findFirst({
-    where: { id: input.barbershopId, ...publicBarbershopWhere() },
+    where: { id: input.barbershopId, active: true },
     select: { id: true },
   });
   if (!publicBarbershop) {
