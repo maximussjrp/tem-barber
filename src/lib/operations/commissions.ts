@@ -179,6 +179,17 @@ export interface ResolvedCommissionRule {
   };
 }
 
+export function isCommissionEligibleItem(item: {
+  type: ComandaItemType;
+  status: ComandaItemStatus;
+  completedAt: Date | null;
+  total: Prisma.Decimal;
+}) {
+  if (item.status !== ComandaItemStatus.DONE || toCents(item.total) <= 0) return false;
+  if (item.type === ComandaItemType.SERVICE) return item.completedAt !== null;
+  return item.type === ComandaItemType.PRODUCT;
+}
+
 function buildResolvedRule(input: {
   id: string;
   configId?: string | null;
@@ -609,11 +620,7 @@ export async function generateCommissionsForComanda(
   }[] = [];
 
   for (const item of comanda.items) {
-    if (
-      item.status === ComandaItemStatus.CANCELLED ||
-      (item.type !== ComandaItemType.SERVICE && item.type !== ComandaItemType.PRODUCT) ||
-      toCents(item.total) <= 0
-    ) {
+    if (!isCommissionEligibleItem(item)) {
       continue;
     }
 
@@ -780,6 +787,10 @@ export async function generateCommissionsForComanda(
   for (const existing of existingEntries) {
     const isStillCommissionable = commissionableItems.some((c) => c.item.id === existing.comandaItemId);
     if (!isStillCommissionable) {
+      const existingItem = comanda.items.find((item) => item.id === existing.comandaItemId);
+      if (existingItem && existingItem.status !== ComandaItemStatus.CANCELLED) {
+        continue;
+      }
       if (toCents(existing.paidAmount) > 0) {
         const toReverse = toCents(existing.releasedAmount);
         if (toReverse > 0) {
@@ -852,6 +863,7 @@ export async function syncCommissionReleaseForComanda(
     if (!entry) continue;
     
     const isItemCancelled = item.status === ComandaItemStatus.CANCELLED || isComandaCancelled;
+    if (!isItemCancelled && !isCommissionEligibleItem(item)) continue;
     const generated = toCents(entry.generatedAmount);
     
     const targetReleased = isItemCancelled
