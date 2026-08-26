@@ -130,9 +130,12 @@ export async function syncTenantSubscriptionAccessOnPayment(
       throw new Error("PLANO_ATIVO_NAO_ENCONTRADO");
     }
 
-    const existingSub = await tx.tenantSubscription.findFirst({
+    if (typeof tx.$executeRaw === "function") {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${barbershopId}, 0))`;
+    }
+
+    const existingSub = await tx.tenantSubscription.findUnique({
       where: { barbershopId },
-      orderBy: { createdAt: "desc" },
     });
 
     if (existingSub) {

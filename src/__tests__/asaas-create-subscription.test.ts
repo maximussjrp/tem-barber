@@ -7,7 +7,7 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     plan: { findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
@@ -956,7 +956,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("syncTenantSubscriptionAccessOnPayment ativa TenantSubscription de forma idempotente", async () => {
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Bronze" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-tenant-1",
         barbershopId: "shop-1",
         lastAccessPaymentId: null,
@@ -1190,9 +1190,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
       prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
 
+      prismaMock.tenantSubscription.findUnique.mockReset();
+
       // 1. ACTIVE com currentPeriodEnd no futuro
       const futureDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
-      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValueOnce({
         id: "sub-1",
         barbershopId: "shop-1",
         status: "ACTIVE",
@@ -1208,7 +1210,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       // 2. ACTIVE com currentPeriodEnd vencido -> resulta em EXPIRED
       const pastDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValueOnce({
         id: "sub-1",
         barbershopId: "shop-1",
         status: "ACTIVE",
@@ -1223,7 +1225,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(dataExpired.remainingDays).toBe(0);
 
       // 3. TRIAL ativo com trialEndsAt no futuro
-      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValueOnce({
         id: "sub-1",
         barbershopId: "shop-1",
         status: "TRIAL",
@@ -1238,7 +1240,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(dataTrial.remainingDays).toBeGreaterThan(0);
 
       // 4. GRACE_PERIOD ativo
-      prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValueOnce({
         id: "sub-1",
         barbershopId: "shop-1",
         status: "PAST_DUE",
@@ -1275,7 +1277,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("Task 4.1: PAYMENT_RECEIVED pay_123 com updateMany (count=1) concede acesso atômico", async () => {
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
         lastAccessPaymentId: null,
@@ -1330,7 +1332,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("Task 4.3: Dois processamentos simultâneos de pay_123 resultam em apenas 1 extensão", async () => {
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
       });
@@ -1370,7 +1372,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("Task 4.5: pay_456 no mês seguinte com updateMany count=1 concede nova extensão", async () => {
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
       });
@@ -1411,7 +1413,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     it("Task 4.7: Falha ao atualizar TenantSubscription faz $transaction abortar", async () => {
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
       prismaMock.tenantSubscription.update.mockRejectedValue(new Error("DB_LOCK_ERROR"));
 
       await expect(
@@ -1451,7 +1453,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("Task 4.10: Vencimento em 31/01 é tratado corretamente para 28/02", async () => {
       prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
-      prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
 
       await syncTenantSubscriptionAccessOnPayment("shop-1", {

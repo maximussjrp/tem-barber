@@ -8,6 +8,10 @@ import {
 
 export const TRIAL_DURATION_DAYS = 14;
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") || (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002");
+}
+
 export function isPlatformAdmin(email?: string | null): boolean {
   if (!email) return false;
   const cleanEmail = email.trim().toLowerCase();
@@ -33,9 +37,8 @@ export async function getTenantSubscription(barbershopId: string) {
   if (!prisma || !prisma.tenantSubscription) {
     return null;
   }
-  return await prisma.tenantSubscription.findFirst({
+  return await prisma.tenantSubscription.findUnique({
     where: { barbershopId },
-    orderBy: { createdAt: "desc" },
     include: { plan: true },
   });
 }
@@ -61,8 +64,13 @@ export async function createTrialSubscriptionInTransaction(
   }
 
   const plan = matchingPlans[0];
-  return tx.tenantSubscription.create({
-    data: {
+  if (typeof tx.$executeRaw === "function") {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${barbershopId}, 0))`;
+  }
+  return tx.tenantSubscription.upsert({
+    where: { barbershopId },
+    update: {},
+    create: {
       barbershopId,
       planId: plan.id,
       status: "TRIAL",
@@ -88,9 +96,8 @@ export async function createTrialSubscription(barbershopId: string, updatedByEma
     throw new Error("Prisma Client indisponível.");
   }
 
-  const existing = await prisma.tenantSubscription.findFirst({
+  const existing = await prisma.tenantSubscription.findUnique({
     where: { barbershopId },
-    orderBy: { createdAt: "desc" },
     include: { plan: true },
   });
 
@@ -128,9 +135,10 @@ export async function createTrialSubscription(barbershopId: string, updatedByEma
     });
     return newSubscription;
   } catch (err) {
-    const retrySub = await prisma.tenantSubscription.findFirst({
+    if (!isUniqueConstraintError(err)) throw err;
+
+    const retrySub = await prisma.tenantSubscription.findUnique({
       where: { barbershopId },
-      orderBy: { createdAt: "desc" },
       include: { plan: true },
     });
     if (retrySub) return retrySub;

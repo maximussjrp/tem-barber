@@ -519,6 +519,8 @@ model TenantSubscription {
   barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   plan       Plan       @relation(fields: [planId], references: [id])
 
+  @@unique([barbershopId])
+
   @@map("tenant_subscriptions")
 }
 

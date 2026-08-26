@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
   prismaMock: {
     plan: { findFirst: vi.fn(), create: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
@@ -85,7 +85,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "ACTIVE",
       currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24), // future
     });
@@ -103,7 +103,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "TRIAL",
       trialEndsAt: new Date(Date.now() + 1000 * 60 * 60 * 24), // future
     });
@@ -121,7 +121,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "PAST_DUE",
       gracePeriodEndsAt: new Date(Date.now() + 1000 * 60 * 60 * 24), // future
     });
@@ -139,7 +139,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "SUSPENDED",
     });
 
@@ -156,7 +156,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "CANCELED",
     });
 
@@ -173,7 +173,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "TRIAL",
       trialEndsAt: new Date(Date.now() - 1000 * 60 * 60), // past
     });
@@ -189,7 +189,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       slug: "barbearia-a",
       active: true,
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "SUSPENDED",
     });
 
@@ -210,7 +210,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       id: "member-id",
       barbershopId: "shop-id",
     });
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
       status: "SUSPENDED", // would block standard owners
     });
 

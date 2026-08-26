@@ -70,9 +70,8 @@ export async function GET() {
         bankSlipUrl: true,
       },
     }),
-    prisma.tenantSubscription.findFirst({
+    prisma.tenantSubscription.findUnique({
       where: { barbershopId },
-      orderBy: { createdAt: "desc" },
     }),
   ]);
 

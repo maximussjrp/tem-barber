@@ -12,7 +12,7 @@ const { prismaMock } = vi.hoisted(() => ({
     barberService: { create: vi.fn() },
     workingHour: { create: vi.fn() },
     plan: { findMany: vi.fn() },
-    tenantSubscription: { create: vi.fn() },
+    tenantSubscription: { upsert: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -50,7 +50,7 @@ describe("cadastro publico de barbearia", () => {
       period: "MONTHLY",
       isActive: true,
     }]);
-    prismaMock.tenantSubscription.create.mockResolvedValue({ id: "subscription-1", status: "TRIAL" });
+    prismaMock.tenantSubscription.upsert.mockResolvedValue({ id: "subscription-1", status: "TRIAL" });
     prismaMock.$transaction.mockImplementation((callback: any) =>
       callback(prismaMock)
     );
@@ -94,8 +94,8 @@ describe("cadastro publico de barbearia", () => {
     const response = await registerBarbershop(createRequest(validBody));
 
     expect(response.status).toBe(201);
-    expect(prismaMock.tenantSubscription.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
+    expect(prismaMock.tenantSubscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
         barbershopId: "shop-1",
         planId: "plan-pro",
         status: "TRIAL",
@@ -105,12 +105,12 @@ describe("cadastro publico de barbearia", () => {
         trialEndsAt: expect.any(Date),
       }),
     }));
-    const trialEnd = prismaMock.tenantSubscription.create.mock.calls[0][0].data.trialEndsAt as Date;
+    const trialEnd = prismaMock.tenantSubscription.upsert.mock.calls[0][0].create.trialEndsAt as Date;
     expect(trialEnd.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("faz rollback quando a criacao do trial falha", async () => {
-    prismaMock.tenantSubscription.create.mockRejectedValue(new Error("trial failure"));
+    prismaMock.tenantSubscription.upsert.mockRejectedValue(new Error("trial failure"));
 
     const response = await registerBarbershop(createRequest({
       ...validBody,
