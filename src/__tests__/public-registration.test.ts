@@ -11,6 +11,8 @@ const { prismaMock } = vi.hoisted(() => ({
     service: { create: vi.fn() },
     barberService: { create: vi.fn() },
     workingHour: { create: vi.fn() },
+    plan: { findMany: vi.fn() },
+    tenantSubscription: { create: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -30,7 +32,7 @@ const validBody = {
   name: "Proprietário",
   email: "owner@example.com",
   phone: "(11) 99999-9999",
-  cpf: "123.456.789-00",
+  cpf: "529.982.247-25",
   password: "password123",
   barbershopName: "Barbearia Nova",
 };
@@ -41,11 +43,24 @@ describe("cadastro publico de barbearia", () => {
     resetRateLimitStore();
     prismaMock.user.findFirst.mockResolvedValue(null);
     prismaMock.barbershop.findUnique.mockResolvedValue(null);
+    prismaMock.plan.findMany.mockResolvedValue([{
+      id: "plan-pro",
+      name: "Plano Tem Barber",
+      price: "49.90",
+      period: "MONTHLY",
+      isActive: true,
+    }]);
+    prismaMock.tenantSubscription.create.mockResolvedValue({ id: "subscription-1", status: "TRIAL" });
     prismaMock.$transaction.mockImplementation((callback: any) =>
       callback(prismaMock)
     );
     prismaMock.user.create.mockResolvedValue({ id: "user-1", name: "Proprietário" });
     prismaMock.barbershop.create.mockResolvedValue({ id: "shop-1", name: "Barbearia Nova", slug: "barbearia-nova" });
+    prismaMock.barbershopMember.create.mockResolvedValue({ id: "member-1" });
+    prismaMock.category.create.mockResolvedValue({ id: "category-1" });
+    prismaMock.service.create.mockResolvedValue({ id: "service-1" });
+    prismaMock.barberService.create.mockResolvedValue({ id: "barber-service-1" });
+    prismaMock.workingHour.create.mockResolvedValue({ id: "working-hour-1" });
   });
 
   it("exige todos os campos obrigatorios", async () => {
@@ -73,6 +88,38 @@ describe("cadastro publico de barbearia", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("E-mail em formato inválido");
+  });
+
+  it("cria trial local dentro da transacao", async () => {
+    const response = await registerBarbershop(createRequest(validBody));
+
+    expect(response.status).toBe(201);
+    expect(prismaMock.tenantSubscription.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        barbershopId: "shop-1",
+        planId: "plan-pro",
+        status: "TRIAL",
+        monthlyPrice: "49.90",
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        trialEndsAt: expect.any(Date),
+      }),
+    }));
+    const trialEnd = prismaMock.tenantSubscription.create.mock.calls[0][0].data.trialEndsAt as Date;
+    expect(trialEnd.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("faz rollback quando a criacao do trial falha", async () => {
+    prismaMock.tenantSubscription.create.mockRejectedValue(new Error("trial failure"));
+
+    const response = await registerBarbershop(createRequest({
+      ...validBody,
+      email: "rollback@example.com",
+      barbershopName: "Barbearia Rollback",
+    }));
+
+    expect(response.status).toBe(500);
+    expect(prismaMock.$transaction).toHaveBeenCalledOnce();
   });
 
   it("aplica rate limit estrito", async () => {

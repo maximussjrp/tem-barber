@@ -1,8 +1,12 @@
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { getActiveBillingPlan } from "@/lib/billing/plans";
 import {
   deriveTenantSubscriptionAccess,
   SubscriptionInput,
 } from "@/lib/billing/subscription-access";
+
+export const TRIAL_DURATION_DAYS = 14;
 
 export function isPlatformAdmin(email?: string | null): boolean {
   if (!email) return false;
@@ -32,6 +36,44 @@ export async function getTenantSubscription(barbershopId: string) {
   return await prisma.tenantSubscription.findFirst({
     where: { barbershopId },
     orderBy: { createdAt: "desc" },
+    include: { plan: true },
+  });
+}
+
+export async function createTrialSubscriptionInTransaction(
+  tx: Prisma.TransactionClient,
+  barbershopId: string,
+  now = new Date()
+) {
+  const billingPlan = getActiveBillingPlan();
+  const matchingPlans = await tx.plan.findMany({
+    where: {
+      name: billingPlan.name,
+      price: billingPlan.value,
+      period: billingPlan.cycle,
+      isActive: true,
+    },
+    orderBy: { id: "asc" },
+  });
+
+  if (matchingPlans.length !== 1) {
+    throw new Error("Plano oficial de trial nao configurado de forma univoca.");
+  }
+
+  const plan = matchingPlans[0];
+  return tx.tenantSubscription.create({
+    data: {
+      barbershopId,
+      planId: plan.id,
+      status: "TRIAL",
+      planName: plan.name,
+      monthlyPrice: plan.price,
+      trialEndsAt: new Date(now.getTime() + TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      gracePeriodEndsAt: null,
+      updatedBy: null,
+    },
     include: { plan: true },
   });
 }
@@ -77,7 +119,7 @@ export async function createTrialSubscription(barbershopId: string, updatedByEma
         status: "TRIAL",
         planName: plan.name,
         monthlyPrice: plan.price,
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 dias
+        trialEndsAt: new Date(Date.now() + TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
         currentPeriodStart: null,
         currentPeriodEnd: null,
         updatedBy: updatedByEmail || null,

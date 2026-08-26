@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 import { normalizeBrazilianMobilePhone, validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
+import { createTrialSubscriptionInTransaction } from "@/lib/subscription-utils";
 
 // Helper para gerar o slug do estabelecimento
 function slugify(text: string) {
@@ -237,6 +238,8 @@ export async function POST(request: Request) {
           },
         });
       }
+
+      await createTrialSubscriptionInTransaction(tx, barbershop.id);
 
       return { user, barbershop };
     });
