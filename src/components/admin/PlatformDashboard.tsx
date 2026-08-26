@@ -119,21 +119,6 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
       subscription: sub,
     });
 
-    const formatDateInput = (dateStr: string | null | undefined) => {
-      if (!dateStr) return "";
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return "";
-      return d.toISOString().slice(0, 10);
-    };
-
-    setFormStatus(sub?.status || "TRIAL");
-    setFormPlanId(sub?.planId || plans[0]?.id || "");
-    setFormTrialEndsAt(formatDateInput(sub?.trialEndsAt));
-    setFormPeriodStart(formatDateInput(sub?.currentPeriodStart));
-    setFormPeriodEnd(formatDateInput(sub?.currentPeriodEnd));
-    setFormGracePeriodEndsAt(formatDateInput(sub?.gracePeriodEndsAt));
-    setFormPaymentMethod(sub?.paymentMethod || "");
-    setFormLastPaymentAt(formatDateInput(sub?.lastPaymentAt));
     setFormInternalNotes(sub?.internalNotes || "");
     setFormError("");
   };
@@ -153,14 +138,6 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
         },
         body: JSON.stringify({
           barbershopId: editingSub.barbershopId,
-          status: formStatus,
-          planId: formPlanId || null,
-          trialEndsAt: formTrialEndsAt || null,
-          currentPeriodStart: formPeriodStart || null,
-          currentPeriodEnd: formPeriodEnd || null,
-          gracePeriodEndsAt: formGracePeriodEndsAt || null,
-          paymentMethod: formPaymentMethod || null,
-          lastPaymentAt: formLastPaymentAt || null,
           internalNotes: formInternalNotes || null,
         }),
       });
@@ -444,7 +421,7 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
                 <th className="py-4 px-6">Dono / Contato</th>
                 <th className="py-4 px-6">Plano / Preço</th>
                 <th className="py-4 px-6 text-center">Acesso</th>
-                <th className="py-4 px-6 text-center">Cobrança</th>
+                <th className="py-4 px-6 text-center">Cobrança Asaas</th>
                 <th className="py-4 px-6">Validade</th>
                 <th className="py-4 px-6 text-center">Dias Restantes</th>
                 <th className="py-4 px-6">Último Pagamento</th>
@@ -555,12 +532,12 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="relative max-w-lg w-full bg-stone-900 border border-stone-800 rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col gap-6 animate-fade-in my-8">
             <div>
-              <h2 className="text-xl font-bold text-white font-serif">Editar Assinatura</h2>
+              <h2 className="text-xl font-bold text-white font-serif">Dados de Suporte</h2>
               <p className="text-xs text-stone-400 mt-1">Tenant: {editingSub.barbershopName}</p>
             </div>
 
             <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs rounded-xl leading-relaxed">
-              Esta alteração modifica manualmente o acesso da barbearia e não altera a cobrança no Asaas.
+              Somente observações de suporte podem ser alteradas. Dados de acesso e cobrança são sincronizados pelo Asaas.
             </div>
 
             {formError && (
@@ -570,123 +547,6 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
             )}
 
             <form onSubmit={handleFormSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                {/* Plan Selection */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">Plano</label>
-                  <select
-                    value={formPlanId}
-                    onChange={(e) => setFormPlanId(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                  >
-                    {plans.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} (R$ {Number(p.price).toFixed(2)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Status Selection */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">Status</label>
-                  <select
-                    value={formStatus}
-                    onChange={(e) => setFormStatus(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                  >
-                    <option value="TRIAL">TRIAL (Teste)</option>
-                    <option value="ACTIVE">ACTIVE (Ativo)</option>
-                    <option value="PAST_DUE">PAST_DUE (Vencido)</option>
-                    <option value="SUSPENDED">SUSPENDED (Suspenso)</option>
-                    <option value="CANCELED">CANCELED (Cancelado)</option>
-                    <option value="EXPIRED">EXPIRED (Expirado)</option>
-                  </select>
-                </div>
-              </div>
-
-              {formStatus === "TRIAL" ? (
-                /* Trial Ends */
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">
-                    Fim do Teste (trialEndsAt) *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formTrialEndsAt}
-                    onChange={(e) => setFormTrialEndsAt(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                  />
-                </div>
-              ) : formStatus === "ACTIVE" ? (
-                /* Period dates */
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-stone-300">
-                      Início Período *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={formPeriodStart}
-                      onChange={(e) => setFormPeriodStart(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-stone-300">
-                      Fim Período (Vencimento) *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={formPeriodEnd}
-                      onChange={(e) => setFormPeriodEnd(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                    />
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid grid-cols-2 gap-4">
-                {/* Grace period */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">
-                    Tolerância (gracePeriodEndsAt)
-                  </label>
-                  <input
-                    type="date"
-                    value={formGracePeriodEndsAt}
-                    onChange={(e) => setFormGracePeriodEndsAt(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                  />
-                </div>
-
-                {/* Last Payment */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-stone-300">Último Pagamento</label>
-                  <input
-                    type="date"
-                    value={formLastPaymentAt}
-                    onChange={(e) => setFormLastPaymentAt(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Payment Method */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-stone-300">Forma de Pagamento</label>
-                <input
-                  type="text"
-                  placeholder="Ex: Pix, Transferência, Dinheiro, Cortesia..."
-                  value={formPaymentMethod}
-                  onChange={(e) => setFormPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                />
-              </div>
-
               {/* Notes */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-stone-300">Observações Internas</label>

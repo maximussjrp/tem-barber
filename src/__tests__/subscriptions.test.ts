@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
   prismaMock: {
     plan: { findFirst: vi.fn(), create: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
@@ -240,7 +240,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     });
     prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-a" });
     prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
-    prismaMock.tenantSubscription.findFirst.mockResolvedValue({ id: "sub-id" });
+    prismaMock.tenantSubscription.findMany.mockResolvedValue([{ id: "sub-id" }]);
     prismaMock.tenantSubscription.update.mockResolvedValue({
       id: "sub-id",
       status: "ACTIVE",
@@ -251,9 +251,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       method: "PUT",
       body: JSON.stringify({
         barbershopId: "shop-id",
-        status: "ACTIVE",
-        currentPeriodStart: "2026-07-01",
-        currentPeriodEnd: "2026-08-30",
+        internalNotes: "Atualização de suporte",
       }),
     });
 
