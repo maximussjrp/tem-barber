@@ -163,3 +163,12 @@ export function publicBarbershopWhere(): Prisma.BarbershopWhereInput {
     ],
   };
 }
+
+/**
+ * Resolve tenants received through an exact public booking link.
+ */
+export function directPublicBarbershopWhere(slug: string): Prisma.BarbershopWhereInput | null {
+  const safeSlug = sanitizeBarbershopSlug(slug);
+  if (!safeSlug) return null;
+  return { active: true, slug: safeSlug };
+}

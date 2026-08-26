@@ -1,11 +1,11 @@
-﻿import { notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
-import { isPublicBarbershop, publicBarbershopWhere, sanitizeBarbershopSlug } from "@/lib/public-barbershops";
+import { directPublicBarbershopWhere, sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 
 const DAY_NAMES = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
 const PUBLIC_APP_URL = "https://app.tembarber.com.br";
@@ -104,10 +104,10 @@ export async function generateMetadata({
   if (!safeSlug) return { title: "Barbearia nao encontrada" };
 
   const barbershop = await prisma.barbershop.findFirst({
-    where: { ...publicBarbershopWhere(), slug: safeSlug },
+    where: directPublicBarbershopWhere(safeSlug)!,
   });
 
-  if (!barbershop || !isPublicBarbershop(barbershop)) {
+  if (!barbershop) {
     return { title: "Barbearia nao encontrada" };
   }
 
@@ -143,7 +143,7 @@ export default async function BarbershopPublicPage({
   if (!safeSlug) notFound();
 
   const barbershop = await prisma.barbershop.findFirst({
-    where: { ...publicBarbershopWhere(), slug: safeSlug },
+    where: directPublicBarbershopWhere(safeSlug)!,
     include: {
       categories: {
         include: {
@@ -162,7 +162,7 @@ export default async function BarbershopPublicPage({
     },
   });
 
-  if (!barbershop || !isPublicBarbershop(barbershop)) notFound();
+  if (!barbershop) notFound();
 
   const subscription = await getTenantSubscription(barbershop.id);
   if (!isSubscriptionActive(subscription)) {

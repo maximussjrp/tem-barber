@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
-import { publicBarbershopWhere, sanitizeBarbershopSlug, isPublicBarbershop } from "@/lib/public-barbershops";
+import { directPublicBarbershopWhere, sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 import {
   AppointmentConflictError,
   IdempotencyKeyInvalidError,
@@ -313,9 +313,9 @@ export async function POST(
   }
 
   const barbershop = await prisma.barbershop.findFirst({
-    where: { ...publicBarbershopWhere(), slug: safeSlug },
+    where: directPublicBarbershopWhere(safeSlug)!,
   });
-  if (!barbershop || !isPublicBarbershop(barbershop)) {
+  if (!barbershop) {
     return NextResponse.json({ error: "Barbearia nao encontrada." }, { status: 404 });
   }
 

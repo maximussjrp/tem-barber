@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { resetRateLimitStore } from "@/lib/public-rate-limit";
-import { isPublicBarbershop } from "@/lib/public-barbershops";
+import { directPublicBarbershopWhere, isPublicBarbershop } from "@/lib/public-barbershops";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -299,5 +299,19 @@ describe("helper isPublicBarbershop", () => {
       ]
     };
     expect(isPublicBarbershop(zoviskIncomplete)).toBe(false);
+  });
+});
+
+describe("helper directPublicBarbershopWhere", () => {
+  it("permite tenant ativo com endereco placeholder", () => {
+    expect(directPublicBarbershopWhere("barbearia-boka-cortes")).toEqual({ active: true, slug: "barbearia-boka-cortes" });
+  });
+
+  it("permite nome e slug com termo de teste", () => {
+    expect(directPublicBarbershopWhere("teste-dan-barber")).toEqual({ active: true, slug: "teste-dan-barber" });
+  });
+
+  it("rejeita slug invalido", () => {
+    expect(directPublicBarbershopWhere("Teste Dan Barber")).toBeNull();
   });
 });
