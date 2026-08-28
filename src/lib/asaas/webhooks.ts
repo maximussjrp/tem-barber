@@ -389,52 +389,60 @@ export async function processAsaasWebhookPayload(
         const mappedStatus = mapAsaasPaymentStatus(paymentObj.status);
         const paymentDateStr = paymentObj.paymentDate || paymentObj.clientPaymentDate || null;
 
-        // Imutabilidade de asaasSubscriptionId no pagamento
-        const existingPayment = await prisma.asaasBillingPayment.findUnique({
-          where: { asaasPaymentId: paymentObj.id },
-          select: { asaasSubscriptionId: true },
-        });
-
-        const incomingSubId = paymentObj.subscription?.trim();
-        if (existingPayment?.asaasSubscriptionId) {
-          if (incomingSubId && incomingSubId !== existingPayment.asaasSubscriptionId) {
-            throw new Error("PAYMENT_SUBSCRIPTION_MISMATCH");
+        // Envolver leitura de identidade, validação de imutabilidade e upsert do pagamento em transação atômica serializada por chave consultiva do pagamento
+        const { subIdToPersist } = await prisma.$transaction(async (tx) => {
+          if (typeof tx.$executeRaw === "function") {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${paymentObj.id}, 1))`;
           }
-        }
 
-        const subIdToPersist = incomingSubId || existingPayment?.asaasSubscriptionId || null;
+          const existingPayment = await tx.asaasBillingPayment.findUnique({
+            where: { asaasPaymentId: paymentObj.id },
+            select: { asaasSubscriptionId: true },
+          });
 
-        await prisma.asaasBillingPayment.upsert({
-          where: { asaasPaymentId: paymentObj.id },
-          create: {
-            barbershopId,
-            asaasPaymentId: paymentObj.id,
-            asaasSubscriptionId: subIdToPersist,
-            asaasCustomerId: paymentObj.customer || null,
-            status: mappedStatus,
-            billingType: paymentObj.billingType || null,
-            value: paymentObj.value ?? 0,
-            netValue: paymentObj.netValue ?? null,
-            dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : null,
-            paymentDate: paymentDateStr ? new Date(paymentDateStr) : null,
-            invoiceUrl: paymentObj.invoiceUrl || null,
-            bankSlipUrl: paymentObj.bankSlipUrl || null,
-            externalReference: paymentObj.externalReference || null,
-            rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
-          },
-          update: {
-            status: mappedStatus,
-            asaasSubscriptionId: subIdToPersist || undefined,
-            billingType: paymentObj.billingType || undefined,
-            value: paymentObj.value ?? undefined,
-            netValue: paymentObj.netValue ?? undefined,
-            dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : undefined,
-            paymentDate: paymentDateStr ? new Date(paymentDateStr) : undefined,
-            invoiceUrl: paymentObj.invoiceUrl || undefined,
-            bankSlipUrl: paymentObj.bankSlipUrl || undefined,
-            externalReference: paymentObj.externalReference || undefined,
-            rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
-          },
+          const incomingSubId = paymentObj.subscription?.trim();
+          if (existingPayment?.asaasSubscriptionId) {
+            if (incomingSubId && incomingSubId !== existingPayment.asaasSubscriptionId) {
+              throw new Error("PAYMENT_SUBSCRIPTION_MISMATCH");
+            }
+          }
+
+          const subIdToPersist = incomingSubId || existingPayment?.asaasSubscriptionId || null;
+
+          await tx.asaasBillingPayment.upsert({
+            where: { asaasPaymentId: paymentObj.id },
+            create: {
+              barbershopId,
+              asaasPaymentId: paymentObj.id,
+              asaasSubscriptionId: subIdToPersist,
+              asaasCustomerId: paymentObj.customer || null,
+              status: mappedStatus,
+              billingType: paymentObj.billingType || null,
+              value: paymentObj.value ?? 0,
+              netValue: paymentObj.netValue ?? null,
+              dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : null,
+              paymentDate: paymentDateStr ? new Date(paymentDateStr) : null,
+              invoiceUrl: paymentObj.invoiceUrl || null,
+              bankSlipUrl: paymentObj.bankSlipUrl || null,
+              externalReference: paymentObj.externalReference || null,
+              rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
+            },
+            update: {
+              status: mappedStatus,
+              asaasSubscriptionId: subIdToPersist || undefined,
+              billingType: paymentObj.billingType || undefined,
+              value: paymentObj.value ?? undefined,
+              netValue: paymentObj.netValue ?? undefined,
+              dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : undefined,
+              paymentDate: paymentDateStr ? new Date(paymentDateStr) : undefined,
+              invoiceUrl: paymentObj.invoiceUrl || undefined,
+              bankSlipUrl: paymentObj.bankSlipUrl || undefined,
+              externalReference: paymentObj.externalReference || undefined,
+              rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
+            },
+          });
+
+          return { subIdToPersist };
         });
 
         const effectiveSubId = subIdToPersist || paymentObj.subscription;

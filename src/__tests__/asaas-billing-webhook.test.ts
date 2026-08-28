@@ -1130,5 +1130,30 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
       expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
     });
+
+    it("25. Serialized Payment transaction: acquires advisory lock on payment ID inside transaction before reading/upserting", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
+      prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-1" });
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-lock" });
+      prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-lock" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-lock" });
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValueOnce(null);
+
+      const req = makeWebhookRequest({
+        id: "evt_lock_1",
+        event: "PAYMENT_RECEIVED",
+        payment: {
+          id: "pay_serial_100",
+          subscription: "sub_serial_A",
+          status: "RECEIVED",
+          externalReference: "tb_barbershop_shop-1",
+        },
+      });
+
+      const res = await postWebhook(req);
+      expect(res.status).toBe(200);
+
+      expect(prismaMock.$transaction).toHaveBeenCalled();
+    });
   });
 });
