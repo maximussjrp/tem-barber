@@ -16,6 +16,11 @@ import {
   isAllowedBillingType,
 } from "@/lib/billing/plans";
 import type { AllowedBillingType } from "@/lib/billing/plans";
+import {
+  assertCommercialConsistency,
+  getActivePlanByCode,
+  PlanResolutionError,
+} from "@/lib/billing/plans-db";
 
 interface AsaasSubscriptionResponse {
   id: string;
@@ -65,7 +70,7 @@ export async function createAsaasSubscriptionForBarbershop(
 ): Promise<CreateSubscriptionResult> {
   const { barbershopId, planCode, billingType } = input;
 
-  // 1. Validar plano
+  // 1. Validar plano no catálogo em código (TS)
   if (planCode !== ACTIVE_BILLING_PLAN_CODE) {
     throw new SubscriptionValidationError(
       "INVALID_PLAN",
@@ -73,12 +78,26 @@ export async function createAsaasSubscriptionForBarbershop(
     );
   }
 
-  const plan = getBillingPlanByCode(planCode);
-  if (!plan) {
-    throw new SubscriptionValidationError("INVALID_PLAN", `Plano "${planCode}" não encontrado ou inativo.`);
+  const catalogPlan = getBillingPlanByCode(planCode);
+  if (!catalogPlan) {
+    throw new SubscriptionValidationError(
+      "INVALID_PLAN",
+      `Plano "${planCode}" não encontrado ou inativo.`
+    );
   }
 
-  // 2. Validar billingType
+  // 2. Validar plano no banco de dados e consistência comercial ANTES de qualquer chamada externa (Customer / Asaas)
+  try {
+    const dbPlan = await getActivePlanByCode(prisma, planCode);
+    assertCommercialConsistency(catalogPlan, dbPlan);
+  } catch (err) {
+    if (err instanceof PlanResolutionError) {
+      throw new SubscriptionValidationError(err.code, err.message);
+    }
+    throw err;
+  }
+
+  // 3. Validar billingType
   if (!isAllowedBillingType(billingType)) {
     throw new SubscriptionValidationError(
       "INVALID_BILLING_TYPE",
@@ -86,10 +105,10 @@ export async function createAsaasSubscriptionForBarbershop(
     );
   }
 
-  // 3. Garantir customer Asaas
+  // 4. Garantir customer Asaas (somente após todas as validações locais de BD passarem)
   const customerResult = await ensureAsaasCustomerForBarbershop(barbershopId);
 
-  // 4. Verificar se já existe assinatura ativa local para este barbershop
+  // 5. Verificar se já existe assinatura ativa local para este barbershop
   const existingSubscription = await prisma.asaasBillingSubscription.findFirst({
     where: {
       barbershopId,
@@ -122,21 +141,21 @@ export async function createAsaasSubscriptionForBarbershop(
     };
   }
 
-  // 5. Calcular nextDueDate (próximo dia útil ou amanhã)
+  // 6. Calcular nextDueDate (próximo dia útil ou amanhã)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const nextDueDate = tomorrow.toISOString().split("T")[0]; // YYYY-MM-DD
 
   const externalReference = buildAsaasSubscriptionExternalReference(barbershopId, planCode);
 
-  // 6. Criar assinatura no Asaas
+  // 7. Criar assinatura no Asaas
   const asaasPayload = {
     customer: customerResult.asaasCustomerId,
     billingType: billingType as AllowedBillingType,
-    value: plan.value,
+    value: catalogPlan.value,
     nextDueDate,
     cycle: "MONTHLY",
-    description: `${plan.name} — Tem Barber`,
+    description: `${catalogPlan.name} — Tem Barber`,
     externalReference,
   };
 
@@ -145,15 +164,15 @@ export async function createAsaasSubscriptionForBarbershop(
     body: JSON.stringify(asaasPayload),
   });
 
-  // 7. Salvar localmente
+  // 8. Salvar localmente
   const saved = await prisma.asaasBillingSubscription.create({
     data: {
       barbershopId,
       asaasSubscriptionId: asaasResponse.id,
       asaasCustomerId: customerResult.asaasCustomerId,
-      planCode: plan.code,
-      planName: plan.name,
-      value: plan.value,
+      planCode: catalogPlan.code,
+      planName: catalogPlan.name,
+      value: catalogPlan.value,
       cycle: "MONTHLY",
       status: mapAsaasSubscriptionStatus(asaasResponse.status),
       nextDueDate: asaasResponse.nextDueDate ? new Date(asaasResponse.nextDueDate) : null,

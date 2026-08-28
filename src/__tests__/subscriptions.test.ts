@@ -260,4 +260,74 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     const body = await res.json();
     expect(body.subscription.updatedBy).toBe("max.guarinieri@gmail.com");
   });
+
+  // 15. D2A createTrialSubscriptionInTransaction resolves pro_monthly by code
+  it("createTrialSubscriptionInTransaction resolves pro_monthly by code and creates trial", async () => {
+    const { createTrialSubscriptionInTransaction } = await import("@/lib/subscription-utils");
+
+    const mockTx = {
+      tenantSubscription: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn().mockResolvedValue({
+          id: "sub-new",
+          barbershopId: "shop-100",
+          planId: "plan-pro-id",
+          status: "TRIAL",
+          planName: "Plano Tem Barber",
+          monthlyPrice: 49.9,
+        }),
+      },
+      plan: {
+        findFirst: vi.fn().mockImplementation(async ({ where }: { where: { code: string } }) => {
+          if (where.code === "pro_monthly") {
+            return {
+              id: "plan-pro-id",
+              code: "pro_monthly",
+              name: "Plano Tem Barber",
+              price: 49.9,
+              period: "MONTHLY",
+              isActive: true,
+            };
+          }
+          return null;
+        }),
+      },
+    };
+
+    const sub = await createTrialSubscriptionInTransaction(mockTx as any, "shop-100");
+    expect(sub.planId).toBe("plan-pro-id");
+    expect(mockTx.tenantSubscription.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          barbershopId: "shop-100",
+          planId: "plan-pro-id",
+          status: "TRIAL",
+          planName: "Plano Tem Barber",
+          monthlyPrice: 49.9,
+        }),
+      })
+    );
+  });
+
+  // 16. D2A createTrialSubscriptionInTransaction throws if pro_monthly is missing in DB (no auto-create fallback)
+  it("createTrialSubscriptionInTransaction throws if pro_monthly missing in DB without auto-creating plan", async () => {
+    const { createTrialSubscriptionInTransaction } = await import("@/lib/subscription-utils");
+    const { PlanResolutionError } = await import("@/lib/billing/plans-db");
+
+    const mockTx = {
+      tenantSubscription: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+      },
+      plan: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+      },
+    };
+
+    await expect(createTrialSubscriptionInTransaction(mockTx as any, "shop-200")).rejects.toThrow(
+      PlanResolutionError
+    );
+    expect(mockTx.plan.create).not.toHaveBeenCalled();
+  });
 });

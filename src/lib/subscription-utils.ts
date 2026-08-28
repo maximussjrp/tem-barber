@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getActiveBillingPlan } from "@/lib/billing/plans";
+import { assertCommercialConsistency, getActivePlanByCode } from "@/lib/billing/plans-db";
 import {
   deriveTenantSubscriptionAccess,
   SubscriptionInput,
@@ -49,21 +50,9 @@ export async function createTrialSubscriptionInTransaction(
   now = new Date()
 ) {
   const billingPlan = getActiveBillingPlan();
-  const matchingPlans = await tx.plan.findMany({
-    where: {
-      name: billingPlan.name,
-      price: billingPlan.value,
-      period: billingPlan.cycle,
-      isActive: true,
-    },
-    orderBy: { id: "asc" },
-  });
+  const plan = await getActivePlanByCode(tx as any, billingPlan.code);
+  assertCommercialConsistency(billingPlan, plan);
 
-  if (matchingPlans.length !== 1) {
-    throw new Error("Plano oficial de trial nao configurado de forma univoca.");
-  }
-
-  const plan = matchingPlans[0];
   if (typeof tx.$executeRaw === "function") {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${barbershopId}, 0))`;
   }

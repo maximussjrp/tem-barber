@@ -53,6 +53,19 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     vi.stubEnv("ASAAS_API_KEY", "test_api_key_secret");
     vi.stubEnv("ASAAS_ENV", "sandbox");
     globalThis.fetch = fetchMock;
+    prismaMock.plan.findFirst.mockImplementation(async ({ where }: { where?: { code?: string } }) => {
+      if (!where?.code || where.code === "pro_monthly") {
+        return {
+          id: "plan-db-1",
+          code: "pro_monthly",
+          name: "Plano Tem Barber",
+          price: 49.9,
+          period: "MONTHLY",
+          isActive: true,
+        };
+      }
+      return null;
+    });
     prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
@@ -505,6 +518,83 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
           billingType: "CREDIT_CARD",
         })
       ).rejects.toThrow(SubscriptionValidationError);
+    });
+
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se o plano estiver ausente no banco de dados local", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue(null);
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se o plano estiver inativo no banco de dados local", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({
+        id: "plan-db-1",
+        code: "pro_monthly",
+        name: "Plano Tem Barber",
+        price: 49.9,
+        period: "MONTHLY",
+        isActive: false,
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se houver divergência de preço no banco em relação ao catálogo", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({
+        id: "plan-db-1",
+        code: "pro_monthly",
+        name: "Plano Tem Barber",
+        price: 99.9,
+        period: "MONTHLY",
+        isActive: true,
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se houver divergência de período no banco em relação ao catálogo", async () => {
+      prismaMock.plan.findFirst.mockResolvedValue({
+        id: "plan-db-1",
+        code: "pro_monthly",
+        name: "Plano Tem Barber",
+        price: 49.9,
+        period: "YEARLY",
+        isActive: true,
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

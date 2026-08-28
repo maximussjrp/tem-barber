@@ -13,9 +13,7 @@ export interface BillingPlan {
   active: boolean;
 }
 
-export const ACTIVE_BILLING_PLAN_CODE = "pro_monthly";
-
-export const BILLING_PLANS: BillingPlan[] = [
+export const BILLING_PLANS_CATALOG = [
   {
     code: "pro_monthly",
     name: "Plano Tem Barber",
@@ -35,7 +33,16 @@ export const BILLING_PLANS: BillingPlan[] = [
     ],
     active: true,
   },
-];
+] as const;
+
+export type BillingPlanCode = (typeof BILLING_PLANS_CATALOG)[number]["code"];
+
+export const ACTIVE_BILLING_PLAN_CODE: BillingPlanCode = "pro_monthly";
+
+export const BILLING_PLANS: BillingPlan[] = BILLING_PLANS_CATALOG.map((p) => ({
+  ...p,
+  features: [...p.features],
+}));
 
 /**
  * Busca um plano ativo pelo codigo.

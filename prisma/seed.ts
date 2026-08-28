@@ -14,27 +14,28 @@ async function main() {
 
   const plans = [
     {
+      code: "pro_monthly",
       name: "Plano Tem Barber",
       description: "Plano completo de gestao para sua barbearia.",
       price: 49.90,
       period: "MONTHLY" as const,
-      maxMembers: 20,
+      maxMembers: 3,
       isActive: true,
     },
   ];
 
   for (const planData of plans) {
     const existingPlan = await prisma.plan.findFirst({
-      where: { name: planData.name },
+      where: { code: planData.code },
     });
 
     if (!existingPlan) {
       const plan = await prisma.plan.create({
         data: planData,
       });
-      console.log(`Plano cadastrado com sucesso: ${plan.name} (R$ ${plan.price})`);
+      console.log(`Plano cadastrado com sucesso por código: ${plan.code} (${plan.name} R$ ${plan.price})`);
     } else {
-      console.log(`Plano ja existente: ${planData.name}`);
+      console.log(`Plano ja existente preservado por código: ${planData.code} (${existingPlan.name})`);
     }
   }
 
