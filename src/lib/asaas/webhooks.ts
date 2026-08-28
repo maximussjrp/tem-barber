@@ -4,6 +4,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { getPlanByCode } from "@/lib/billing/plans-db";
 import {
   mapAsaasPaymentStatus,
   mapAsaasSubscriptionStatus,
@@ -77,6 +78,8 @@ export async function syncTenantSubscriptionAccessOnPayment(
   paymentObj: {
     id?: string;
     asaasPaymentId?: string;
+    subscription?: string;
+    asaasSubscriptionId?: string;
     billingType?: string;
     value?: number;
     dueDate?: string | Date | null;
@@ -107,6 +110,7 @@ export async function syncTenantSubscriptionAccessOnPayment(
   const periodEnd = addCalendarMonths(anchorDate, 1);
 
   await prisma.$transaction(async (tx) => {
+    // 1. Reivindicação atômica de idempotência
     const updateResult = await tx.asaasBillingPayment.updateMany({
       where: {
         asaasPaymentId,
@@ -122,29 +126,87 @@ export async function syncTenantSubscriptionAccessOnPayment(
       return;
     }
 
-    const plan = await tx.plan.findFirst({
-      where: { isActive: true },
+    // 2. Resolver o registro do pagamento local
+    const paymentRecord = await tx.asaasBillingPayment.findUnique({
+      where: { asaasPaymentId },
+      select: {
+        asaasSubscriptionId: true,
+        barbershopId: true,
+      },
     });
 
-    if (!plan) {
-      throw new Error("PLANO_ATIVO_NAO_ENCONTRADO");
+    if (!paymentRecord) {
+      throw new Error("PAYMENT_RECORD_NOT_FOUND");
     }
 
+    if (paymentRecord.barbershopId !== barbershopId) {
+      throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+    }
+
+    // 3. Consistência estrita da identidade da assinatura (Payment -> Subscription)
+    const rawCandidates = [
+      paymentObj.subscription?.trim(),
+      paymentObj.asaasSubscriptionId?.trim(),
+      paymentRecord.asaasSubscriptionId?.trim(),
+    ].filter((s): s is string => Boolean(s && s.length > 0));
+
+    const distinctSubIds = Array.from(new Set(rawCandidates));
+
+    if (distinctSubIds.length > 1) {
+      throw new Error("PAYMENT_SUBSCRIPTION_MISMATCH");
+    }
+
+    if (distinctSubIds.length === 0) {
+      throw new Error("PAYMENT_MISSING_SUBSCRIPTION_ID");
+    }
+
+    const resolvedSubscriptionId = distinctSubIds[0];
+
+    // 4. Buscar a assinatura Asaas local
+    const billingSub = await tx.asaasBillingSubscription.findUnique({
+      where: { asaasSubscriptionId: resolvedSubscriptionId },
+    });
+
+    if (!billingSub) {
+      throw new Error("ASAAS_BILLING_SUBSCRIPTION_NOT_FOUND");
+    }
+
+    if (billingSub.barbershopId !== barbershopId) {
+      throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+    }
+
+    if (!billingSub.planCode || !billingSub.planCode.trim()) {
+      throw new Error("ASAAS_PLAN_CODE_MISSING");
+    }
+
+    // 5. Resolver Plano por código no catálogo (permite planos inativos/históricos)
+    const plan = await getPlanByCode(tx as any, billingSub.planCode.trim());
+
+    if (!plan) {
+      throw new Error("PLAN_CODE_NOT_FOUND");
+    }
+
+    // 6. Trava consultiva por tenant para proteger concorrência de mutação de acesso
     if (typeof tx.$executeRaw === "function") {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${barbershopId}, 0))`;
     }
 
+    // 7. Validar TenantSubscription existente
     const existingSub = await tx.tenantSubscription.findUnique({
       where: { barbershopId },
     });
 
     if (existingSub) {
+      if (existingSub.planId !== plan.id) {
+        throw new Error("TENANT_PLAN_CODE_MISMATCH");
+      }
+
       await tx.tenantSubscription.update({
         where: { id: existingSub.id },
         data: {
           status: "ACTIVE",
-          planName: "Plano Tem Barber",
-          monthlyPrice: paymentObj.value ?? 49.9,
+          planName: billingSub.planName,
+          monthlyPrice: billingSub.value,
           currentPeriodStart: periodStart,
           currentPeriodEnd: periodEnd,
           gracePeriodEndsAt: null,
@@ -159,8 +221,8 @@ export async function syncTenantSubscriptionAccessOnPayment(
           barbershopId,
           planId: plan.id,
           status: "ACTIVE",
-          planName: "Plano Tem Barber",
-          monthlyPrice: paymentObj.value ?? 49.9,
+          planName: billingSub.planName,
+          monthlyPrice: billingSub.value,
           currentPeriodStart: periodStart,
           currentPeriodEnd: periodEnd,
           gracePeriodEndsAt: null,
@@ -327,12 +389,27 @@ export async function processAsaasWebhookPayload(
         const mappedStatus = mapAsaasPaymentStatus(paymentObj.status);
         const paymentDateStr = paymentObj.paymentDate || paymentObj.clientPaymentDate || null;
 
+        // Imutabilidade de asaasSubscriptionId no pagamento
+        const existingPayment = await prisma.asaasBillingPayment.findUnique({
+          where: { asaasPaymentId: paymentObj.id },
+          select: { asaasSubscriptionId: true },
+        });
+
+        const incomingSubId = paymentObj.subscription?.trim();
+        if (existingPayment?.asaasSubscriptionId) {
+          if (incomingSubId && incomingSubId !== existingPayment.asaasSubscriptionId) {
+            throw new Error("PAYMENT_SUBSCRIPTION_MISMATCH");
+          }
+        }
+
+        const subIdToPersist = incomingSubId || existingPayment?.asaasSubscriptionId || null;
+
         await prisma.asaasBillingPayment.upsert({
           where: { asaasPaymentId: paymentObj.id },
           create: {
             barbershopId,
             asaasPaymentId: paymentObj.id,
-            asaasSubscriptionId: paymentObj.subscription || null,
+            asaasSubscriptionId: subIdToPersist,
             asaasCustomerId: paymentObj.customer || null,
             status: mappedStatus,
             billingType: paymentObj.billingType || null,
@@ -347,6 +424,7 @@ export async function processAsaasWebhookPayload(
           },
           update: {
             status: mappedStatus,
+            asaasSubscriptionId: subIdToPersist || undefined,
             billingType: paymentObj.billingType || undefined,
             value: paymentObj.value ?? undefined,
             netValue: paymentObj.netValue ?? undefined,
@@ -359,9 +437,10 @@ export async function processAsaasWebhookPayload(
           },
         });
 
-        if (paymentObj.subscription) {
+        const effectiveSubId = subIdToPersist || paymentObj.subscription;
+        if (effectiveSubId) {
           const subRecord = await prisma.asaasBillingSubscription.findUnique({
-            where: { asaasSubscriptionId: paymentObj.subscription },
+            where: { asaasSubscriptionId: effectiveSubId },
           });
 
           if (subRecord) {

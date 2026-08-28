@@ -1,20 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { prismaMock } = vi.hoisted(() => ({
+const { prismaMock, fetchMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findUnique: vi.fn() },
     asaasBillingCustomer: { findUnique: vi.fn() },
     asaasBillingSubscription: { findUnique: vi.fn(), update: vi.fn() },
-    asaasBillingPayment: { findUnique: vi.fn(), upsert: vi.fn() },
+    asaasBillingPayment: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    plan: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+    tenantSubscription: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    $transaction: vi.fn((cb: any) => cb(prismaMock)),
   },
+  fetchMock: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
 
 import { POST as postWebhook } from "@/app/api/webhooks/asaas/billing/route";
-import { processAsaasWebhookPayload } from "@/lib/asaas/webhooks";
+import { processAsaasWebhookPayload, syncTenantSubscriptionAccessOnPayment } from "@/lib/asaas/webhooks";
 
 describe("PR #27 — Webhook Asaas Billing", () => {
   const SECRET_WEBHOOK_TOKEN = "secret_webhook_token_12345";
@@ -23,6 +27,41 @@ describe("PR #27 — Webhook Asaas Billing", () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     vi.stubEnv("ASAAS_WEBHOOK_TOKEN", SECRET_WEBHOOK_TOKEN);
+    globalThis.fetch = fetchMock;
+
+    prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.asaasBillingPayment.findUnique.mockImplementation(async ({ where }: { where: { asaasPaymentId: string } }) => ({
+      asaasPaymentId: where.asaasPaymentId,
+      asaasSubscriptionId: "sub_asaas_1",
+      barbershopId: "shop-1",
+    }));
+    prismaMock.asaasBillingSubscription.findUnique.mockImplementation(async ({ where }: { where: { asaasSubscriptionId: string } }) => {
+      if (where.asaasSubscriptionId === "sub_asaas_default" || where.asaasSubscriptionId === "sub_asaas_1") {
+        return {
+          id: "sub-db-1",
+          barbershopId: "shop-1",
+          asaasSubscriptionId: where.asaasSubscriptionId,
+          planCode: "pro_monthly",
+          planName: "Plano Tem Barber",
+          value: 49.9,
+          status: "ACTIVE",
+        };
+      }
+      return null;
+    });
+    prismaMock.plan.findUnique.mockImplementation(async ({ where }: { where: { code: string } }) => {
+      if (where.code === "pro_monthly") {
+        return {
+          id: "plan-pro-id",
+          code: "pro_monthly",
+          name: "Plano Tem Barber",
+          price: 49.9,
+          period: "MONTHLY",
+          isActive: true,
+        };
+      }
+      return null;
+    });
   });
 
   afterEach(() => {
@@ -304,11 +343,11 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-db-2" });
       prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
         id: "sub-db-1",
-        status: "OVERDUE",
-        billingType: "PIX",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_asaas_1",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
       });
-      prismaMock.asaasBillingSubscription.update.mockResolvedValue({ id: "sub-db-1" });
-      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-2" });
 
       const req = makeWebhookRequest({
         id: "evt_rec_1",
@@ -349,12 +388,19 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-3" });
       prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-db-3" });
       prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-3" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-1",
+        barbershopId: "shop-1",
+        planId: "plan-pro-id",
+        status: "ACTIVE",
+      });
 
       const req = makeWebhookRequest({
         id: "evt_conf_1",
         event: "PAYMENT_CONFIRMED",
         payment: {
           id: "pay_conf_300",
+          subscription: "sub_asaas_1",
           status: "CONFIRMED",
           externalReference: "tb_barbershop_shop-1",
         },
@@ -373,6 +419,9 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-db-4" });
       prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
         id: "sub-db-1",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_asaas_1",
+        planCode: "pro_monthly",
         status: "ACTIVE",
       });
       prismaMock.asaasBillingSubscription.update.mockResolvedValue({ id: "sub-db-1" });
@@ -528,7 +577,558 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       });
 
       expect(result.ok).toBe(true);
-      // Nenhuma tabela de comanda, comissão ou fila foi importada ou mutada
+    });
+  });
+
+  // =============================================
+  // 9. D2B WEBHOOK PLAN-CODE RESOLUTION & FAIL-SAFE ENTITLEMENT
+  // =============================================
+  describe("9. D2B Webhook Plan-Code Resolution & Fail-Safe Entitlement", () => {
+    it("1. pro_monthly payment resolves exact AsaasBillingSubscription and uses findUnique on plan.code", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_100",
+        asaasSubscriptionId: "sub_pro_100",
+        barbershopId: "shop-100",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-pro",
+        barbershopId: "shop-100",
+        asaasSubscriptionId: "sub_pro_100",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+      });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-pro-id",
+        code: "pro_monthly",
+        name: "Plano Tem Barber",
+        price: 49.9,
+        period: "MONTHLY",
+        isActive: true,
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-100",
+        barbershopId: "shop-100",
+        planId: "plan-pro-id",
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-100", {
+        id: "pay_100",
+        subscription: "sub_pro_100",
+        value: 49.9,
+        dueDate: "2026-08-01",
+      });
+
+      expect(prismaMock.plan.findUnique).toHaveBeenCalledWith({ where: { code: "pro_monthly" } });
+      expect(prismaMock.plan.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ts-100" },
+          data: expect.objectContaining({
+            status: "ACTIVE",
+            planName: "Plano Tem Barber",
+            monthlyPrice: 49.9,
+          }),
+        })
+      );
+    });
+
+    it("2 & 3. Plan lookup uses findUnique and second active plan (founder_2026) does NOT interfere", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_101",
+        asaasSubscriptionId: "sub_pro_101",
+        barbershopId: "shop-101",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-pro",
+        barbershopId: "shop-101",
+        asaasSubscriptionId: "sub_pro_101",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+      });
+      prismaMock.plan.findUnique.mockImplementation(async ({ where }: { where: { code: string } }) => {
+        if (where.code === "pro_monthly") {
+          return { id: "plan-pro-id", code: "pro_monthly", name: "Plano Tem Barber", price: 49.9, period: "MONTHLY", isActive: true };
+        }
+        if (where.code === "founder_2026") {
+          return { id: "plan-founder-id", code: "founder_2026", name: "Plano Founder 2026", price: 39.9, period: "MONTHLY", isActive: true };
+        }
+        return null;
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-101",
+        barbershopId: "shop-101",
+        planId: "plan-pro-id",
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-101", {
+        id: "pay_101",
+        subscription: "sub_pro_101",
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            planName: "Plano Tem Barber",
+          }),
+        })
+      );
+    });
+
+    it("4 & 16. Inactive historical Plan (isActive = false) resolves successfully for existing contract", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_102",
+        asaasSubscriptionId: "sub_hist_102",
+        barbershopId: "shop-102",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-historical",
+        barbershopId: "shop-102",
+        asaasSubscriptionId: "sub_hist_102",
+        planCode: "founder_2026",
+        planName: "Plano Founder 2026",
+        value: 39.9,
+      });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-founder-id",
+        code: "founder_2026",
+        name: "Plano Founder 2026",
+        price: 39.9,
+        period: "MONTHLY",
+        isActive: false, // INATIVO para novas vendas, mas válido para contrato legado!
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-102",
+        barbershopId: "shop-102",
+        planId: "plan-founder-id",
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-102", {
+        id: "pay_102",
+        subscription: "sub_hist_102",
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ts-102" },
+          data: expect.objectContaining({
+            status: "ACTIVE",
+            planName: "Plano Founder 2026",
+            monthlyPrice: 39.9,
+          }),
+        })
+      );
+    });
+
+    it("5. Payment missing subscription ID throws PAYMENT_MISSING_SUBSCRIPTION_ID without access mutation", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_no_sub",
+        asaasSubscriptionId: null,
+        barbershopId: "shop-103",
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-103", {
+          id: "pay_no_sub",
+        })
+      ).rejects.toThrow("PAYMENT_MISSING_SUBSCRIPTION_ID");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("6. Missing AsaasBillingSubscription in DB throws ASAAS_BILLING_SUBSCRIPTION_NOT_FOUND", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_104",
+        asaasSubscriptionId: "sub_missing",
+        barbershopId: "shop-104",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue(null);
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-104", {
+          id: "pay_104",
+          subscription: "sub_missing",
+        })
+      ).rejects.toThrow("ASAAS_BILLING_SUBSCRIPTION_NOT_FOUND");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("7. Barbershop ID mismatch between billing subscription and payment throws BARBERSHOP_SUBSCRIPTION_MISMATCH", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_105",
+        asaasSubscriptionId: "sub_105",
+        barbershopId: "shop-105",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-other",
+        barbershopId: "shop-OTHER",
+        asaasSubscriptionId: "sub_105",
+        planCode: "pro_monthly",
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-105", {
+          id: "pay_105",
+          subscription: "sub_105",
+        })
+      ).rejects.toThrow("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("8. Blank planCode in billing subscription throws ASAAS_PLAN_CODE_MISSING", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_106",
+        asaasSubscriptionId: "sub_106",
+        barbershopId: "shop-106",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-blank",
+        barbershopId: "shop-106",
+        asaasSubscriptionId: "sub_106",
+        planCode: "   ",
+        planName: "Plano Tem Barber",
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-106", {
+          id: "pay_106",
+          subscription: "sub_106",
+        })
+      ).rejects.toThrow("ASAAS_PLAN_CODE_MISSING");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("9. Unknown planCode throws PLAN_CODE_NOT_FOUND", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_107",
+        asaasSubscriptionId: "sub_107",
+        barbershopId: "shop-107",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-unknown",
+        barbershopId: "shop-107",
+        asaasSubscriptionId: "sub_107",
+        planCode: "unknown_code",
+      });
+      prismaMock.plan.findUnique.mockResolvedValue(null);
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-107", {
+          id: "pay_107",
+          subscription: "sub_107",
+        })
+      ).rejects.toThrow("PLAN_CODE_NOT_FOUND");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("10 & 11. Existing TenantSubscription with DIFFERENT plan code throws TENANT_PLAN_CODE_MISMATCH without updating or switching plans", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_108",
+        asaasSubscriptionId: "sub_108",
+        barbershopId: "shop-108",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-pro",
+        barbershopId: "shop-108",
+        asaasSubscriptionId: "sub_108",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+      });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-pro-id",
+        code: "pro_monthly",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-108",
+        barbershopId: "shop-108",
+        planId: "plan-different-id", // ID de plano diferente!
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-108", {
+          id: "pay_108",
+          subscription: "sub_108",
+        })
+      ).rejects.toThrow("TENANT_PLAN_CODE_MISMATCH");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("12, 13 & 14. New TenantSubscription receives correct planId, planName and monthlyPrice from AsaasBillingSubscription contract", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_109",
+        asaasSubscriptionId: "sub_109",
+        barbershopId: "shop-109",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-new",
+        barbershopId: "shop-109",
+        asaasSubscriptionId: "sub_109",
+        planCode: "pro_monthly",
+        planName: "Plano Contratado Asaas",
+        value: 49.9,
+      });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-pro-id",
+        code: "pro_monthly",
+        name: "Plano no Banco",
+        price: 99.0, // Preço no banco difere do valor contratual Asaas
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue(null);
+
+      await syncTenantSubscriptionAccessOnPayment("shop-109", {
+        id: "pay_109",
+        subscription: "sub_109",
+      });
+
+      expect(prismaMock.tenantSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          barbershopId: "shop-109",
+          planId: "plan-pro-id",
+          status: "ACTIVE",
+          planName: "Plano Contratado Asaas",
+          monthlyPrice: 49.9,
+        }),
+      });
+    });
+
+    it("15. payment.value differing from subscription.value (due to interest/fine/discount) does NOT alter TenantSubscription.monthlyPrice", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_110",
+        asaasSubscriptionId: "sub_110",
+        barbershopId: "shop-110",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-discount",
+        barbershopId: "shop-110",
+        asaasSubscriptionId: "sub_110",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9, // Valor mensalidade recorrente contratado
+      });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-pro-id",
+        code: "pro_monthly",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-110",
+        barbershopId: "shop-110",
+        planId: "plan-pro-id",
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-110", {
+        id: "pay_110",
+        subscription: "sub_110",
+        value: 54.9, // Pagamento com juros/multa
+      });
+
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            monthlyPrice: 49.9, // Deve se manter o valor contratual 49.90, NÃO 54.90!
+          }),
+        })
+      );
+    });
+
+    it("17. Idempotency: accessAppliedAt already set (updateMany count === 0) performs NO access mutation", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-111", {
+        id: "pay_already_applied",
+        subscription: "sub_111",
+      });
+
+      expect(prismaMock.asaasBillingSubscription.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("18. Failed identity validation rolls back accessAppliedAt claim in transaction and does not persist access", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_failed_claim",
+        asaasSubscriptionId: "sub_missing",
+        barbershopId: "shop-112",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue(null);
+
+      let txExecuted = false;
+      prismaMock.$transaction.mockImplementationOnce(async (cb: any) => {
+        txExecuted = true;
+        return cb(prismaMock);
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-112", {
+          id: "pay_failed_claim",
+          subscription: "sub_missing",
+        })
+      ).rejects.toThrow("ASAAS_BILLING_SUBSCRIPTION_NOT_FOUND");
+
+      expect(txExecuted).toBe(true);
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("19 & 20. Zero runtime plan.create calls and ZERO remote Asaas fetch calls during webhook processing", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
+      prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-1" });
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-clean" });
+      prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-clean" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-clean" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-1",
+        barbershopId: "shop-1",
+        planId: "plan-pro-id",
+      });
+
+      const req = makeWebhookRequest({
+        id: "evt_clean_1",
+        event: "PAYMENT_RECEIVED",
+        payment: {
+          id: "pay_clean_1",
+          subscription: "sub_asaas_default",
+          status: "RECEIVED",
+          externalReference: "tb_barbershop_shop-1",
+        },
+      });
+
+      const res = await postWebhook(req);
+      expect(res.status).toBe(200);
+
+      expect(prismaMock.plan.create).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("21. AsaasBillingPayment update persists a newly supplied payment.subscription into asaasSubscriptionId", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValueOnce(null);
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
+      prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-1" });
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-pers" });
+      prismaMock.asaasBillingPayment.upsert.mockResolvedValue({ id: "pay-pers" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-pers" });
+
+      const req = makeWebhookRequest({
+        id: "evt_pers_1",
+        event: "PAYMENT_RECEIVED",
+        payment: {
+          id: "pay_pers_1",
+          subscription: "sub_newly_supplied",
+          status: "RECEIVED",
+          externalReference: "tb_barbershop_shop-1",
+        },
+      });
+
+      await postWebhook(req);
+
+      expect(prismaMock.asaasBillingPayment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            asaasSubscriptionId: "sub_newly_supplied",
+          }),
+        })
+      );
+    });
+
+    it("22. Fallback to persisted AsaasBillingPayment.asaasSubscriptionId works when sync input lacks raw subscription ID", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_persisted_id",
+        asaasSubscriptionId: "sub_from_db_record",
+        barbershopId: "shop-113",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-persisted-db",
+        barbershopId: "shop-113",
+        asaasSubscriptionId: "sub_from_db_record",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        id: "ts-113",
+        barbershopId: "shop-113",
+        planId: "plan-pro-id",
+      });
+
+      await syncTenantSubscriptionAccessOnPayment("shop-113", {
+        id: "pay_persisted_id",
+        // Sem a propriedade `subscription` explícita
+      });
+
+      expect(prismaMock.asaasBillingSubscription.findUnique).toHaveBeenCalledWith({
+        where: { asaasSubscriptionId: "sub_from_db_record" },
+      });
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ts-113" },
+        })
+      );
+    });
+
+    it("23. CASE D: existing payment sub_A + incoming sub_B throws PAYMENT_SUBSCRIPTION_MISMATCH and sets FAILED without TenantSubscription mutation", async () => {
+      prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
+      prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-1" });
+      prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-mismatch" });
+      prismaMock.asaasWebhookEvent.update.mockResolvedValue({ id: "wh-mismatch" });
+
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasSubscriptionId: "sub_A",
+      });
+
+      const req = makeWebhookRequest({
+        id: "evt_mismatch_1",
+        event: "PAYMENT_RECEIVED",
+        payment: {
+          id: "pay_conflicting_sub",
+          subscription: "sub_B",
+          status: "RECEIVED",
+          externalReference: "tb_barbershop_shop-1",
+        },
+      });
+
+      const res = await postWebhook(req);
+      expect(res.status).toBe(200);
+
+      expect(prismaMock.asaasWebhookEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "wh-mismatch" },
+          data: expect.objectContaining({
+            processingStatus: "FAILED",
+            processingError: "PAYMENT_SUBSCRIPTION_MISMATCH",
+          }),
+        })
+      );
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it("24. CASE E: raw candidate fields conflict (subscription sub_A vs asaasSubscriptionId sub_B) throws PAYMENT_SUBSCRIPTION_MISMATCH inside sync", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_raw_conflict",
+        asaasSubscriptionId: "sub_A",
+        barbershopId: "shop-114",
+      });
+
+      await expect(
+        syncTenantSubscriptionAccessOnPayment("shop-114", {
+          id: "pay_raw_conflict",
+          subscription: "sub_A",
+          asaasSubscriptionId: "sub_B",
+        })
+      ).rejects.toThrow("PAYMENT_SUBSCRIPTION_MISMATCH");
+
+      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
     });
   });
 });

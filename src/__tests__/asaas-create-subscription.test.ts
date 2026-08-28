@@ -5,8 +5,8 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopBillingProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
-    asaasBillingPayment: { findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
+    asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+    asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     plan: { findUnique: vi.fn(), findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
@@ -67,7 +67,26 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       return null;
     });
     prismaMock.plan.findFirst.mockImplementation(prismaMock.plan.findUnique as any);
-    prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
+    prismaMock.asaasBillingPayment.findUnique.mockImplementation(async ({ where }: { where: { asaasPaymentId: string } }) => ({
+      asaasPaymentId: where.asaasPaymentId,
+      asaasSubscriptionId: "sub_123",
+      barbershopId: "shop-1",
+    }));
+    prismaMock.asaasBillingSubscription.findUnique.mockImplementation(async ({ where }: { where: { asaasSubscriptionId: string } }) => ({
+      id: "sub-db-1",
+      barbershopId: "shop-1",
+      asaasSubscriptionId: where?.asaasSubscriptionId || "sub_123",
+      planCode: "pro_monthly",
+      planName: "Plano Tem Barber",
+      value: 49.9,
+      status: "ACTIVE",
+    }));
+    prismaMock.tenantSubscription.findUnique.mockImplementation(async ({ where }: { where?: { barbershopId?: string } }) => ({
+      id: "sub-t1",
+      barbershopId: where?.barbershopId || "shop-1",
+      planId: "plan-db-1",
+      status: "ACTIVE",
+    }));
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.tenantSubscription.update.mockResolvedValue({});
@@ -1088,10 +1107,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("syncTenantSubscriptionAccessOnPayment ativa TenantSubscription de forma idempotente", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Bronze" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly", name: "Plano Bronze" });
       prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-tenant-1",
         barbershopId: "shop-1",
+        planId: "plan-db-1",
         lastAccessPaymentId: null,
       });
 
@@ -1409,10 +1429,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("Task 4.1: PAYMENT_RECEIVED pay_123 com updateMany (count=1) concede acesso atômico", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly", name: "Plano Tem Barber" });
       prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
+        planId: "plan-db-1",
         lastAccessPaymentId: null,
       });
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
@@ -1464,10 +1485,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("Task 4.3: Dois processamentos simultâneos de pay_123 resultam em apenas 1 extensão", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly", name: "Plano Tem Barber" });
       prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
+        planId: "plan-db-1",
       });
 
       // Worker 1 consegue a trava (count = 1), Worker 2 não consegue (count = 0)
@@ -1504,10 +1526,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("Task 4.5: pay_456 no mês seguinte com updateMany count=1 concede nova extensão", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly", name: "Plano Tem Barber" });
       prismaMock.tenantSubscription.findUnique.mockResolvedValue({
         id: "sub-t1",
         barbershopId: "shop-1",
+        planId: "plan-db-1",
       });
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
       prismaMock.tenantSubscription.update.mockClear();
@@ -1545,8 +1568,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
     it("Task 4.7: Falha ao atualizar TenantSubscription faz $transaction abortar", async () => {
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1" });
-      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1", planId: "plan-db-1" });
+      prismaMock.tenantSubscription.update.mockRejectedValue(new Error("DB_LOCK_ERROR"));
       prismaMock.tenantSubscription.update.mockRejectedValue(new Error("DB_LOCK_ERROR"));
 
       await expect(
@@ -1585,8 +1609,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("Task 4.10: Vencimento em 31/01 é tratado corretamente para 28/02", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({ id: "plan-1", name: "Plano Tem Barber" });
-      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1" });
+      prismaMock.plan.findUnique.mockResolvedValue({ id: "plan-db-1", code: "pro_monthly", name: "Plano Tem Barber" });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({ id: "sub-t1", barbershopId: "shop-1", planId: "plan-db-1" });
       prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
 
       await syncTenantSubscriptionAccessOnPayment("shop-1", {
