@@ -23,7 +23,7 @@ export class PlanResolutionError extends Error {
 
 /**
  * Resolve um plano no banco de dados exclusivamente pelo seu código único.
- * NÃO filtra por `isActive`. Adequado para auditoria e histórico de identidade.
+ * Usa findUnique. NÃO filtra por `isActive`. Adequado para auditoria e histórico de identidade.
  */
 export async function getPlanByCode(
   db: PrismaOrTransactionClient,
@@ -32,7 +32,7 @@ export async function getPlanByCode(
   if (!code || typeof code !== "string") {
     return null;
   }
-  return await db.plan.findFirst({
+  return await db.plan.findUnique({
     where: { code },
   });
 }
@@ -63,15 +63,22 @@ export async function getActivePlanByCode(
 
 /**
  * Valida a consistência comercial entre o plano no banco e o catálogo em código.
- * - Identidade (`code`): obrigatório coincidir.
+ * - Identidade (`code`): lança `PLAN_CATALOG_DB_MISMATCH` se divergente.
  * - Preço (`value`/`price`): lança `PLAN_CATALOG_DB_MISMATCH` se divergente.
  * - Ciclo (`cycle`/`period`): lança `PLAN_CATALOG_DB_MISMATCH` se divergente.
  * - Nome (`name`): gera warning em log em caso de divergência de display, mas NÃO falha a operação.
  */
 export function assertCommercialConsistency(
   catalogPlan: BillingPlan,
-  dbPlan: { name: string; price: number | { toNumber(): number }; period: string }
+  dbPlan: { code?: string | null; name: string; price: number | { toNumber(): number }; period: string }
 ): void {
+  if (dbPlan.code !== catalogPlan.code) {
+    throw new PlanResolutionError(
+      "PLAN_CATALOG_DB_MISMATCH",
+      `Código do plano no banco ("${dbPlan.code ?? "NULL"}") difere do código no catálogo ("${catalogPlan.code}").`
+    );
+  }
+
   const dbPrice = typeof dbPlan.price === "number" ? dbPlan.price : Number(dbPlan.price);
   if (Math.abs(dbPrice - catalogPlan.value) > 0.001) {
     throw new PlanResolutionError(

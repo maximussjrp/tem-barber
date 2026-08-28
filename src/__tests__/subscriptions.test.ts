@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mocks
 const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
   prismaMock: {
-    plan: { findFirst: vi.fn(), create: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    plan: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
+    $transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock)),
   },
   getServerSessionMock: vi.fn(),
   redirectMock: vi.fn(),
@@ -29,6 +30,9 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     vi.clearAllMocks();
     process.env.PLATFORM_ADMIN_EMAILS = "max.guarinieri@gmail.com";
     prismaMock.barbershop.findFirst = prismaMock.barbershop.findUnique;
+    prismaMock.tenantSubscription.findUnique.mockImplementation(async (args?: any) =>
+      prismaMock.tenantSubscription.findFirst(args)
+    );
     prismaMock.barbershopMember.findMany.mockImplementation(async () => {
       const member = await prismaMock.barbershopMember.findFirst();
       return member ? [member] : [];
@@ -261,7 +265,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     expect(body.subscription.updatedBy).toBe("max.guarinieri@gmail.com");
   });
 
-  // 15. D2A createTrialSubscriptionInTransaction resolves pro_monthly by code
+  // 15. D2A createTrialSubscriptionInTransaction resolves pro_monthly by code using findUnique
   it("createTrialSubscriptionInTransaction resolves pro_monthly by code and creates trial", async () => {
     const { createTrialSubscriptionInTransaction } = await import("@/lib/subscription-utils");
 
@@ -275,10 +279,11 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
           status: "TRIAL",
           planName: "Plano Tem Barber",
           monthlyPrice: 49.9,
+          updatedBy: "admin@example.com",
         }),
       },
       plan: {
-        findFirst: vi.fn().mockImplementation(async ({ where }: { where: { code: string } }) => {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { code: string } }) => {
           if (where.code === "pro_monthly") {
             return {
               id: "plan-pro-id",
@@ -294,8 +299,9 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       },
     };
 
-    const sub = await createTrialSubscriptionInTransaction(mockTx as any, "shop-100");
+    const sub = await createTrialSubscriptionInTransaction(mockTx as any, "shop-100", "admin@example.com");
     expect(sub.planId).toBe("plan-pro-id");
+    expect(mockTx.plan.findUnique).toHaveBeenCalledWith({ where: { code: "pro_monthly" } });
     expect(mockTx.tenantSubscription.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
@@ -304,6 +310,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
           status: "TRIAL",
           planName: "Plano Tem Barber",
           monthlyPrice: 49.9,
+          updatedBy: "admin@example.com",
         }),
       })
     );
@@ -320,7 +327,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
         create: vi.fn(),
       },
       plan: {
-        findFirst: vi.fn().mockResolvedValue(null),
+        findUnique: vi.fn().mockResolvedValue(null),
         create: vi.fn(),
       },
     };
@@ -329,5 +336,40 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       PlanResolutionError
     );
     expect(mockTx.plan.create).not.toHaveBeenCalled();
+  });
+
+  // 17. D2A createTrialSubscription wrapper delegates to transaction and preserves updatedByEmail
+  it("createTrialSubscription wrapper delegates to central transaction resolver and preserves updatedByEmail", async () => {
+    const { createTrialSubscription } = await import("@/lib/subscription-utils");
+
+    prismaMock.plan.findUnique = vi.fn().mockResolvedValue({
+      id: "plan-pro-id",
+      code: "pro_monthly",
+      name: "Plano Tem Barber",
+      price: 49.9,
+      period: "MONTHLY",
+      isActive: true,
+    });
+    prismaMock.tenantSubscription.upsert = vi.fn().mockResolvedValue({
+      id: "sub-legacy-1",
+      barbershopId: "shop-300",
+      planId: "plan-pro-id",
+      status: "TRIAL",
+      updatedBy: "admin@barber.com",
+    });
+
+    const sub = await createTrialSubscription("shop-300", "admin@barber.com");
+    expect(sub.id).toBe("sub-legacy-1");
+    expect(prismaMock.plan.create).not.toHaveBeenCalled();
+    expect(prismaMock.tenantSubscription.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          barbershopId: "shop-300",
+          planId: "plan-pro-id",
+          status: "TRIAL",
+          updatedBy: "admin@barber.com",
+        }),
+      })
+    );
   });
 });

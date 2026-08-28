@@ -8,7 +8,7 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
     asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-    plan: { findFirst: vi.fn() },
+    plan: { findUnique: vi.fn(), findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
     $transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock)),
@@ -53,7 +53,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     vi.stubEnv("ASAAS_API_KEY", "test_api_key_secret");
     vi.stubEnv("ASAAS_ENV", "sandbox");
     globalThis.fetch = fetchMock;
-    prismaMock.plan.findFirst.mockImplementation(async ({ where }: { where?: { code?: string } }) => {
+    prismaMock.plan.findUnique.mockImplementation(async ({ where }: { where?: { code?: string } }) => {
       if (!where?.code || where.code === "pro_monthly") {
         return {
           id: "plan-db-1",
@@ -66,6 +66,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       }
       return null;
     });
+    prismaMock.plan.findFirst.mockImplementation(prismaMock.plan.findUnique as any);
     prismaMock.barbershopBillingProfile.findUnique.mockResolvedValue(BILLING_PROFILE);
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
@@ -521,7 +522,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se o plano estiver ausente no banco de dados local", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue(null);
+      prismaMock.plan.findUnique.mockResolvedValue(null);
 
       await expect(
         createAsaasSubscriptionForBarbershop({
@@ -535,7 +536,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se o plano estiver inativo no banco de dados local", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({
+      prismaMock.plan.findUnique.mockResolvedValue({
         id: "plan-db-1",
         code: "pro_monthly",
         name: "Plano Tem Barber",
@@ -555,8 +556,50 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se houver divergência de código no banco em relação ao catálogo", async () => {
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-db-1",
+        code: "founder_2026",
+        name: "Plano Tem Barber",
+        price: 49.9,
+        period: "MONTHLY",
+        isActive: true,
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se o plano no banco estiver com código NULL", async () => {
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan-db-1",
+        code: null,
+        name: "Plano Tem Barber",
+        price: 49.9,
+        period: "MONTHLY",
+        isActive: true,
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toThrow(SubscriptionValidationError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se houver divergência de preço no banco em relação ao catálogo", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({
+      prismaMock.plan.findUnique.mockResolvedValue({
         id: "plan-db-1",
         code: "pro_monthly",
         name: "Plano Tem Barber",
@@ -577,7 +620,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
     });
 
     it("NÃO chama NENHUMA API remota do Asaas (0 chamadas) se houver divergência de período no banco em relação ao catálogo", async () => {
-      prismaMock.plan.findFirst.mockResolvedValue({
+      prismaMock.plan.findUnique.mockResolvedValue({
         id: "plan-db-1",
         code: "pro_monthly",
         name: "Plano Tem Barber",

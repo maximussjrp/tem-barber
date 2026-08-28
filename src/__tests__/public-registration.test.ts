@@ -11,7 +11,7 @@ const { prismaMock } = vi.hoisted(() => ({
     service: { create: vi.fn() },
     barberService: { create: vi.fn() },
     workingHour: { create: vi.fn() },
-    plan: { findFirst: vi.fn(), findMany: vi.fn() },
+    plan: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     tenantSubscription: { upsert: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -43,7 +43,7 @@ describe("cadastro publico de barbearia", () => {
     resetRateLimitStore();
     prismaMock.user.findFirst.mockResolvedValue(null);
     prismaMock.barbershop.findUnique.mockResolvedValue(null);
-    prismaMock.plan.findFirst.mockResolvedValue({
+    prismaMock.plan.findUnique.mockResolvedValue({
       id: "plan-pro",
       code: "pro_monthly",
       name: "Plano Tem Barber",

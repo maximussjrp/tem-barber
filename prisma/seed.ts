@@ -25,7 +25,7 @@ async function main() {
   ];
 
   for (const planData of plans) {
-    const existingPlan = await prisma.plan.findFirst({
+    const existingPlan = await prisma.plan.findUnique({
       where: { code: planData.code },
     });
 
