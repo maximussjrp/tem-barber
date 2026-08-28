@@ -68,6 +68,7 @@ async function seedTenant(label: string) {
   if (!plan) {
     plan = await prisma.plan.create({
       data: {
+        code: `test_plan_booking_${Date.now()}`,
         name: "Plano Tem Barber",
         price: 49.90,
         maxMembers: 20,

@@ -26,6 +26,7 @@ export async function createActiveTenantSubscription(
   const now = options.now ?? new Date();
   const plan = await prisma.plan.create({
     data: {
+      code: `test_plan_${barbershopId}_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       name: `Plano Teste ${options.label ?? barbershopId}`,
       price: "49.90",
       maxMembers: 20,

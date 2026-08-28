@@ -83,6 +83,7 @@ describe("Customer Blocklist Integration", () => {
 
     const plan = await prisma.plan.create({
       data: {
+        code: `test_plan_blocklist_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
         name: `Plano Teste ${Date.now()}`,
         price: 99.0,
         maxMembers: 10,

@@ -77,6 +77,7 @@ async function truncateDatabase() {
 async function seedTenant(label: string) {
   const plan = await prisma.plan.create({
     data: {
+      code: `test_plan_p0_${label}_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       name: `Plano P0 ${label}`,
       price: "49.90",
       maxMembers: 10,

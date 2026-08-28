@@ -70,12 +70,12 @@ export async function getActivePlanByCode(
  */
 export function assertCommercialConsistency(
   catalogPlan: BillingPlan,
-  dbPlan: { code?: string | null; name: string; price: number | { toNumber(): number }; period: string }
+  dbPlan: { code: string; name: string; price: number | { toNumber(): number }; period: string }
 ): void {
   if (dbPlan.code !== catalogPlan.code) {
     throw new PlanResolutionError(
       "PLAN_CATALOG_DB_MISMATCH",
-      `Código do plano no banco ("${dbPlan.code ?? "NULL"}") difere do código no catálogo ("${catalogPlan.code}").`
+      `Código do plano no banco ("${dbPlan.code}") difere do código no catálogo ("${catalogPlan.code}").`
     );
   }
 

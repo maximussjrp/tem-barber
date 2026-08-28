@@ -125,11 +125,11 @@ describe("Plan Code Resolution & Commercial Consistency (D2A)", () => {
     }
   });
 
-  it("assertCommercialConsistency throws PLAN_CATALOG_DB_MISMATCH when dbPlan.code is null", () => {
-    const nullCodeDbPlan = { ...mockDbPlanActive, code: null };
+  it("assertCommercialConsistency throws PLAN_CATALOG_DB_MISMATCH when dbPlan.code differs from catalogPlan.code", () => {
+    const wrongCodeDbPlan = { ...mockDbPlanActive, code: "different_code" };
 
     try {
-      assertCommercialConsistency(catalogPlan, nullCodeDbPlan);
+      assertCommercialConsistency(catalogPlan, wrongCodeDbPlan);
       expect.fail("Should have thrown");
     } catch (err: any) {
       expect(err).toBeInstanceOf(PlanResolutionError);

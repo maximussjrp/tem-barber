@@ -75,6 +75,7 @@ async function seedTenant(label: string) {
 
   const plan = await prisma.plan.create({
     data: {
+      code: `test_plan_refund_${label}_${suffix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       name: `Plano Refund ${label}-${suffix}`,
       price: "49.90",
       maxMembers: 10,

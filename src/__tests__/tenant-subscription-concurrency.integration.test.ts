@@ -19,7 +19,7 @@ describeIf("TenantSubscription real PostgreSQL concurrency", () => {
   beforeAll(async () => {
     prisma = (await import("@/lib/prisma")).default as PrismaClient;
     const plan = await prisma.plan.create({
-      data: { name: "Plano Tem Barber", price: "49.90", period: "MONTHLY", maxMembers: 20, isActive: true },
+      data: { code: `test_plan_tenant_conc_${Date.now()}`, name: "Plano Tem Barber", price: "49.90", period: "MONTHLY", maxMembers: 20, isActive: true },
     });
     planId = plan.id;
     const shop = await prisma.barbershop.create({
