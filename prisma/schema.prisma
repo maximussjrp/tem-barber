@@ -475,6 +475,7 @@ enum PlanPeriod {
 
 model Plan {
   id          String     @id @default(uuid())
+  code        String?    @unique
   name        String // Ex: "Bronze", "Prata", "Ouro"
   description String?
   price       Decimal    @db.Decimal(10, 2)
