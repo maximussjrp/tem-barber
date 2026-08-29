@@ -107,53 +107,23 @@ export const authOptions: NextAuthOptions = {
           }
 
           // Validar senha
-        }
-
-        // 2. FLUXO ADMINISTRATIVO (Barbearia / Profissional - Email ou CPF + Senha)
-        if (loginType === "admin") {
-          if (!email || !password) {
-            throw new Error("E-mail/CPF e senha são obrigatórios.");
-          }
-
-          // Tratar se digitou CPF ou e-mail
-          const isCpf = /^[0-9.-]+$/.test(email) && email.replace(/\D/g, "").length === 11;
-          const cleanIdentifier = isCpf ? email.replace(/\D/g, "") : email.trim().toLowerCase();
-
-          // Buscar usuário pelo E-mail ou CPF
-          const user = await prisma.user.findFirst({
-            where: {
-              OR: [
-                { email: cleanIdentifier },
-                { cpf: cleanIdentifier },
-              ],
-            },
-          });
-
-          if (!user) {
-            throw new Error("Usuário não cadastrado.");
-          }
-
-          // Se for cliente comum tentando entrar como admin ou não tiver senha cadastrada
-          if (!user.passwordHash) {
-            throw new Error("Este usuário não possui senha configurada. Acesse como cliente.");
-          }
-
-          // Validar senha
           const isValidPassword = await bcrypt.compare(password, user.passwordHash);
 
           if (!isValidPassword) {
             throw new Error("Senha incorreta.");
           }
 
+          // Classificar se é administrador da plataforma
+          const isPlatform = isPlatformAdmin(user.email) || user.role === "SUPER_ADMIN";
+
           // Buscar o cargo operacional do usuário na barbearia
           const membershipResolution = await resolveSingleActiveMembership(user.id);
 
-          if (membershipResolution.status === "MULTIPLE") {
+          if (membershipResolution.status === "MULTIPLE" && !isPlatform) {
             throw new Error("TENANT_SELECTION_REQUIRED");
           }
 
-          const member = membershipResolution.membership;
-          const isPlatform = isPlatformAdmin(user.email) || user.role === "SUPER_ADMIN";
+          const member = membershipResolution.status === "SINGLE" ? membershipResolution.membership : null;
 
           if (!member && !isPlatform) {
             throw new Error("Acesso administrativo negado. Você não possui cargos vinculados.");

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 
-const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
+const { prismaMock, getServerSessionMock, redirectMock, compareMock } = vi.hoisted(() => ({
   prismaMock: {
     user: { findFirst: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
@@ -11,14 +11,25 @@ const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
   },
   getServerSessionMock: vi.fn(),
   redirectMock: vi.fn(),
+  compareMock: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
 vi.mock("next-auth", () => ({ getServerSession: getServerSessionMock }));
 vi.mock("next/navigation", () => ({ redirect: redirectMock, notFound: vi.fn() }));
+vi.mock("bcryptjs", () => ({
+  default: {
+    compare: compareMock,
+  },
+  compare: compareMock,
+}));
 
 import { isPlatformAdmin } from "@/lib/subscription-utils";
 import { requireAdmin } from "@/lib/admin-guard";
+import { authOptions } from "@/lib/auth";
+
+const credentialsProvider = authOptions.providers[0] as any;
+const authorize = credentialsProvider.options.authorize;
 
 describe("Super Admin & Platform Access Audit Tests", () => {
   beforeEach(() => {
@@ -188,5 +199,215 @@ describe("Super Admin & Platform Access Audit Tests", () => {
     const composeContent = fs.readFileSync(composePath, "utf-8");
 
     expect(composeContent).toContain("PLATFORM_ADMIN_EMAILS:");
+  });
+});
+
+describe("Direct CredentialsProvider authorize() Tests", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PLATFORM_ADMIN_EMAILS = "max.guarinieri@gmail.com";
+  });
+
+  // Query count regression test (1 user findFirst, 1 bcrypt compare, 1 membership findMany)
+  it("executa exatamente 1 consulta de usuário, 1 comparação bcrypt e 1 busca de membership no login de admin", async () => {
+    const user = {
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "USER",
+      passwordHash: "$2a$10$hashedpassword",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      { id: "m-dombrio", userId: "u-max", barbershopId: "dom-brio", role: "OWNER", isActive: true },
+    ]);
+
+    const result = await authorize({
+      loginType: "admin",
+      email: "max.guarinieri@gmail.com",
+      password: "secretpassword",
+    });
+
+    expect(prismaMock.user.findFirst).toHaveBeenCalledTimes(1);
+    expect(compareMock).toHaveBeenCalledTimes(1);
+    expect(prismaMock.barbershopMember.findMany).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "OWNER",
+      authLevel: "admin",
+    });
+  });
+
+  // Scenario A: allowlisted USER + 1 OWNER membership -> role OWNER
+  it("Scenario A: allowlisted USER + 1 OWNER membership -> role OWNER", async () => {
+    const user = {
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      { id: "m-1", userId: "u-max", barbershopId: "dom-brio", role: "OWNER", isActive: true },
+    ]);
+
+    const result = await authorize({
+      loginType: "admin",
+      email: "max.guarinieri@gmail.com",
+      password: "pass",
+    });
+
+    expect(result.role).toBe("OWNER");
+  });
+
+  // Scenario B: allowlisted USER + 0 membership -> role SUPER_ADMIN
+  it("Scenario B: allowlisted USER + 0 memberships -> role SUPER_ADMIN", async () => {
+    const user = {
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([]);
+
+    const result = await authorize({
+      loginType: "admin",
+      email: "max.guarinieri@gmail.com",
+      password: "pass",
+    });
+
+    expect(result.role).toBe("SUPER_ADMIN");
+  });
+
+  // Scenario C: allowlisted USER + MULTIPLE memberships -> authenticated globally, role SUPER_ADMIN, no first membership selected
+  it("Scenario C: allowlisted USER + MULTIPLE memberships -> role SUPER_ADMIN sem tenant fixado", async () => {
+    const user = {
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      { id: "m-1", userId: "u-max", barbershopId: "shop-1", role: "OWNER", isActive: true },
+      { id: "m-2", userId: "u-max", barbershopId: "shop-2", role: "MANAGER", isActive: true },
+    ]);
+
+    const result = await authorize({
+      loginType: "admin",
+      email: "max.guarinieri@gmail.com",
+      password: "pass",
+    });
+
+    expect(result.role).toBe("SUPER_ADMIN");
+  });
+
+  // Scenario D: normal USER + MULTIPLE memberships -> throws TENANT_SELECTION_REQUIRED
+  it("Scenario D: normal USER + MULTIPLE memberships -> throws TENANT_SELECTION_REQUIRED", async () => {
+    const user = {
+      id: "u-norm",
+      name: "Normal",
+      email: "normal@gmail.com",
+      phone: "11888888888",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([
+      { id: "m-1", userId: "u-norm", barbershopId: "shop-1", role: "OWNER", isActive: true },
+      { id: "m-2", userId: "u-norm", barbershopId: "shop-2", role: "MANAGER", isActive: true },
+    ]);
+
+    await expect(
+      authorize({
+        loginType: "admin",
+        email: "normal@gmail.com",
+        password: "pass",
+      })
+    ).rejects.toThrow("TENANT_SELECTION_REQUIRED");
+  });
+
+  // Scenario E: normal USER + 0 membership -> rejected
+  it("Scenario E: normal USER + 0 memberships -> throws acesso negado", async () => {
+    const user = {
+      id: "u-norm",
+      name: "Normal",
+      email: "normal@gmail.com",
+      phone: "11888888888",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([]);
+
+    await expect(
+      authorize({
+        loginType: "admin",
+        email: "normal@gmail.com",
+        password: "pass",
+      })
+    ).rejects.toThrow("Acesso administrativo negado. Você não possui cargos vinculados.");
+  });
+
+  // Scenario F: DB SUPER_ADMIN + 0 membership -> role SUPER_ADMIN
+  it("Scenario F: DB SUPER_ADMIN + 0 memberships -> role SUPER_ADMIN", async () => {
+    const user = {
+      id: "u-super",
+      name: "Super",
+      email: "dbadmin@gmail.com",
+      phone: "11777777777",
+      role: "SUPER_ADMIN",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(true);
+    prismaMock.barbershopMember.findMany.mockResolvedValue([]);
+
+    const result = await authorize({
+      loginType: "admin",
+      email: "dbadmin@gmail.com",
+      password: "pass",
+    });
+
+    expect(result.role).toBe("SUPER_ADMIN");
+  });
+
+  // Scenario G: wrong password -> rejected
+  it("Scenario G: wrong password -> throws Senha incorreta.", async () => {
+    const user = {
+      id: "u-max",
+      name: "Max",
+      email: "max.guarinieri@gmail.com",
+      phone: "11999999999",
+      role: "USER",
+      passwordHash: "hash",
+    };
+    prismaMock.user.findFirst.mockResolvedValue(user);
+    compareMock.mockResolvedValue(false);
+
+    await expect(
+      authorize({
+        loginType: "admin",
+        email: "max.guarinieri@gmail.com",
+        password: "wrongpass",
+      })
+    ).rejects.toThrow("Senha incorreta.");
   });
 });
