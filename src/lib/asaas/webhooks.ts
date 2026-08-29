@@ -6,8 +6,12 @@
 import prisma from "@/lib/prisma";
 import { getPlanByCode } from "@/lib/billing/plans-db";
 import {
+  CandidatePaymentFacts,
+  classifyPaymentFreshness,
+  extractAsaasEventId,
   mapAsaasPaymentStatus,
   mapAsaasSubscriptionStatus,
+  parseAsaasSourceEventAt,
   parseBarbershopIdFromExternalReference,
   sanitizeAsaasPayloadForLog,
 } from "@/lib/asaas/mappers";
@@ -290,7 +294,7 @@ export async function processAsaasWebhookPayload(
 
   const payload = rawPayload as AsaasWebhookPayload;
   const eventName = payload.event || "UNKNOWN_EVENT";
-  const asaasEventId = payload.id || payload.eventId || null;
+  const asaasEventId = extractAsaasEventId(payload);
 
   const paymentObj = payload.payment;
   const subscriptionObj = payload.subscription;
@@ -388,17 +392,40 @@ export async function processAsaasWebhookPayload(
       if (barbershopId) {
         const mappedStatus = mapAsaasPaymentStatus(paymentObj.status);
         const paymentDateStr = paymentObj.paymentDate || paymentObj.clientPaymentDate || null;
+        const sourceEventAt = parseAsaasSourceEventAt(payload.dateCreated);
+        const sourceEventId = extractAsaasEventId(payload);
 
         // Envolver leitura de identidade, validação de imutabilidade e upsert do pagamento em transação atômica serializada por chave consultiva do pagamento
-        const { subIdToPersist } = await prisma.$transaction(async (tx) => {
+        const { classification, subIdToPersist } = await prisma.$transaction(async (tx) => {
           if (typeof tx.$executeRaw === "function") {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${paymentObj.id}, 1))`;
           }
 
           const existingPayment = await tx.asaasBillingPayment.findUnique({
             where: { asaasPaymentId: paymentObj.id },
-            select: { asaasSubscriptionId: true },
+            select: {
+              id: true,
+              barbershopId: true,
+              asaasPaymentId: true,
+              asaasSubscriptionId: true,
+              asaasCustomerId: true,
+              status: true,
+              billingType: true,
+              value: true,
+              netValue: true,
+              dueDate: true,
+              paymentDate: true,
+              invoiceUrl: true,
+              bankSlipUrl: true,
+              externalReference: true,
+              sourceEventAt: true,
+              sourceEventId: true,
+            },
           });
+
+          if (existingPayment?.barbershopId && existingPayment.barbershopId !== barbershopId) {
+            throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+          }
 
           const incomingSubId = paymentObj.subscription?.trim();
           if (existingPayment?.asaasSubscriptionId) {
@@ -409,68 +436,119 @@ export async function processAsaasWebhookPayload(
 
           const subIdToPersist = incomingSubId || existingPayment?.asaasSubscriptionId || null;
 
-          await tx.asaasBillingPayment.upsert({
-            where: { asaasPaymentId: paymentObj.id },
-            create: {
-              barbershopId,
-              asaasPaymentId: paymentObj.id,
-              asaasSubscriptionId: subIdToPersist,
-              asaasCustomerId: paymentObj.customer || null,
-              status: mappedStatus,
-              billingType: paymentObj.billingType || null,
-              value: paymentObj.value ?? 0,
-              netValue: paymentObj.netValue ?? null,
-              dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : null,
-              paymentDate: paymentDateStr ? new Date(paymentDateStr) : null,
-              invoiceUrl: paymentObj.invoiceUrl || null,
-              bankSlipUrl: paymentObj.bankSlipUrl || null,
-              externalReference: paymentObj.externalReference || null,
-              rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
-            },
-            update: {
-              status: mappedStatus,
-              asaasSubscriptionId: subIdToPersist || undefined,
-              billingType: paymentObj.billingType || undefined,
-              value: paymentObj.value ?? undefined,
-              netValue: paymentObj.netValue ?? undefined,
-              dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : undefined,
-              paymentDate: paymentDateStr ? new Date(paymentDateStr) : undefined,
-              invoiceUrl: paymentObj.invoiceUrl || undefined,
-              bankSlipUrl: paymentObj.bankSlipUrl || undefined,
-              externalReference: paymentObj.externalReference || undefined,
-              rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
-            },
-          });
+          const candidate: CandidatePaymentFacts = {
+            barbershopId,
+            asaasPaymentId: paymentObj.id,
+            asaasSubscriptionId: subIdToPersist,
+            asaasCustomerId: existingPayment ? existingPayment.asaasCustomerId : (paymentObj.customer || null),
+            status: mappedStatus,
+            billingType: paymentObj.billingType !== undefined ? (paymentObj.billingType || null) : (existingPayment?.billingType || null),
+            value: paymentObj.value !== undefined ? (paymentObj.value ?? 0) : Number(existingPayment?.value ?? 0),
+            netValue: paymentObj.netValue !== undefined ? (paymentObj.netValue ?? null) : (existingPayment?.netValue ? Number(existingPayment.netValue) : null),
+            dueDate: paymentObj.dueDate !== undefined ? (paymentObj.dueDate ? new Date(paymentObj.dueDate) : null) : (existingPayment?.dueDate || null),
+            paymentDate: paymentDateStr !== undefined ? (paymentDateStr ? new Date(paymentDateStr) : null) : (existingPayment?.paymentDate || null),
+            invoiceUrl: paymentObj.invoiceUrl !== undefined ? (paymentObj.invoiceUrl || null) : (existingPayment?.invoiceUrl || null),
+            bankSlipUrl: paymentObj.bankSlipUrl !== undefined ? (paymentObj.bankSlipUrl || null) : (existingPayment?.bankSlipUrl || null),
+            externalReference: paymentObj.externalReference !== undefined ? (paymentObj.externalReference || null) : (existingPayment?.externalReference || null),
+            sourceEventAt,
+            sourceEventId,
+          };
 
-          return { subIdToPersist };
-        });
+          const classification = classifyPaymentFreshness(existingPayment, candidate);
 
-        const effectiveSubId = subIdToPersist || paymentObj.subscription;
-        if (effectiveSubId) {
-          const subRecord = await prisma.asaasBillingSubscription.findUnique({
-            where: { asaasSubscriptionId: effectiveSubId },
-          });
+          if (classification === "CONFLICT") {
+            throw new Error("PAYMENT_SOURCE_EVENT_CONFLICT");
+          }
 
-          if (subRecord) {
-            let newSubStatus = subRecord.status;
-            if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
-              newSubStatus = "ACTIVE";
-            } else if (mappedStatus === "OVERDUE") {
-              newSubStatus = "OVERDUE";
-            }
-
-            await prisma.asaasBillingSubscription.update({
-              where: { id: subRecord.id },
-              data: {
-                status: newSubStatus,
-                billingType: paymentObj.billingType || subRecord.billingType,
+          if (classification === "ACCEPT") {
+            await tx.asaasBillingPayment.upsert({
+              where: { asaasPaymentId: paymentObj.id },
+              create: {
+                barbershopId: candidate.barbershopId,
+                asaasPaymentId: candidate.asaasPaymentId,
+                asaasSubscriptionId: candidate.asaasSubscriptionId,
+                asaasCustomerId: candidate.asaasCustomerId,
+                status: candidate.status,
+                billingType: candidate.billingType,
+                value: candidate.value,
+                netValue: candidate.netValue,
+                dueDate: candidate.dueDate,
+                paymentDate: candidate.paymentDate,
+                invoiceUrl: candidate.invoiceUrl,
+                bankSlipUrl: candidate.bankSlipUrl,
+                externalReference: candidate.externalReference,
+                sourceEventAt: candidate.sourceEventAt,
+                sourceEventId: candidate.sourceEventId,
+                rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
+              },
+              update: {
+                status: candidate.status,
+                asaasSubscriptionId: candidate.asaasSubscriptionId || undefined,
+                billingType: paymentObj.billingType || undefined,
+                value: paymentObj.value ?? undefined,
+                netValue: paymentObj.netValue ?? undefined,
+                dueDate: paymentObj.dueDate ? new Date(paymentObj.dueDate) : undefined,
+                paymentDate: paymentDateStr ? new Date(paymentDateStr) : undefined,
+                invoiceUrl: paymentObj.invoiceUrl || undefined,
+                bankSlipUrl: paymentObj.bankSlipUrl || undefined,
+                externalReference: paymentObj.externalReference || undefined,
+                sourceEventAt: candidate.sourceEventAt,
+                sourceEventId: candidate.sourceEventId,
+                rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
               },
             });
           }
+
+          return { classification, subIdToPersist };
+        });
+
+        if (classification === "STALE") {
+          await prisma.asaasWebhookEvent.update({
+            where: { id: webhookRecord.id },
+            data: {
+              processingStatus: "PROCESSED",
+              processedAt: new Date(),
+            },
+          });
+          return { ok: true, ignored: true };
         }
 
-        if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
-          await syncTenantSubscriptionAccessOnPayment(barbershopId, paymentObj);
+        if (classification === "ACCEPT" || classification === "REPLAY_CURRENT") {
+          const effectiveSubId = subIdToPersist || paymentObj.subscription;
+          if (effectiveSubId) {
+            const subRecord = await prisma.asaasBillingSubscription.findUnique({
+              where: { asaasSubscriptionId: effectiveSubId },
+            });
+
+            if (subRecord) {
+              if (subRecord.barbershopId !== barbershopId) {
+                throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+              }
+
+              let newSubStatus = subRecord.status;
+              const isCanceled = subRecord.canceledAt != null || subRecord.status === "CANCELED";
+
+              if (!isCanceled) {
+                if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
+                  newSubStatus = "ACTIVE";
+                } else if (mappedStatus === "OVERDUE") {
+                  newSubStatus = "OVERDUE";
+                }
+              }
+
+              await prisma.asaasBillingSubscription.update({
+                where: { id: subRecord.id },
+                data: {
+                  status: newSubStatus,
+                  billingType: paymentObj.billingType || subRecord.billingType,
+                },
+              });
+            }
+          }
+
+          if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
+            await syncTenantSubscriptionAccessOnPayment(barbershopId, paymentObj);
+          }
         }
       }
 
