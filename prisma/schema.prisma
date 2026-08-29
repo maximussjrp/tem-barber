@@ -1511,6 +1511,7 @@ model AsaasBillingPayment {
   externalReference   String?            @map("external_reference")
   accessAppliedAt     DateTime?          @map("access_applied_at")
   sourceEventAt       DateTime?          @map("source_event_at")
+  sourceEventId       String?            @map("source_event_id")
   rawPayload          Json?              @map("raw_payload")
   createdAt           DateTime           @default(now()) @map("created_at")
   updatedAt           DateTime           @updatedAt @map("updated_at")
