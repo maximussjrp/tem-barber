@@ -26,6 +26,7 @@ services:
       ASAAS_API_KEY: ${ASAAS_API_KEY}
       ASAAS_ENV: ${ASAAS_ENV:-production}
       ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN}
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
     volumes:
       - tem_barber_uploads:/app/public/uploads
     depends_on:

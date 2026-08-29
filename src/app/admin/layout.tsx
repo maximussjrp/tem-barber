@@ -6,7 +6,7 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { barbershop, session, role } = await requireAdmin();
+  const { barbershop, session, role, isPlatform } = await requireAdmin();
 
   const subtitle = barbershop?.city ? barbershop.city : "Painel de Gestão";
 
@@ -18,6 +18,7 @@ export default async function AdminLayout({
         subtitle={subtitle}
         userName={session.user?.name ?? "Admin"}
         userRole={role}
+        isPlatformAdmin={isPlatform}
       />
       {/* Offset content by sidebar width on desktop */}
       <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden pt-[57px] lg:pt-0">

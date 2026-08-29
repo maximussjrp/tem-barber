@@ -13,10 +13,16 @@ interface SidebarProps {
   subtitle?: string | null;
   userName: string;
   userRole?: string | null;
+  isPlatformAdmin?: boolean;
 }
 
 // SVG icons
 const Icons = {
+  platform: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+    </svg>
+  ),
   dashboard: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
@@ -151,9 +157,19 @@ function getInitials(name: string): string {
   return initials.slice(0, 3);
 }
 
-export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName, userRole }: SidebarProps) {
+export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName, userRole, isPlatformAdmin = false }: SidebarProps) {
   const canSeeClub = userRole === "OWNER" || userRole === "MANAGER" || userRole === "SUPER_ADMIN";
   const visibleNavItems = navItems.filter((item) => !item.ownerOnly || canSeeClub);
+
+  if (isPlatformAdmin) {
+    visibleNavItems.unshift({
+      label: "Plataforma",
+      href: "/admin/platform",
+      icon: Icons.platform,
+      children: [],
+      ownerOnly: false,
+    });
+  }
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [prevLogo, setPrevLogo] = useState(barbershopLogo);

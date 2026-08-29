@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, getServerSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopMember: { findMany: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn() },
+    tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
   getServerSessionMock: vi.fn(),
@@ -23,6 +23,7 @@ function session(role: string, id = "user-a", email?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env.PLATFORM_ADMIN_EMAILS = "max.guarinieri@gmail.com";
   prismaMock.barbershopMember.findMany.mockResolvedValue([{
     id: "member-a",
     userId: "user-a",
@@ -30,11 +31,13 @@ beforeEach(() => {
     role: "OWNER",
     isActive: true,
   }]);
-  prismaMock.tenantSubscription.findFirst.mockResolvedValue({
+  const activeSub = {
     status: "ACTIVE",
     currentPeriodStart: new Date(),
     currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
-  });
+  };
+  prismaMock.tenantSubscription.findFirst.mockResolvedValue(activeSub);
+  prismaMock.tenantSubscription.findUnique.mockResolvedValue(activeSub);
 });
 
 describe("guards e isolamento", () => {

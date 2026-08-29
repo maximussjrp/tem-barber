@@ -8,6 +8,7 @@ import {
   getBrazilianPhoneVariants
 } from "./phone/br-phone";
 import { resolveSingleActiveMembership } from "./tenant-context";
+import { isPlatformAdmin } from "./subscription-utils";
 
 interface CustomAuthUser {
   id: string;
@@ -106,6 +107,38 @@ export const authOptions: NextAuthOptions = {
           }
 
           // Validar senha
+        }
+
+        // 2. FLUXO ADMINISTRATIVO (Barbearia / Profissional - Email ou CPF + Senha)
+        if (loginType === "admin") {
+          if (!email || !password) {
+            throw new Error("E-mail/CPF e senha são obrigatórios.");
+          }
+
+          // Tratar se digitou CPF ou e-mail
+          const isCpf = /^[0-9.-]+$/.test(email) && email.replace(/\D/g, "").length === 11;
+          const cleanIdentifier = isCpf ? email.replace(/\D/g, "") : email.trim().toLowerCase();
+
+          // Buscar usuário pelo E-mail ou CPF
+          const user = await prisma.user.findFirst({
+            where: {
+              OR: [
+                { email: cleanIdentifier },
+                { cpf: cleanIdentifier },
+              ],
+            },
+          });
+
+          if (!user) {
+            throw new Error("Usuário não cadastrado.");
+          }
+
+          // Se for cliente comum tentando entrar como admin ou não tiver senha cadastrada
+          if (!user.passwordHash) {
+            throw new Error("Este usuário não possui senha configurada. Acesse como cliente.");
+          }
+
+          // Validar senha
           const isValidPassword = await bcrypt.compare(password, user.passwordHash);
 
           if (!isValidPassword) {
@@ -120,12 +153,13 @@ export const authOptions: NextAuthOptions = {
           }
 
           const member = membershipResolution.membership;
+          const isPlatform = isPlatformAdmin(user.email) || user.role === "SUPER_ADMIN";
 
-          if (!member && user.role !== "SUPER_ADMIN") {
+          if (!member && !isPlatform) {
             throw new Error("Acesso administrativo negado. Você não possui cargos vinculados.");
           }
 
-          const resolvedRole = user.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : member?.role;
+          const resolvedRole = member?.role ?? (isPlatform ? "SUPER_ADMIN" : "USER");
 
           return {
             id: user.id,

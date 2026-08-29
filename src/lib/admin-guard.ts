@@ -23,17 +23,17 @@ export async function requireAdmin() {
 
   const membershipResolution = await resolveSingleActiveMembership(userId);
 
-  if (membershipResolution.status === "MULTIPLE") {
+  if (membershipResolution.status === "MULTIPLE" && !isPlatform) {
     redirect("/acesso-negado?error=TENANT_SELECTION_REQUIRED");
   }
 
-  const member = membershipResolution.membership;
+  const member = membershipResolution.status === "SINGLE" ? membershipResolution.membership : null;
 
   if (!member && !isPlatform) {
     redirect("/acesso-negado");
   }
 
-  const role = member?.role ?? "SUPER_ADMIN";
+  const role = isPlatform ? (member?.role ?? "SUPER_ADMIN") : (member?.role ?? sessionRole);
 
   if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
     redirect("/acesso-negado");
@@ -51,6 +51,7 @@ export async function requireAdmin() {
     session,
     userId,
     role,
+    isPlatform,
     member: member ?? null,
     barbershop: member?.barbershop ?? null,
     barbershopId: member?.barbershopId ?? null,
