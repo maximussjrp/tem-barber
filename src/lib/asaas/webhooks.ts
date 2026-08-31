@@ -7,13 +7,16 @@ import prisma from "@/lib/prisma";
 import { getPlanByCode } from "@/lib/billing/plans-db";
 import {
   CandidatePaymentFacts,
+  CandidateSubscriptionFacts,
   classifyPaymentFreshness,
+  classifySubscriptionFreshness,
   extractAsaasEventId,
   mapAsaasPaymentStatus,
   mapAsaasSubscriptionStatus,
   parseAsaasSourceEventAt,
   parseBarbershopIdFromExternalReference,
   sanitizeAsaasPayloadForLog,
+  StoredSubscriptionSnapshot,
 } from "@/lib/asaas/mappers";
 import { recomputeTenantSubscriptionFromPayments, StoredPaymentForRecompute } from "@/lib/asaas/entitlement";
 
@@ -513,29 +516,8 @@ export async function processAsaasWebhookPayload(
               where: { asaasSubscriptionId: effectiveSubId },
             });
 
-            if (subRecord) {
-              if (subRecord.barbershopId !== barbershopId) {
-                throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
-              }
-
-              let newSubStatus = subRecord.status;
-              const isCanceled = subRecord.canceledAt != null || subRecord.status === "CANCELED";
-
-              if (!isCanceled) {
-                if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
-                  newSubStatus = "ACTIVE";
-                } else if (mappedStatus === "OVERDUE") {
-                  newSubStatus = "OVERDUE";
-                }
-              }
-
-              await prisma.asaasBillingSubscription.update({
-                where: { id: subRecord.id },
-                data: {
-                  status: newSubStatus,
-                  billingType: paymentObj.billingType || subRecord.billingType,
-                },
-              });
+            if (subRecord && subRecord.barbershopId !== barbershopId) {
+              throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
             }
           }
 
@@ -556,29 +538,91 @@ export async function processAsaasWebhookPayload(
 
     // 5. Tratar eventos SUBSCRIPTION_*
     if (eventName.startsWith("SUBSCRIPTION_") && subscriptionObj) {
+      const sourceEventAt = parseAsaasSourceEventAt((rawPayload as { dateCreated?: string })?.dateCreated);
+      const sourceEventId = asaasEventId || null;
       const mappedSubStatus = mapAsaasSubscriptionStatus(subscriptionObj.status);
+      const isDeleteEvent = eventName === "SUBSCRIPTION_DELETED";
 
       if (subscriptionObj.id) {
-        const subRecord = await prisma.asaasBillingSubscription.findUnique({
-          where: { asaasSubscriptionId: subscriptionObj.id },
+        const result = await prisma.$transaction(async (tx) => {
+          // 1. Acquire subscription advisory lock in namespace 2
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${subscriptionObj.id}, 2))`;
+
+          // 2. Find stored subscription record
+          const subRecord = await tx.asaasBillingSubscription.findUnique({
+            where: { asaasSubscriptionId: subscriptionObj.id },
+          });
+
+          if (!subRecord) {
+            return { classification: "STALE" as const };
+          }
+
+          if (subRecord.barbershopId !== barbershopId) {
+            throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
+          }
+
+          // 3. Build candidate facts
+          const candidate: CandidateSubscriptionFacts = {
+            barbershopId,
+            asaasSubscriptionId: subscriptionObj.id,
+            asaasCustomerId: subscriptionObj.customer || subRecord.asaasCustomerId,
+            planCode: subRecord.planCode,
+            planName: subRecord.planName,
+            value: subscriptionObj.value !== undefined ? Number(subscriptionObj.value) : Number(subRecord.value),
+            cycle: subscriptionObj.cycle || subRecord.cycle,
+            status: isDeleteEvent
+              ? (mappedSubStatus === "UNKNOWN" ? subRecord.status : mappedSubStatus)
+              : mappedSubStatus,
+            nextDueDate: subscriptionObj.nextDueDate ? new Date(subscriptionObj.nextDueDate) : subRecord.nextDueDate,
+            billingType: subscriptionObj.billingType || subRecord.billingType,
+            externalReference: subscriptionObj.externalReference || subRecord.externalReference,
+            canceledAt: isDeleteEvent
+              ? (subRecord.canceledAt || sourceEventAt || webhookRecord.receivedAt)
+              : subRecord.canceledAt,
+            sourceEventAt,
+            sourceEventId,
+            isDeleteEvent,
+          };
+
+          const storedSnapshot: StoredSubscriptionSnapshot = {
+            ...subRecord,
+            value: Number(subRecord.value),
+          };
+
+          // 4. Classify freshness
+          const classification = classifySubscriptionFreshness(storedSnapshot, candidate);
+
+          if (classification === "CONFLICT") {
+            throw new Error("SUBSCRIPTION_SOURCE_EVENT_CONFLICT");
+          }
+
+          if (classification === "ACCEPT") {
+            await tx.asaasBillingSubscription.update({
+              where: { id: subRecord.id },
+              data: {
+                status: candidate.status,
+                nextDueDate: candidate.nextDueDate,
+                billingType: candidate.billingType,
+                value: candidate.value,
+                canceledAt: candidate.canceledAt,
+                sourceEventAt: candidate.sourceEventAt,
+                sourceEventId: candidate.sourceEventId,
+              },
+            });
+          }
+
+          return { classification };
         });
 
-        if (subRecord) {
-          await prisma.asaasBillingSubscription.update({
-            where: { id: subRecord.id },
+        if (result.classification === "STALE") {
+          await prisma.asaasWebhookEvent.update({
+            where: { id: webhookRecord.id },
             data: {
-              status: mappedSubStatus,
-              nextDueDate: subscriptionObj.nextDueDate
-                ? new Date(subscriptionObj.nextDueDate)
-                : subRecord.nextDueDate,
-              billingType: subscriptionObj.billingType || subRecord.billingType,
-              value: subscriptionObj.value ?? subRecord.value,
-              canceledAt:
-                mappedSubStatus === "CANCELED" || eventName === "SUBSCRIPTION_DELETED"
-                  ? new Date()
-                  : subRecord.canceledAt,
+              processingStatus: "PROCESSED",
+              processedAt: new Date(),
             },
           });
+          return { ok: true, ignored: true };
         }
       }
 

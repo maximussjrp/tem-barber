@@ -400,11 +400,8 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       expect(upsertCall.where.asaasPaymentId).toBe("pay_rec_200");
       expect(upsertCall.create.status).toBe("RECEIVED");
 
-      // Atualizou status da subscription para ACTIVE
-      expect(prismaMock.asaasBillingSubscription.update).toHaveBeenCalledWith({
-        where: { id: "sub-db-1" },
-        data: { status: "ACTIVE", billingType: "PIX" },
-      });
+      // Strict Subscription Ownership: PAYMENT_* writes ZERO fields to AsaasBillingSubscription
+      expect(prismaMock.asaasBillingSubscription.update).not.toHaveBeenCalled();
     });
 
     it("processa PAYMENT_CONFIRMED mapeando status corretamente", async () => {
@@ -437,7 +434,7 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       expect(upsertCall.create.status).toBe("CONFIRMED");
     });
 
-    it("processa PAYMENT_OVERDUE mapeando status e atualizando subscription", async () => {
+    it("processa PAYMENT_OVERDUE mapeando status sem alterar AsaasBillingSubscription", async () => {
       prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
       prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop-1" });
       prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh-4" });
@@ -466,11 +463,8 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       const res = await postWebhook(req);
       expect(res.status).toBe(200);
 
-      // Subscription vira OVERDUE
-      expect(prismaMock.asaasBillingSubscription.update).toHaveBeenCalledWith({
-        where: { id: "sub-db-1" },
-        data: expect.objectContaining({ status: "OVERDUE" }),
-      });
+      // Strict Subscription Ownership: PAYMENT_* writes ZERO fields to AsaasBillingSubscription
+      expect(prismaMock.asaasBillingSubscription.update).not.toHaveBeenCalled();
     });
   });
 

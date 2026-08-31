@@ -15,11 +15,6 @@ export function mapAsaasSubscriptionStatus(status?: string | null): AsaasSubscri
       return AsaasSubscriptionStatus.INACTIVE;
     case "EXPIRED":
       return AsaasSubscriptionStatus.EXPIRED;
-    case "OVERDUE":
-      return AsaasSubscriptionStatus.OVERDUE;
-    case "CANCELED":
-    case "CANCELLED":
-      return AsaasSubscriptionStatus.CANCELED;
     default:
       return AsaasSubscriptionStatus.UNKNOWN;
   }
@@ -304,6 +299,178 @@ export function classifyPaymentFreshness(
   // Ambos timestamps NULL
   if (storedId !== null && incomingId !== null && incomingId === storedId) {
     return areCanonicalFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+  }
+
+  return "STALE";
+}
+
+export type SubscriptionFreshnessClassification = "ACCEPT" | "REPLAY_CURRENT" | "STALE" | "CONFLICT";
+
+export interface StoredSubscriptionSnapshot {
+  id?: string;
+  barbershopId: string;
+  asaasSubscriptionId: string;
+  asaasCustomerId: string;
+  planCode: string;
+  planName: string;
+  value: number;
+  cycle: string;
+  status: AsaasSubscriptionStatus;
+  nextDueDate: Date | null;
+  billingType: string | null;
+  externalReference: string;
+  canceledAt: Date | null;
+  sourceEventAt: Date | null;
+  sourceEventId: string | null;
+}
+
+export interface CandidateSubscriptionFacts {
+  barbershopId: string;
+  asaasSubscriptionId: string;
+  asaasCustomerId?: string;
+  planCode?: string;
+  planName?: string;
+  value?: number;
+  cycle?: string;
+  status: AsaasSubscriptionStatus;
+  nextDueDate: Date | null;
+  billingType: string | null;
+  externalReference?: string;
+  canceledAt: Date | null;
+  sourceEventAt: Date | null;
+  sourceEventId: string | null;
+  isDeleteEvent?: boolean;
+}
+
+export function areCanonicalSubscriptionFactsEqual(
+  candidate: CandidateSubscriptionFacts,
+  stored: StoredSubscriptionSnapshot
+): boolean {
+  if (candidate.barbershopId !== stored.barbershopId) return false;
+  if (candidate.asaasSubscriptionId !== stored.asaasSubscriptionId) return false;
+  if (candidate.status !== stored.status) return false;
+  if ((candidate.billingType || null) !== (stored.billingType || null)) return false;
+  if (normalizeTime(candidate.nextDueDate) !== normalizeTime(stored.nextDueDate)) return false;
+  if (candidate.value !== undefined && normalizeDecimal(candidate.value) !== normalizeDecimal(stored.value)) return false;
+
+  const isCandidateDeleted = candidate.canceledAt != null || candidate.isDeleteEvent === true;
+  const isStoredDeleted = stored.canceledAt != null;
+  if (isCandidateDeleted !== isStoredDeleted) return false;
+
+  return true;
+}
+
+export function classifySubscriptionFreshness(
+  stored: StoredSubscriptionSnapshot | null,
+  candidate: CandidateSubscriptionFacts
+): SubscriptionFreshnessClassification {
+  if (!stored) {
+    return "ACCEPT";
+  }
+
+  const storedTime = stored.sourceEventAt ? stored.sourceEventAt.getTime() : null;
+  const incomingTime = candidate.sourceEventAt ? candidate.sourceEventAt.getTime() : null;
+  const storedId = stored.sourceEventId || null;
+  const incomingId = candidate.sourceEventId || null;
+
+  // Terminal tombstone invariant: stored is already deleted (canceledAt != null)
+  if (stored.canceledAt != null) {
+    // Non-delete event arriving for already deleted subscription -> STALE (cannot resurrect)
+    if (candidate.isDeleteEvent !== true) {
+      return "STALE";
+    }
+
+    // Both are delete events -> compare watermarks deterministically
+    if (storedTime !== null && incomingTime !== null && incomingTime === storedTime && storedId === incomingId) {
+      return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+    }
+
+    if (storedTime === null && incomingTime === null && storedId !== null && incomingId === storedId) {
+      return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+    }
+
+    if (storedTime === null && incomingTime !== null) {
+      return "ACCEPT";
+    }
+
+    if (storedTime !== null && incomingTime === null) {
+      return "STALE";
+    }
+
+    if (storedTime !== null && incomingTime !== null) {
+      if (incomingTime > storedTime) return "ACCEPT";
+      if (incomingTime < storedTime) return "STALE";
+      if (storedId === null && incomingId !== null) return "ACCEPT";
+      if (storedId !== null && incomingId === null) return "STALE";
+      if (incomingId! > storedId!) return "ACCEPT";
+      if (incomingId! < storedId!) return "STALE";
+      return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+    }
+
+    return "STALE";
+  }
+
+  // Stored is NOT tombstoned yet (canceledAt == null)
+  // Authoritative SUBSCRIPTION_DELETED event -> Delete Dominance applies!
+  if (candidate.isDeleteEvent === true) {
+    // Check exact same watermark first for conflict detection
+    if (storedTime !== null && incomingTime !== null && incomingTime === storedTime && storedId !== null && incomingId === storedId) {
+      return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+    }
+    if (storedTime === null && incomingTime === null && storedId !== null && incomingId === storedId) {
+      return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+    }
+
+    // Delete dominates non-delete events
+    return "ACCEPT";
+  }
+
+  // Normal non-delete freshness ordering
+  if (storedTime === null && storedId === null) {
+    if (incomingTime !== null || incomingId !== null) {
+      return "ACCEPT";
+    }
+    return "STALE";
+  }
+
+  if (storedTime === null && incomingTime !== null) {
+    return "ACCEPT";
+  }
+
+  if (storedTime !== null && incomingTime === null) {
+    return "STALE";
+  }
+
+  if (storedTime !== null && incomingTime !== null) {
+    if (incomingTime > storedTime) {
+      return "ACCEPT";
+    }
+    if (incomingTime < storedTime) {
+      return "STALE";
+    }
+
+    if (storedId === null && incomingId !== null) {
+      return "ACCEPT";
+    }
+    if (storedId !== null && incomingId === null) {
+      return "STALE";
+    }
+    if (storedId === null && incomingId === null) {
+      return "STALE";
+    }
+
+    if (incomingId! > storedId!) {
+      return "ACCEPT";
+    }
+    if (incomingId! < storedId!) {
+      return "STALE";
+    }
+
+    return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
+  }
+
+  if (storedId !== null && incomingId !== null && incomingId === storedId) {
+    return areCanonicalSubscriptionFactsEqual(candidate, stored) ? "REPLAY_CURRENT" : "CONFLICT";
   }
 
   return "STALE";

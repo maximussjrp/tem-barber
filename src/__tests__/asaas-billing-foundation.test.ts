@@ -113,8 +113,8 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
       expect(mapAsaasSubscriptionStatus("ACTIVE")).toBe(AsaasSubscriptionStatus.ACTIVE);
       expect(mapAsaasSubscriptionStatus("INACTIVE")).toBe(AsaasSubscriptionStatus.INACTIVE);
       expect(mapAsaasSubscriptionStatus("EXPIRED")).toBe(AsaasSubscriptionStatus.EXPIRED);
-      expect(mapAsaasSubscriptionStatus("OVERDUE")).toBe(AsaasSubscriptionStatus.OVERDUE);
-      expect(mapAsaasSubscriptionStatus("CANCELED")).toBe(AsaasSubscriptionStatus.CANCELED);
+      expect(mapAsaasSubscriptionStatus("OVERDUE")).toBe(AsaasSubscriptionStatus.UNKNOWN);
+      expect(mapAsaasSubscriptionStatus("CANCELED")).toBe(AsaasSubscriptionStatus.UNKNOWN);
       expect(mapAsaasSubscriptionStatus("INVALID_STATUS")).toBe(AsaasSubscriptionStatus.UNKNOWN);
       expect(mapAsaasSubscriptionStatus(null)).toBe(AsaasSubscriptionStatus.UNKNOWN);
     });
