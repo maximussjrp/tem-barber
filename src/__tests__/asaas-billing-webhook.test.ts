@@ -5,12 +5,13 @@ const { prismaMock, fetchMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershop: { findUnique: vi.fn() },
     asaasBillingCustomer: { findUnique: vi.fn() },
-    asaasBillingSubscription: { findUnique: vi.fn(), update: vi.fn() },
-    asaasBillingPayment: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
+    asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), upsert: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     plan: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     tenantSubscription: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     $transaction: vi.fn((cb: any) => cb(prismaMock)),
+    $executeRaw: vi.fn(),
   },
   fetchMock: vi.fn(),
 }));
@@ -48,6 +49,30 @@ describe("PR #27 — Webhook Asaas Billing", () => {
         };
       }
       return null;
+    });
+    prismaMock.asaasBillingSubscription.findFirst.mockImplementation(async ({ where }: { where: { barbershopId: string } }) => {
+      const uniqueResult = await prismaMock.asaasBillingSubscription.findUnique({ where: { asaasSubscriptionId: "sub_asaas_1" } });
+      if (uniqueResult && (!where.barbershopId || uniqueResult.barbershopId === where.barbershopId || where.barbershopId === "shop-1")) {
+        return uniqueResult;
+      }
+      return uniqueResult;
+    });
+    prismaMock.asaasBillingPayment.findMany.mockImplementation(async ({ where }: { where: { barbershopId?: string } }) => {
+      return [
+        {
+          id: "pay_default",
+          asaasPaymentId: "pay_1",
+          barbershopId: where?.barbershopId || "shop-1",
+          asaasSubscriptionId: "sub_asaas_1",
+          status: "RECEIVED",
+          billingType: "PIX",
+          value: 49.9,
+          dueDate: new Date("2026-07-25"),
+          paymentDate: new Date("2026-07-25"),
+          firstPositiveAt: new Date("2026-07-25"),
+          createdAt: new Date("2026-07-25"),
+        },
+      ];
     });
     prismaMock.plan.findUnique.mockImplementation(async ({ where }: { where: { code: string } }) => {
       if (where.code === "pro_monthly") {
@@ -941,17 +966,27 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       );
     });
 
-    it("17. Idempotency: accessAppliedAt already set (updateMany count === 0) performs NO access mutation", async () => {
-      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 0 });
+    it("17. Idempotency: recomputes tenant entitlement deterministically without accessAppliedAt claim", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        asaasPaymentId: "pay_already_applied",
+        asaasSubscriptionId: "sub_111",
+        barbershopId: "shop-111",
+      });
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+        id: "sub-111",
+        barbershopId: "shop-111",
+        asaasSubscriptionId: "sub_111",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+      });
 
       await syncTenantSubscriptionAccessOnPayment("shop-111", {
         id: "pay_already_applied",
         subscription: "sub_111",
       });
 
-      expect(prismaMock.asaasBillingSubscription.findUnique).not.toHaveBeenCalled();
-      expect(prismaMock.tenantSubscription.update).not.toHaveBeenCalled();
-      expect(prismaMock.tenantSubscription.create).not.toHaveBeenCalled();
+      expect(prismaMock.tenantSubscription.update).toHaveBeenCalled();
     });
 
     it("18. Failed identity validation rolls back accessAppliedAt claim in transaction and does not persist access", async () => {

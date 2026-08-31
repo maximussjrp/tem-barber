@@ -15,6 +15,7 @@ import {
   parseBarbershopIdFromExternalReference,
   sanitizeAsaasPayloadForLog,
 } from "@/lib/asaas/mappers";
+import { recomputeTenantSubscriptionFromPayments, StoredPaymentForRecompute } from "@/lib/asaas/entitlement";
 
 export interface AsaasWebhookPayload {
   id?: string;
@@ -95,26 +96,10 @@ export async function syncTenantSubscriptionAccessOnPayment(
   if (!asaasPaymentId || !barbershopId) return;
 
   const now = new Date();
+  let resolvedSubId: string | undefined;
 
-  // Resolver data âncora: dueDate -> paymentDate/clientPaymentDate -> now
-  let anchorDate: Date;
-  if (paymentObj.dueDate) {
-    anchorDate = new Date(paymentObj.dueDate);
-  } else if (paymentObj.paymentDate || paymentObj.clientPaymentDate) {
-    anchorDate = new Date(paymentObj.paymentDate || paymentObj.clientPaymentDate!);
-  } else {
-    anchorDate = now;
-  }
-
-  if (isNaN(anchorDate.getTime())) {
-    anchorDate = now;
-  }
-
-  const periodStart = anchorDate;
-  const periodEnd = addCalendarMonths(anchorDate, 1);
-
-  await prisma.$transaction(async (tx) => {
-    // 1. Reivindicação atômica de idempotência
+  const claimed = await prisma.$transaction(async (tx) => {
+    // 1. Reivindicação atômica de idempotência para compatibilidade de chamadas legadas
     const updateResult = await tx.asaasBillingPayment.updateMany({
       where: {
         asaasPaymentId,
@@ -127,10 +112,10 @@ export async function syncTenantSubscriptionAccessOnPayment(
     });
 
     if (updateResult.count === 0) {
-      return;
+      return false;
     }
 
-    // 2. Resolver o registro do pagamento local
+    // 2. Resolver o registro do pagamento local se existir
     const paymentRecord = await tx.asaasBillingPayment.findUnique({
       where: { asaasPaymentId },
       select: {
@@ -139,11 +124,7 @@ export async function syncTenantSubscriptionAccessOnPayment(
       },
     });
 
-    if (!paymentRecord) {
-      throw new Error("PAYMENT_RECORD_NOT_FOUND");
-    }
-
-    if (paymentRecord.barbershopId !== barbershopId) {
+    if (paymentRecord && paymentRecord.barbershopId !== barbershopId) {
       throw new Error("BARBERSHOP_SUBSCRIPTION_MISMATCH");
     }
 
@@ -151,7 +132,7 @@ export async function syncTenantSubscriptionAccessOnPayment(
     const rawCandidates = [
       paymentObj.subscription?.trim(),
       paymentObj.asaasSubscriptionId?.trim(),
-      paymentRecord.asaasSubscriptionId?.trim(),
+      paymentRecord?.asaasSubscriptionId?.trim(),
     ].filter((s): s is string => Boolean(s && s.length > 0));
 
     const distinctSubIds = Array.from(new Set(rawCandidates));
@@ -164,11 +145,11 @@ export async function syncTenantSubscriptionAccessOnPayment(
       throw new Error("PAYMENT_MISSING_SUBSCRIPTION_ID");
     }
 
-    const resolvedSubscriptionId = distinctSubIds[0];
+    resolvedSubId = distinctSubIds[0];
 
     // 4. Buscar a assinatura Asaas local
     const billingSub = await tx.asaasBillingSubscription.findUnique({
-      where: { asaasSubscriptionId: resolvedSubscriptionId },
+      where: { asaasSubscriptionId: resolvedSubId },
     });
 
     if (!billingSub) {
@@ -183,60 +164,42 @@ export async function syncTenantSubscriptionAccessOnPayment(
       throw new Error("ASAAS_PLAN_CODE_MISSING");
     }
 
-    // 5. Resolver Plano por código no catálogo (permite planos inativos/históricos)
     const plan = await getPlanByCode(tx as any, billingSub.planCode.trim());
-
     if (!plan) {
       throw new Error("PLAN_CODE_NOT_FOUND");
     }
 
-    // 6. Trava consultiva por tenant para proteger concorrência de mutação de acesso
-    if (typeof tx.$executeRaw === "function") {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${barbershopId}, 0))`;
-    }
-
-    // 7. Validar TenantSubscription existente
     const existingSub = await tx.tenantSubscription.findUnique({
       where: { barbershopId },
     });
 
-    if (existingSub) {
-      if (existingSub.planId !== plan.id) {
-        throw new Error("TENANT_PLAN_CODE_MISMATCH");
-      }
-
-      await tx.tenantSubscription.update({
-        where: { id: existingSub.id },
-        data: {
-          status: "ACTIVE",
-          planName: billingSub.planName,
-          monthlyPrice: billingSub.value,
-          currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd,
-          gracePeriodEndsAt: null,
-          paymentMethod: paymentObj.billingType || existingSub.paymentMethod,
-          lastPaymentAt: now,
-          lastAccessPaymentId: asaasPaymentId,
-        },
-      });
-    } else {
-      await tx.tenantSubscription.create({
-        data: {
-          barbershopId,
-          planId: plan.id,
-          status: "ACTIVE",
-          planName: billingSub.planName,
-          monthlyPrice: billingSub.value,
-          currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd,
-          gracePeriodEndsAt: null,
-          paymentMethod: paymentObj.billingType || "PIX",
-          lastPaymentAt: now,
-          lastAccessPaymentId: asaasPaymentId,
-        },
-      });
+    if (existingSub && existingSub.planId !== plan.id) {
+      throw new Error("TENANT_PLAN_CODE_MISMATCH");
     }
+
+    return true;
   });
+
+  if (!claimed) return;
+
+  const dueDate = paymentObj.dueDate ? new Date(paymentObj.dueDate) : null;
+  const paymentDate = (paymentObj.paymentDate || paymentObj.clientPaymentDate) ? new Date((paymentObj.paymentDate || paymentObj.clientPaymentDate)!) : null;
+
+  const fallbackCandidate: StoredPaymentForRecompute = {
+    id: asaasPaymentId,
+    asaasPaymentId,
+    barbershopId,
+    asaasSubscriptionId: resolvedSubId || null,
+    status: "RECEIVED" as any,
+    billingType: paymentObj.billingType || null,
+    value: paymentObj.value ?? 0,
+    dueDate,
+    paymentDate,
+    firstPositiveAt: paymentDate || dueDate || new Date(),
+    createdAt: new Date(),
+  };
+
+  await recomputeTenantSubscriptionFromPayments(barbershopId, fallbackCandidate, resolvedSubId);
 }
 
 /**
@@ -305,7 +268,7 @@ export async function processAsaasWebhookPayload(
   const externalReference =
     paymentObj?.externalReference || subscriptionObj?.externalReference || null;
 
-  let webhookRecord: { id: string };
+  let webhookRecord: { id: string; receivedAt: Date };
   if (asaasEventId) {
     const existingEvent = await prisma.asaasWebhookEvent.findFirst({
       where: {
@@ -351,7 +314,7 @@ export async function processAsaasWebhookPayload(
           processingError: null,
           processedAt: null,
         },
-        select: { id: true },
+        select: { id: true, receivedAt: true },
       });
     } else {
       webhookRecord = await prisma.asaasWebhookEvent.create({
@@ -366,7 +329,7 @@ export async function processAsaasWebhookPayload(
           payload: sanitizedPayload as object,
           processingStatus: "PENDING",
         },
-        select: { id: true },
+        select: { id: true, receivedAt: true },
       });
     }
   } else {
@@ -382,7 +345,7 @@ export async function processAsaasWebhookPayload(
         payload: sanitizedPayload as object,
         processingStatus: "PENDING",
       },
-      select: { id: true },
+      select: { id: true, receivedAt: true },
     });
   }
 
@@ -396,7 +359,7 @@ export async function processAsaasWebhookPayload(
         const sourceEventId = extractAsaasEventId(payload);
 
         // Envolver leitura de identidade, validação de imutabilidade e upsert do pagamento em transação atômica serializada por chave consultiva do pagamento
-        const { classification, subIdToPersist } = await prisma.$transaction(async (tx) => {
+        const { classification, subIdToPersist, isCandidatePositive } = await prisma.$transaction(async (tx) => {
           if (typeof tx.$executeRaw === "function") {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${paymentObj.id}, 1))`;
           }
@@ -420,6 +383,8 @@ export async function processAsaasWebhookPayload(
               externalReference: true,
               sourceEventAt: true,
               sourceEventId: true,
+              firstPositiveAt: true,
+              createdAt: true,
             },
           });
 
@@ -460,6 +425,18 @@ export async function processAsaasWebhookPayload(
             throw new Error("PAYMENT_SOURCE_EVENT_CONFLICT");
           }
 
+          const isCandidatePositive = ["RECEIVED", "CONFIRMED"].includes(mappedStatus);
+          const isExistingPositive = existingPayment && ["RECEIVED", "CONFIRMED"].includes(existingPayment.status);
+          const lazyFirstPositiveAt = isExistingPositive && existingPayment.firstPositiveAt === null
+            ? (existingPayment.sourceEventAt ?? existingPayment.paymentDate ?? existingPayment.dueDate ?? existingPayment.createdAt)
+            : null;
+
+          const firstPositiveAtToSet = existingPayment?.firstPositiveAt ?? (
+            (isCandidatePositive || lazyFirstPositiveAt !== null)
+              ? (lazyFirstPositiveAt ?? sourceEventAt ?? candidate.paymentDate ?? candidate.dueDate ?? webhookRecord.receivedAt)
+              : null
+          );
+
           if (classification === "ACCEPT") {
             await tx.asaasBillingPayment.upsert({
               where: { asaasPaymentId: paymentObj.id },
@@ -479,6 +456,7 @@ export async function processAsaasWebhookPayload(
                 externalReference: candidate.externalReference,
                 sourceEventAt: candidate.sourceEventAt,
                 sourceEventId: candidate.sourceEventId,
+                firstPositiveAt: firstPositiveAtToSet || undefined,
                 rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
               },
               update: {
@@ -494,15 +472,30 @@ export async function processAsaasWebhookPayload(
                 externalReference: paymentObj.externalReference || undefined,
                 sourceEventAt: candidate.sourceEventAt,
                 sourceEventId: candidate.sourceEventId,
+                firstPositiveAt: firstPositiveAtToSet || undefined,
                 rawPayload: sanitizeAsaasPayloadForLog(paymentObj) as object,
+              },
+            });
+          } else if (classification === "REPLAY_CURRENT" && isCandidatePositive && existingPayment?.firstPositiveAt === null && firstPositiveAtToSet) {
+            await tx.asaasBillingPayment.update({
+              where: { asaasPaymentId: paymentObj.id },
+              data: { firstPositiveAt: firstPositiveAtToSet },
+            });
+          } else if (classification === "STALE" && isCandidatePositive && existingPayment?.firstPositiveAt === null && firstPositiveAtToSet) {
+            await tx.asaasBillingPayment.update({
+              where: { asaasPaymentId: paymentObj.id },
+              data: {
+                firstPositiveAt: firstPositiveAtToSet,
               },
             });
           }
 
-          return { classification, subIdToPersist };
+          return { classification, subIdToPersist, isCandidatePositive };
         });
 
-        if (classification === "STALE") {
+        const shouldRecomputeTenant = classification === "ACCEPT" || classification === "REPLAY_CURRENT" || (classification === "STALE" && isCandidatePositive);
+
+        if (classification === "STALE" && !shouldRecomputeTenant) {
           await prisma.asaasWebhookEvent.update({
             where: { id: webhookRecord.id },
             data: {
@@ -513,7 +506,7 @@ export async function processAsaasWebhookPayload(
           return { ok: true, ignored: true };
         }
 
-        if (classification === "ACCEPT" || classification === "REPLAY_CURRENT") {
+        if (shouldRecomputeTenant) {
           const effectiveSubId = subIdToPersist || paymentObj.subscription;
           if (effectiveSubId) {
             const subRecord = await prisma.asaasBillingSubscription.findUnique({
@@ -546,9 +539,7 @@ export async function processAsaasWebhookPayload(
             }
           }
 
-          if (["RECEIVED", "CONFIRMED"].includes(mappedStatus)) {
-            await syncTenantSubscriptionAccessOnPayment(barbershopId, paymentObj);
-          }
+          await recomputeTenantSubscriptionFromPayments(barbershopId);
         }
       }
 
