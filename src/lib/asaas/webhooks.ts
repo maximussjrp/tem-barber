@@ -3,6 +3,7 @@
  * Server-side apenas — nunca expor segredos.
  */
 
+import { AsaasPaymentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getPlanByCode } from "@/lib/billing/plans-db";
 import {
@@ -356,7 +357,10 @@ export async function processAsaasWebhookPayload(
     // 4. Tratar eventos PAYMENT_*
     if (eventName.startsWith("PAYMENT_") && paymentObj) {
       if (barbershopId) {
-        const mappedStatus = mapAsaasPaymentStatus(paymentObj.status);
+        const mappedStatus =
+          eventName === "PAYMENT_DELETED"
+            ? AsaasPaymentStatus.CANCELED
+            : mapAsaasPaymentStatus(paymentObj.status);
         const paymentDateStr = paymentObj.paymentDate || paymentObj.clientPaymentDate || null;
         const sourceEventAt = parseAsaasSourceEventAt(payload.dateCreated);
         const sourceEventId = extractAsaasEventId(payload);
