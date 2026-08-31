@@ -119,6 +119,26 @@ export function selectEligiblePaymentWinner<T extends StoredPaymentForRecompute>
 }
 
 /**
+ * Preserva monotonicamente a data de término de acesso (currentPeriodEnd).
+ * Um recálculo derivado de pagamento pode EXPANDIR o período de acesso,
+ * mas NUNCA ENCURTAR uma expiração de acesso já concedida previamente (ex.: concessão manual/admin).
+ */
+export function resolveNonReducingPeriodEnd(
+  existingPeriodEnd: Date | null | undefined,
+  derivedPeriodEnd: Date | null | undefined
+): Date | null {
+  if (!existingPeriodEnd) {
+    return derivedPeriodEnd ?? null;
+  }
+  if (!derivedPeriodEnd) {
+    return existingPeriodEnd;
+  }
+  return existingPeriodEnd.getTime() > derivedPeriodEnd.getTime()
+    ? existingPeriodEnd
+    : derivedPeriodEnd;
+}
+
+/**
  * Motor de Recálculo Determinístico de Direito de Acesso do Tenant (Phase 2.3C2).
  * Executa sob trava consultiva exclusiva por tenant no nível do TenantSubscription (TX2).
  */
@@ -195,7 +215,7 @@ export async function recomputeTenantSubscriptionFromPayments(
 
     // 8. Calcular datas comerciais do período e pagamento
     const periodStart = winner.dueDate ?? winner.paymentDate ?? null;
-    const periodEnd = periodStart ? addCalendarMonthsUTC(periodStart, 1) : null;
+    const derivedPeriodEnd = periodStart ? addCalendarMonthsUTC(periodStart, 1) : null;
     const lastPaymentAt = winner.paymentDate ?? winner.dueDate ?? null;
     const paymentMethod =
       winner.billingType ??
@@ -204,6 +224,11 @@ export async function recomputeTenantSubscriptionFromPayments(
       null;
 
     if (existingSub) {
+      const preservedPeriodEnd = resolveNonReducingPeriodEnd(
+        existingSub.currentPeriodEnd,
+        derivedPeriodEnd
+      );
+
       await tx.tenantSubscription.update({
         where: { id: existingSub.id },
         data: {
@@ -211,7 +236,7 @@ export async function recomputeTenantSubscriptionFromPayments(
           planName: currentContract.planName,
           monthlyPrice: currentContract.value,
           currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd,
+          currentPeriodEnd: preservedPeriodEnd,
           gracePeriodEndsAt: null,
           paymentMethod,
           lastPaymentAt,
@@ -227,7 +252,7 @@ export async function recomputeTenantSubscriptionFromPayments(
           monthlyPrice: currentContract.value,
           status: "ACTIVE",
           currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd,
+          currentPeriodEnd: derivedPeriodEnd,
           gracePeriodEndsAt: null,
           paymentMethod,
           lastPaymentAt,
