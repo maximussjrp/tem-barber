@@ -32,6 +32,7 @@ model User {
   appointments                  Appointment[] // Histórico de agendamentos como cliente
   reviews                       Review[] // Avaliações feitas pelo cliente
   notifications                 Notification[]
+  webPushSubscriptions          WebPushSubscription[]
   comandas                      Comanda[]
   clubSubscriptions             CustomerClubSubscription[]
   clubSubscriptionPayments      ClubSubscriptionPayment[]
@@ -116,6 +117,7 @@ model Barbershop {
   comandaCancelAudits         ComandaCancelAudit[]
   blockedCustomers            BarbershopBlockedCustomer[]
   customerContactLogs         CustomerContactLog[]
+  notifications               Notification[]
 
   @@map("barbershops")
 }
@@ -156,27 +158,27 @@ model BarbershopMember {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  barbershop               Barbershop                  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  user                     User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  services                 BarberService[]
-  workingHours             WorkingHour[]
-  timeOffs                 TimeOff[]
-  appointments             Appointment[]
-  comandaItems             ComandaItem[]
-  commissionConfigs        CommissionConfig[]
-  commissionEntries        CommissionEntry[]
-  commissionPeriods        CommissionPeriod[]
-  commissionAdjustments    CommissionAdjustment[]
-  clubPointEntries         ClubPointEntry[]
-  clubSettlementMembers    ClubSettlementMember[]
-  preferredWaitlistEntries OnlineWaitlistEntry[]       @relation("WaitlistPreferredMember")
-  calledWaitlistEntries    OnlineWaitlistEntry[]       @relation("WaitlistCalledByMember")
-  onlineWaitlistConfig     OnlineWaitlistMemberConfig?
-  comandaReopenAudits      ComandaReopenAudit[]
-  comandaCancelAudits      ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
-  blockedCustomersByMe     BarbershopBlockedCustomer[] @relation("BlockedByMember")
-  unblockedCustomersByMe   BarbershopBlockedCustomer[] @relation("UnblockedByMember")
-  createdCustomerContactLogs CustomerContactLog[]       @relation("MemberCreatedCustomerContactLogs")
+  barbershop                 Barbershop                  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user                       User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services                   BarberService[]
+  workingHours               WorkingHour[]
+  timeOffs                   TimeOff[]
+  appointments               Appointment[]
+  comandaItems               ComandaItem[]
+  commissionConfigs          CommissionConfig[]
+  commissionEntries          CommissionEntry[]
+  commissionPeriods          CommissionPeriod[]
+  commissionAdjustments      CommissionAdjustment[]
+  clubPointEntries           ClubPointEntry[]
+  clubSettlementMembers      ClubSettlementMember[]
+  preferredWaitlistEntries   OnlineWaitlistEntry[]       @relation("WaitlistPreferredMember")
+  calledWaitlistEntries      OnlineWaitlistEntry[]       @relation("WaitlistCalledByMember")
+  onlineWaitlistConfig       OnlineWaitlistMemberConfig?
+  comandaReopenAudits        ComandaReopenAudit[]
+  comandaCancelAudits        ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
+  blockedCustomersByMe       BarbershopBlockedCustomer[] @relation("BlockedByMember")
+  unblockedCustomersByMe     BarbershopBlockedCustomer[] @relation("UnblockedByMember")
+  createdCustomerContactLogs CustomerContactLog[]        @relation("MemberCreatedCustomerContactLogs")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -451,17 +453,41 @@ model Review {
 }
 
 model Notification {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  title     String
-  content   String
-  type      String // "APPOINTMENT_REMINDER", "APPOINTMENT_CONFIRMED", "SYSTEM_ALERT"
-  readAt    DateTime? @map("read_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  barbershopId String?   @map("barbershop_id")
+  eventKey     String?   @unique @map("event_key")
+  title        String
+  content      String
+  type         String // "APPOINTMENT_REMINDER", "APPOINTMENT_CONFIRMED", "SYSTEM_ALERT"
+  target       String?
+  readAt       DateTime? @map("read_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  barbershop Barbershop? @relation(fields: [barbershopId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId])
+  @@map("notifications")
+}
+
+model WebPushSubscription {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  endpoint         String    @unique
+  p256dh           String
+  auth             String
+  expirationTime   DateTime? @map("expiration_time")
+  failureCount     Int       @default(0) @map("failure_count")
+  lastFailureAt    DateTime? @map("last_failure_at")
+  lastSuccessfulAt DateTime? @map("last_successful_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("notifications")
+  @@index([userId])
+  @@map("web_push_subscriptions")
 }
 
 // ----------------------------------------------------
@@ -521,7 +547,6 @@ model TenantSubscription {
   plan       Plan       @relation(fields: [planId], references: [id])
 
   @@unique([barbershopId])
-
   @@map("tenant_subscriptions")
 }
 
