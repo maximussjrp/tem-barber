@@ -35,6 +35,7 @@ import {
   selectEligiblePaymentWinner,
   StoredPaymentForRecompute,
 } from "@/lib/asaas/entitlement";
+import { parseAsaasSourceEventAt } from "@/lib/asaas/mappers";
 import { processAsaasWebhookPayload } from "@/lib/asaas/webhooks";
 import { deriveTenantSubscriptionAccess } from "@/lib/billing/subscription-access";
 
@@ -636,7 +637,10 @@ describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests"
 
   describe("9. Critical Partial-Commit Retry Invariants", () => {
     it("CASE A: TX1 ACCEPT committed, TX2 failed initially, retry classifies REPLAY_CURRENT and re-executes TX2", async () => {
-      const eventDateStr = "2026-08-01T10:00:00.000Z";
+      const eventDateStr = "2026-08-01 10:00:00";
+      const parsedEventDate = parseAsaasSourceEventAt(eventDateStr);
+      const currentDate = new Date();
+      const currentDateStr = currentDate.toISOString();
       const storedAccepted = {
         id: "p1",
         barbershopId: "shop_retry_a",
@@ -647,14 +651,14 @@ describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests"
         billingType: null,
         value: 100.0,
         netValue: null,
-        dueDate: null,
-        paymentDate: null,
+        dueDate: currentDate,
+        paymentDate: currentDate,
         invoiceUrl: null,
         bankSlipUrl: null,
         externalReference: "tb_barbershop_shop_retry_a",
-        sourceEventAt: new Date(eventDateStr),
+        sourceEventAt: parsedEventDate,
         sourceEventId: "evt_retry_a",
-        firstPositiveAt: new Date(eventDateStr),
+        firstPositiveAt: parsedEventDate,
       };
 
       prismaMock.barbershop.findUnique.mockResolvedValue({ id: "shop_retry_a" });
@@ -667,6 +671,13 @@ describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests"
         planName: "Plano Pro",
         value: 100.0,
       });
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: "plan_1",
+        code: "PRO_PLAN",
+        name: "Plano Pro",
+        price: 100.0,
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue(null);
       prismaMock.asaasBillingPayment.findMany.mockResolvedValue([storedAccepted as any]);
 
       const retryPayload = {
@@ -678,6 +689,8 @@ describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests"
           subscription: "sub_1",
           status: "RECEIVED",
           value: 100.0,
+          dueDate: currentDateStr,
+          paymentDate: currentDateStr,
           externalReference: "tb_barbershop_shop_retry_a",
         },
       };

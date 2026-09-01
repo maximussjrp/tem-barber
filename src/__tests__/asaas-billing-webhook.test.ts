@@ -884,19 +884,23 @@ describe("PR #27 — Webhook Asaas Billing", () => {
     });
 
     it("12, 13 & 14. New TenantSubscription receives correct planId, planName and monthlyPrice from AsaasBillingSubscription contract", async () => {
+      prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
       prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
         asaasPaymentId: "pay_109",
         asaasSubscriptionId: "sub_109",
         barbershopId: "shop-109",
       });
-      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue({
+      const contractObj = {
         id: "sub-new",
         barbershopId: "shop-109",
         asaasSubscriptionId: "sub_109",
         planCode: "pro_monthly",
         planName: "Plano Contratado Asaas",
         value: 49.9,
-      });
+      };
+      prismaMock.asaasBillingSubscription.findUnique.mockResolvedValue(contractObj);
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(contractObj);
       prismaMock.plan.findUnique.mockResolvedValue({
         id: "plan-pro-id",
         code: "pro_monthly",
@@ -908,6 +912,8 @@ describe("PR #27 — Webhook Asaas Billing", () => {
       await syncTenantSubscriptionAccessOnPayment("shop-109", {
         id: "pay_109",
         subscription: "sub_109",
+        dueDate: new Date(),
+        paymentDate: new Date(),
       });
 
       expect(prismaMock.tenantSubscription.create).toHaveBeenCalledWith({

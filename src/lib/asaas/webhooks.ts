@@ -19,7 +19,7 @@ import {
   sanitizeAsaasPayloadForLog,
   StoredSubscriptionSnapshot,
 } from "@/lib/asaas/mappers";
-import { recomputeTenantSubscriptionFromPayments, StoredPaymentForRecompute } from "@/lib/asaas/entitlement";
+import { reconcileTenantSubscriptionBillingState, recomputeTenantSubscriptionFromPayments, StoredPaymentForRecompute } from "@/lib/asaas/entitlement";
 
 export interface AsaasWebhookPayload {
   id?: string;
@@ -203,7 +203,7 @@ export async function syncTenantSubscriptionAccessOnPayment(
     createdAt: new Date(),
   };
 
-  await recomputeTenantSubscriptionFromPayments(barbershopId, fallbackCandidate, resolvedSubId);
+  await reconcileTenantSubscriptionBillingState(barbershopId, fallbackCandidate, resolvedSubId);
 }
 
 /**
@@ -525,7 +525,7 @@ export async function processAsaasWebhookPayload(
             }
           }
 
-          await recomputeTenantSubscriptionFromPayments(barbershopId);
+          await reconcileTenantSubscriptionBillingState(barbershopId);
         }
       }
 
