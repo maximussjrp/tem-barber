@@ -7,6 +7,7 @@ import { formatHeaderDate } from "@/lib/time-utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { sanitizeBarbershopSlug } from "@/lib/public-barbershops";
 import { isValidBrazilMobilePhone } from "@/lib/phone-utils";
+import { cleanupCurrentPushSubscriptionBeforeLogout } from "@/lib/push/logout-cleanup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -378,6 +379,7 @@ function BookingWizard() {
     setLoggingOut(true);
 
     try {
+      await cleanupCurrentPushSubscriptionBeforeLogout();
       const res = await fetch("/api/client/logout", { method: "POST" });
       if (!res.ok) {
         throw new Error("logout failed");

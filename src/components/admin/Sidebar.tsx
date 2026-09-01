@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { cleanupCurrentPushSubscriptionBeforeLogout } from "@/lib/push/logout-cleanup";
 import { useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { IconButton } from "@/components/ui/IconButton";
@@ -311,7 +312,10 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
           </div>
         </div>
         <button
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={async () => {
+            await cleanupCurrentPushSubscriptionBeforeLogout();
+            signOut({ callbackUrl: "/login" });
+          }}
           className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-text-muted hover:text-danger hover:bg-danger-subtle transition-colors mb-3"
         >
           {Icons.logout}

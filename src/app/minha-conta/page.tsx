@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { cleanupCurrentPushSubscriptionBeforeLogout } from "@/lib/push/logout-cleanup";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
 
@@ -203,6 +204,7 @@ function MinhaContaContent() {
     setLoggingOut(true);
 
     try {
+      await cleanupCurrentPushSubscriptionBeforeLogout();
       const res = await fetch("/api/client/logout", { method: "POST" });
       if (!res.ok) {
         throw new Error("logout failed");

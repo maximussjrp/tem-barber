@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { formatPhone, formatCep } from "@/lib/utils";
+import { PushNotificationControl } from "@/components/push/PushNotificationControl";
 
 interface BarbershopData {
   id: string;
@@ -321,6 +322,13 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="bg-stone-900/60 border border-stone-800 rounded-xl p-6 shadow-xl backdrop-blur-sm">
+          <h2 className="text-base font-semibold text-stone-100 mb-4 flex items-center gap-2">
+            Notificações
+          </h2>
+          <PushNotificationControl />
         </section>
 
         <div className="flex justify-end">

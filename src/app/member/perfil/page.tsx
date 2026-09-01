@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { PushNotificationControl } from "@/components/push/PushNotificationControl";
 
 interface MemberProfile {
   id: string;
@@ -256,6 +257,13 @@ export default function PerfilPage() {
           {saving ? "Salvando..." : "Salvar alterações"}
         </button>
       </form>
+
+      <div className="mt-8 border-t border-stone-800 pt-6">
+        <h2 className="text-base font-semibold text-stone-100 mb-4">
+          Notificações
+        </h2>
+        <PushNotificationControl />
+      </div>
     </div>
   );
 }

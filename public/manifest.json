@@ -3,6 +3,8 @@
   "short_name": "Tem Barber",
   "theme_color": "#050505",
   "background_color": "#050505",
+  "id": "/",
+  "scope": "/",
   "display": "standalone",
   "start_url": "/",
   "icons": [
