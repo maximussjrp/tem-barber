@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Tem Barber D2B delinquency reconciliation hourly
+
+[Timer]
+OnCalendar=*-*-* *:05:00 America/Sao_Paulo
+Persistent=true
+AccuracySec=1s
+Unit=tem-barber-d2b.service
+
+[Install]
+WantedBy=timers.target

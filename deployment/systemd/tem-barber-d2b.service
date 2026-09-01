@@ -1,0 +1,14 @@
+[Unit]
+Description=Tem Barber D2B delinquency reconciliation
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+LoadCredential=d2b-job-secret.env:/etc/tem-barber/d2b-job-secret.env
+ExecStart=/usr/local/libexec/tem-barber-d2b-trigger
+TimeoutStartSec=620
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
