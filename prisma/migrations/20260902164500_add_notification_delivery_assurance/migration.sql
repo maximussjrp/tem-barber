@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "NotificationProviderStatus" AS ENUM ('PENDING', 'ACCEPTED', 'FAILED', 'SKIPPED');
 
 -- CreateEnum

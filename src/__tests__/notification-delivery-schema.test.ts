@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
 
@@ -145,5 +145,16 @@ describe("D1.1 Notification Delivery Assurance Schema & Migration Foundation", (
 
     expect(migrationContent).toContain('CREATE UNIQUE INDEX "global_notification_preferences_user_id_category_key" ON "global_notification_preferences"("user_id", "category");');
     expect(migrationContent).toContain('CREATE UNIQUE INDEX "tenant_notification_preferences_user_id_barbershop_id_categ_key" ON "tenant_notification_preferences"("user_id", "barbershop_id", "category");');
+  });
+
+  it("13. migration file has NO UTF-8 BOM and begins with ASCII '-- CreateEnum'", () => {
+    const raw = fs.readFileSync(migrationPath);
+    expect(
+      raw.length >= 3 &&
+      raw[0] === 0xef &&
+      raw[1] === 0xbb &&
+      raw[2] === 0xbf
+    ).toBe(false);
+    expect(raw.subarray(0, "-- CreateEnum".length).toString("ascii")).toBe("-- CreateEnum");
   });
 });
