@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
+import { prepareAppointmentCreatedNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getTenantSubscription, isSubscriptionActive } from "@/lib/subscription-utils";
@@ -679,12 +681,28 @@ export async function POST(
         data: { result: idempotencyResult },
       });
 
-      return { replay: false, result };
+      return { replay: false, result, appointment };
       }
     );
 
     if ("error" in transactionResult && transactionResult.error) {
       return transactionResult.error;
+    }
+
+    if (!transactionResult.replay && transactionResult.appointment) {
+      const prepared = await prepareAppointmentCreatedNotifications({
+        appointment: transactionResult.appointment,
+      });
+
+      if (prepared.created.length > 0) {
+        after(async () => {
+          try {
+            await deliverCreatedNotifications(prepared.created);
+          } catch {
+            // Contained failure
+          }
+        });
+      }
     }
 
     return NextResponse.json(transactionResult.result, {

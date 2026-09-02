@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getAdminSession } from "@/lib/api-auth";
 import { canManageWaitlist } from "@/lib/waitlist/permissions";
 import { callNextWaitlistEntry, CallNextWaitlistError } from "@/lib/waitlist/call-next";
+import { prepareWaitlistCalledNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 
 export async function POST(request: NextRequest) {
   const auth = await getAdminSession();
@@ -34,6 +36,22 @@ export async function POST(request: NextRequest) {
       calledByUserId: userId,
       confirmPreferredMismatch: Boolean(confirmPreferredMismatch),
     });
+
+    if (result?.entry) {
+      const prepared = await prepareWaitlistCalledNotifications({
+        entry: result.entry,
+      });
+
+      if (prepared.created.length > 0) {
+        after(async () => {
+          try {
+            await deliverCreatedNotifications(prepared.created);
+          } catch {
+            // Contained failure
+          }
+        });
+      }
+    }
 
     return NextResponse.json(result, { status: 200 });
   } catch (err) {

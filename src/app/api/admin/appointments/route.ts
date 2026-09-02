@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
+import { prepareAppointmentCreatedNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
 import {
@@ -519,6 +521,24 @@ export async function POST(request: NextRequest) {
     );
 
     if ("error" in result && result.error) return result.error;
+
+    if (result.appointment) {
+      const prepared = await prepareAppointmentCreatedNotifications({
+        appointment: result.appointment,
+        actorUserId: data!.userId,
+      });
+
+      if (prepared.created.length > 0) {
+        after(async () => {
+          try {
+            await deliverCreatedNotifications(prepared.created);
+          } catch {
+            // Contained failure
+          }
+        });
+      }
+    }
+
     return NextResponse.json(result.appointment, { status: 201 });
   } catch (error) {
     if (error instanceof AppointmentConflictError) {

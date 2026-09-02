@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-
 import { phoneLookupVariants } from "@/lib/customers";
+import { prepareAppointmentCancelledByCustomerNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 
 type SessionUser = {
   id?: string;
@@ -122,10 +123,28 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  const previousStatus = appointment.status;
+
   const updated = await prisma.appointment.update({
     where: { id: body.id },
     data: { status: "CANCELLED" },
   });
+
+  const prepared = await prepareAppointmentCancelledByCustomerNotifications({
+    appointment: updated,
+    previousStatus,
+    actorUserId: userId,
+  });
+
+  if (prepared.created.length > 0) {
+    after(async () => {
+      try {
+        await deliverCreatedNotifications(prepared.created);
+      } catch {
+        // Contained failure
+      }
+    });
+  }
 
   return NextResponse.json(updated);
 }

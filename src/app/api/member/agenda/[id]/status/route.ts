@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getMemberSession } from "@/lib/member-api-auth";
+import { prepareAppointmentCancelledByStaffNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 
 const VALID_STATUSES = ["CONFIRMED", "COMPLETED", "NO_SHOW", "CANCELLED"] as const;
 type ValidStatus = (typeof VALID_STATUSES)[number];
@@ -49,6 +51,8 @@ export async function PATCH(
     );
   }
 
+  const previousStatus = appointment.status;
+
   const allowed = ALLOWED_TRANSITIONS[appointment.status] ?? [];
   if (!allowed.includes(status as ValidStatus)) {
     return NextResponse.json(
@@ -80,6 +84,24 @@ export async function PATCH(
       },
     },
   });
+
+  if (updated.status === "CANCELLED") {
+    const prepared = await prepareAppointmentCancelledByStaffNotifications({
+      appointment: updated,
+      previousStatus,
+      actorUserId: data!.userId,
+    });
+
+    if (prepared.created.length > 0) {
+      after(async () => {
+        try {
+          await deliverCreatedNotifications(prepared.created);
+        } catch {
+          // Contained failure
+        }
+      });
+    }
+  }
 
   return NextResponse.json(updated);
 }

@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
+import { prepareAppointmentCancelledByStaffNotifications } from "@/lib/push/events.server";
+import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { Prisma } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
 import {
@@ -396,6 +398,24 @@ export async function PATCH(
         });
       });
 
+      if (updatedTransaction.status === "CANCELLED") {
+        const prepared = await prepareAppointmentCancelledByStaffNotifications({
+          appointment: updatedTransaction,
+          previousStatus: existing.status,
+          actorUserId: data!.userId,
+        });
+
+        if (prepared.created.length > 0) {
+          after(async () => {
+            try {
+              await deliverCreatedNotifications(prepared.created);
+            } catch {
+              // Contained failure
+            }
+          });
+        }
+      }
+
       return NextResponse.json(updatedTransaction);
     }
   }
@@ -424,6 +444,24 @@ export async function PATCH(
       },
     },
   });
+
+  if (updated.status === "CANCELLED") {
+    const prepared = await prepareAppointmentCancelledByStaffNotifications({
+      appointment: updated,
+      previousStatus: existing.status,
+      actorUserId: data!.userId,
+    });
+
+    if (prepared.created.length > 0) {
+      after(async () => {
+        try {
+          await deliverCreatedNotifications(prepared.created);
+        } catch {
+          // Contained failure
+        }
+      });
+    }
+  }
 
   return NextResponse.json(updated);
 }
