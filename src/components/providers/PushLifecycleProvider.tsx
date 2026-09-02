@@ -3,6 +3,15 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { urlBase64ToUint8Array } from "@/lib/push/vapid-key-convert";
+import { getOrGenerateDeviceInstanceId } from "@/lib/push/device-identity.client";
+import {
+  collectClientDeviceHealth,
+  sendDeviceHealthReport,
+  diagnoseClientLocalReadiness,
+  ClientLocalReadiness,
+  detectClientBrowser,
+  detectClientPlatform,
+} from "@/lib/push/device-health.client";
 
 export type PushPermissionState =
   | "UNSUPPORTED"
@@ -23,18 +32,35 @@ export interface PushSessionUser {
   authLevel?: string;
 }
 
+export interface DeviceHealthSnapshot {
+  deviceInstanceId: string | null;
+  displayName: string | null;
+  localReadiness: ClientLocalReadiness;
+  notificationPermission: string;
+  pushPermission: string;
+  serviceWorkerState: string;
+  localSubscriptionPresent: boolean;
+  serverLinked: boolean;
+  lastVerifiedAt: Date | null;
+  healthReportStatus: "IDLE" | "REPORTING" | "REPORTED" | "FAILED";
+  isStorageAvailable: boolean;
+}
+
 export interface PushLifecycleContextValue {
   state: PushPermissionState;
   error: string | null;
   publicKey: string | null;
+  deviceHealth: DeviceHealthSnapshot | null;
   subscribe: () => Promise<void>;
   unsubscribe: () => Promise<void>;
   refetchConfig: () => Promise<void>;
+  reportDeviceHealth: () => Promise<void>;
 }
 
 const PushLifecycleContext = createContext<PushLifecycleContextValue | null>(null);
 
 const PUSH_ELIGIBLE_AUTH_LEVELS = new Set(["admin", "verified_link", "verified_otp"]);
+const HEALTH_REPORT_REFRESH_MAX_STALE = 6 * 60 * 60 * 1000; // 6 hours (21,600,000 ms)
 
 function isIosBrowser(): boolean {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
@@ -55,13 +81,27 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
   const [state, setState] = useState<PushPermissionState>("DEFAULT");
   const [error, setError] = useState<string | null>(null);
   const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [deviceHealth, setDeviceHealth] = useState<DeviceHealthSnapshot | null>(null);
 
   const activationInFlightRef = useRef<boolean>(false);
+  const reportInFlightIdentityRef = useRef<string | null>(null);
+  const lastReportTimestampRef = useRef<number>(0);
   const lastPhoneLookupCleanupIdentityRef = useRef<string | null>(null);
+  const serverLinkedRef = useRef<boolean>(false);
 
   const user = session?.user as PushSessionUser | undefined;
   const userId = user?.id;
   const authLevel = user?.authLevel;
+
+  const currentIdentityToken = userId && authLevel ? `${userId}:${authLevel}` : null;
+  const currentIdentityRef = useRef<string | null>(currentIdentityToken);
+
+  useEffect(() => {
+    currentIdentityRef.current = currentIdentityToken;
+    if (!currentIdentityToken || !authLevel || !PUSH_ELIGIBLE_AUTH_LEVELS.has(authLevel)) {
+      serverLinkedRef.current = false;
+    }
+  }, [currentIdentityToken, authLevel]);
 
   const fetchConfig = useCallback(async (): Promise<string | null> => {
     try {
@@ -100,6 +140,97 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
     }
   }, []);
 
+  const reportDeviceHealth = useCallback(
+    async (forcedDeviceId?: string | null, knownServerLinked?: boolean) => {
+      const activeIdentity = currentIdentityRef.current;
+      if (!activeIdentity || !userId || !authLevel || !PUSH_ELIGIBLE_AUTH_LEVELS.has(authLevel)) {
+        return;
+      }
+
+      if (reportInFlightIdentityRef.current === activeIdentity) {
+        return;
+      }
+      reportInFlightIdentityRef.current = activeIdentity;
+
+      if (knownServerLinked !== undefined) {
+        serverLinkedRef.current = knownServerLinked;
+      }
+
+      const deviceInstanceId =
+        forcedDeviceId !== undefined
+          ? forcedDeviceId
+          : getOrGenerateDeviceInstanceId(userId, authLevel);
+
+      const isStorageAvailable = Boolean(deviceInstanceId);
+
+      setDeviceHealth((prev) => (prev ? { ...prev, healthReportStatus: "REPORTING" } : null));
+
+      try {
+        if (!deviceInstanceId) {
+          // Storage unavailable: collect local telemetry only. No fabricated UUID, do not POST to server.
+          const localTelemetry = await collectClientDeviceHealth(null, { publicKey });
+          if (currentIdentityRef.current !== activeIdentity) return;
+
+          const readiness = diagnoseClientLocalReadiness(localTelemetry);
+          const browser = detectClientBrowser();
+          const platform = detectClientPlatform();
+
+          setDeviceHealth({
+            deviceInstanceId: null,
+            displayName: `${browser} no ${platform}`,
+            localReadiness: readiness,
+            notificationPermission: localTelemetry.notificationPermission,
+            pushPermission: localTelemetry.pushPermission,
+            serviceWorkerState: localTelemetry.serviceWorkerState,
+            localSubscriptionPresent: localTelemetry.localSubscriptionPresent,
+            serverLinked: false,
+            lastVerifiedAt: new Date(),
+            healthReportStatus: "IDLE",
+            isStorageAvailable: false,
+          });
+          return;
+        }
+
+        const telemetry = await collectClientDeviceHealth(deviceInstanceId, { publicKey });
+        if (currentIdentityRef.current !== activeIdentity) return;
+
+        const ok = await sendDeviceHealthReport(telemetry);
+        if (currentIdentityRef.current !== activeIdentity) return;
+
+        if (ok) {
+          lastReportTimestampRef.current = Date.now();
+        }
+
+        const readiness = diagnoseClientLocalReadiness(telemetry);
+        const browser = detectClientBrowser();
+        const platform = detectClientPlatform();
+
+        setDeviceHealth({
+          deviceInstanceId,
+          displayName: `${browser} no ${platform}`,
+          localReadiness: readiness,
+          notificationPermission: telemetry.notificationPermission,
+          pushPermission: telemetry.pushPermission,
+          serviceWorkerState: telemetry.serviceWorkerState,
+          localSubscriptionPresent: telemetry.localSubscriptionPresent,
+          serverLinked: serverLinkedRef.current,
+          lastVerifiedAt: new Date(),
+          healthReportStatus: ok ? "REPORTED" : "FAILED",
+          isStorageAvailable: true,
+        });
+      } catch {
+        if (currentIdentityRef.current === activeIdentity) {
+          setDeviceHealth((prev) => (prev ? { ...prev, healthReportStatus: "FAILED" } : null));
+        }
+      } finally {
+        if (reportInFlightIdentityRef.current === activeIdentity) {
+          reportInFlightIdentityRef.current = null;
+        }
+      }
+    },
+    [userId, authLevel, publicKey]
+  );
+
   // Main lifecycle effect using stable primitive dependencies
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -121,6 +252,8 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
     if (status === "unauthenticated" || !userId || !authLevel) {
       setState("SIGNED_OUT");
+      setDeviceHealth(null);
+      serverLinkedRef.current = false;
       lastPhoneLookupCleanupIdentityRef.current = null;
       return;
     }
@@ -128,6 +261,8 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
     // phone_lookup security cleanup & dedupe
     if (authLevel === "phone_lookup") {
       setState("AUTH_INELIGIBLE");
+      setDeviceHealth(null);
+      serverLinkedRef.current = false;
       const currentIdentity = `${userId}:phone_lookup`;
       if (lastPhoneLookupCleanupIdentityRef.current !== currentIdentity) {
         lastPhoneLookupCleanupIdentityRef.current = currentIdentity;
@@ -176,6 +311,8 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
     if (!PUSH_ELIGIBLE_AUTH_LEVELS.has(authLevel)) {
       setState("AUTH_INELIGIBLE");
+      setDeviceHealth(null);
+      serverLinkedRef.current = false;
       return;
     }
 
@@ -196,6 +333,7 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
       const perm = Notification.permission;
       if (perm === "denied") {
         setState("DENIED");
+        void reportDeviceHealth();
         return;
       }
 
@@ -207,21 +345,35 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
             const serialized = sub.toJSON();
             if (serialized.endpoint && serialized.keys?.p256dh && serialized.keys?.auth) {
               try {
+                const deviceInstanceId = getOrGenerateDeviceInstanceId(userId, authLevel);
+                const postBody: {
+                  endpoint: string;
+                  expirationTime: number | null;
+                  keys: { p256dh: string; auth: string };
+                  deviceInstanceId?: string;
+                } = {
+                  endpoint: serialized.endpoint,
+                  expirationTime: serialized.expirationTime ?? null,
+                  keys: {
+                    p256dh: serialized.keys.p256dh,
+                    auth: serialized.keys.auth,
+                  },
+                };
+                if (deviceInstanceId) {
+                  postBody.deviceInstanceId = deviceInstanceId;
+                }
+
                 const res = await fetch("/api/push/subscribe", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    endpoint: serialized.endpoint,
-                    expirationTime: serialized.expirationTime ?? null,
-                    keys: {
-                      p256dh: serialized.keys.p256dh,
-                      auth: serialized.keys.auth,
-                    },
-                  }),
+                  body: JSON.stringify(postBody),
                 });
                 if (!isMounted) return;
                 if (res.ok) {
+                  const data = await res.json().catch(() => ({}));
+                  const isDeviceLinked = data?.deviceLinked === true;
                   setState("ACTIVE");
+                  void reportDeviceHealth(deviceInstanceId, isDeviceLinked);
                   return;
                 }
                 if (res.status === 409) {
@@ -245,16 +397,71 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
           }
         }
         setState("GRANTED_NOT_SUBSCRIBED");
+        void reportDeviceHealth();
         return;
       }
 
       setState(key ? "DEFAULT" : "CONFIG_LOADING");
+      void reportDeviceHealth();
     })();
 
     return () => {
       isMounted = false;
     };
-  }, [status, userId, authLevel, fetchConfig, registerServiceWorker]);
+  }, [status, userId, authLevel, fetchConfig, registerServiceWorker, reportDeviceHealth]);
+
+  // Permission monitoring and visibility/focus telemetry refreshes
+  useEffect(() => {
+    if (typeof window === "undefined" || !userId || !authLevel || !PUSH_ELIGIBLE_AUTH_LEVELS.has(authLevel)) {
+      return;
+    }
+
+    let isDisposed = false;
+    let permStatus: PermissionStatus | null = null;
+    const handlePermChange = () => {
+      void reportDeviceHealth();
+    };
+
+    if ("permissions" in navigator && typeof navigator.permissions.query === "function") {
+      navigator.permissions
+        .query({ name: "notifications" as PermissionName })
+        .then((status) => {
+          if (isDisposed) return;
+          permStatus = status;
+          permStatus.addEventListener("change", handlePermChange);
+        })
+        .catch(() => {
+          // Safe fallback
+        });
+    }
+
+    const handleFocus = () => {
+      const now = Date.now();
+      if (now - lastReportTimestampRef.current > HEALTH_REPORT_REFRESH_MAX_STALE) {
+        void reportDeviceHealth();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastReportTimestampRef.current > HEALTH_REPORT_REFRESH_MAX_STALE) {
+        void reportDeviceHealth();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      isDisposed = true;
+      if (permStatus) {
+        permStatus.removeEventListener("change", handlePermChange);
+      }
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [userId, authLevel, reportDeviceHealth]);
 
   const subscribe = useCallback(async () => {
     if (activationInFlightRef.current) return;
@@ -262,7 +469,11 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
     setError(null);
     try {
-      const isSupported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+      const isSupported =
+        typeof window !== "undefined" &&
+        "serviceWorker" in navigator &&
+        "PushManager" in window &&
+        "Notification" in window;
       if (!isSupported) {
         setState("UNSUPPORTED");
         return;
@@ -297,6 +508,7 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
       if (permission !== "granted") {
         setState(permission === "denied" ? "DENIED" : "DEFAULT");
+        void reportDeviceHealth();
         return;
       }
 
@@ -322,13 +534,12 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
         return;
       }
 
+      const deviceInstanceId = getOrGenerateDeviceInstanceId(userId, authLevel);
       const postBody = {
         endpoint: serialized.endpoint,
         expirationTime: serialized.expirationTime ?? null,
-        keys: {
-          p256dh: serialized.keys.p256dh,
-          auth: serialized.keys.auth,
-        },
+        keys: { p256dh: serialized.keys.p256dh, auth: serialized.keys.auth },
+        ...(deviceInstanceId ? { deviceInstanceId } : {}),
       };
 
       const res = await fetch("/api/push/subscribe", {
@@ -338,7 +549,10 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
       });
 
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const isDeviceLinked = data?.deviceLinked === true;
         setState("ACTIVE");
+        void reportDeviceHealth(deviceInstanceId, isDeviceLinked);
         return;
       }
 
@@ -378,21 +592,27 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
           return;
         }
 
+        const recoveryPostBody = {
+          endpoint: freshSerialized.endpoint,
+          expirationTime: freshSerialized.expirationTime ?? null,
+          keys: {
+            p256dh: freshSerialized.keys.p256dh,
+            auth: freshSerialized.keys.auth,
+          },
+          ...(deviceInstanceId ? { deviceInstanceId } : {}),
+        };
+
         const recoveryRes = await fetch("/api/push/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            endpoint: freshSerialized.endpoint,
-            expirationTime: freshSerialized.expirationTime ?? null,
-            keys: {
-              p256dh: freshSerialized.keys.p256dh,
-              auth: freshSerialized.keys.auth,
-            },
-          }),
+          body: JSON.stringify(recoveryPostBody),
         });
 
         if (recoveryRes.ok) {
+          const recoveryData = await recoveryRes.json().catch(() => ({}));
+          const recoveryDeviceLinked = recoveryData?.deviceLinked === true;
           setState("ACTIVE");
+          void reportDeviceHealth(deviceInstanceId, recoveryDeviceLinked);
           return;
         }
 
@@ -407,7 +627,7 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
     } finally {
       activationInFlightRef.current = false;
     }
-  }, [authLevel, publicKey, fetchConfig, registerServiceWorker]);
+  }, [authLevel, publicKey, userId, fetchConfig, registerServiceWorker, reportDeviceHealth]);
 
   const unsubscribe = useCallback(async () => {
     setError(null);
@@ -437,11 +657,13 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
           await sub.unsubscribe();
         }
       }
+      serverLinkedRef.current = false;
       setState(Notification.permission === "granted" ? "GRANTED_NOT_SUBSCRIBED" : "DEFAULT");
+      void reportDeviceHealth();
     } catch {
       setState("ERROR");
     }
-  }, []);
+  }, [reportDeviceHealth]);
 
   return (
     <PushLifecycleContext.Provider
@@ -449,10 +671,14 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
         state,
         error,
         publicKey,
+        deviceHealth,
         subscribe,
         unsubscribe,
         refetchConfig: async () => {
           await fetchConfig();
+        },
+        reportDeviceHealth: async () => {
+          await reportDeviceHealth();
         },
       }}
     >

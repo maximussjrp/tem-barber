@@ -24,11 +24,18 @@ vi.mock("@/lib/push/web-push.server", () => ({
 vi.mock("@/lib/prisma", () => ({
   default: {
     webPushSubscription: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    pushDevice: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -144,7 +151,7 @@ describe("P0.1B Push API Routes & Server Mechanics", () => {
         user: { id: "admin-1", authLevel: "admin" },
       });
       vi.mocked(prisma.webPushSubscription.findUnique).mockResolvedValue(null);
-      vi.mocked(prisma.webPushSubscription.create).mockResolvedValue({} as never);
+      vi.mocked(prisma.webPushSubscription.create).mockResolvedValue({ id: "sub-created-1" } as never);
 
       // Accepted parameter
       const validMediaReq = makeRequest(validBody, { "content-type": "application/json; charset=utf-8" });
@@ -249,6 +256,8 @@ describe("P0.1B Push API Routes & Server Mechanics", () => {
 
       const res = await subscribe(makeRequest(validBody));
       expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toEqual({ ok: true, deviceLinked: false });
 
       expect(prisma.webPushSubscription.updateMany).toHaveBeenCalledWith({
         where: {
@@ -306,9 +315,117 @@ describe("P0.1B Push API Routes & Server Mechanics", () => {
         },
         data: expect.objectContaining({
           userId: "user-b",
+          deviceId: null,
           failureCount: 0,
         }),
       });
+    });
+
+    it("accepts D2 subscribe payload with valid deviceInstanceId and links device", async () => {
+      vi.mocked(getServerSession).mockResolvedValueOnce({
+        user: { id: "admin-1", authLevel: "admin" },
+      });
+
+      vi.mocked(prisma.webPushSubscription.findUnique).mockResolvedValueOnce({
+        id: "sub-100",
+        endpoint: validBody.endpoint,
+        userId: "admin-1",
+        deviceId: null,
+        p256dh: "oldP256dh",
+        auth: "oldAuth",
+        expirationTime: null,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSuccessfulAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      vi.mocked(prisma.webPushSubscription.updateMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.pushDevice.findUnique).mockResolvedValue({
+        id: "dev-100",
+        userId: "admin-1",
+        deviceInstanceId: "e3f94c08-724a-4a6c-9c02-e25f82470a29",
+        platform: null,
+        browser: null,
+        deviceClass: null,
+        displayName: null,
+        localReadiness: null,
+        notificationPermission: null,
+        pushPermission: null,
+        serviceWorkerState: null,
+        lastSeenAt: null,
+        lastHealthCheckAt: null,
+        lastSubscriptionReconciledAt: null,
+        lastPushReceiptAt: null,
+        lastNotificationCreatedAt: null,
+        lastNotificationClickAt: null,
+        revokedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      vi.mocked(prisma.pushDevice.update).mockResolvedValue({
+        id: "dev-100",
+        userId: "admin-1",
+        deviceInstanceId: "e3f94c08-724a-4a6c-9c02-e25f82470a29",
+        platform: null,
+        browser: null,
+        deviceClass: null,
+        displayName: null,
+        localReadiness: null,
+        notificationPermission: null,
+        pushPermission: null,
+        serviceWorkerState: null,
+        lastSeenAt: null,
+        lastHealthCheckAt: null,
+        lastSubscriptionReconciledAt: null,
+        lastPushReceiptAt: null,
+        lastNotificationCreatedAt: null,
+        lastNotificationClickAt: null,
+        revokedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      vi.mocked(prisma.$transaction).mockImplementation(async (cb) => {
+        const tx = {
+          webPushSubscription: {
+            findFirst: vi.fn().mockResolvedValue(null),
+            deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          pushDevice: {
+            update: vi.fn().mockResolvedValue({ id: "dev-100" }),
+          },
+        };
+        const callback = cb as unknown as (txClient: typeof tx) => Promise<unknown>;
+        return callback(tx);
+      });
+
+      const res = await subscribe(
+        makeRequest({
+          ...validBody,
+          deviceInstanceId: "e3f94c08-724a-4a6c-9c02-e25f82470a29",
+        })
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toEqual({ ok: true, deviceLinked: true });
+    });
+
+    it("rejects subscribe payload with invalid deviceInstanceId (non-UUID)", async () => {
+      vi.mocked(getServerSession).mockResolvedValueOnce({
+        user: { id: "admin-1", authLevel: "admin" },
+      });
+
+      const res = await subscribe(
+        makeRequest({
+          ...validBody,
+          deviceInstanceId: "invalid-device-id",
+        })
+      );
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data).toEqual({ error: "INVALID_REQUEST" });
     });
 
     it("performs single race re-read if conditional updateMany count === 0", async () => {

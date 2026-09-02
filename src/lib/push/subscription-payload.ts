@@ -7,6 +7,7 @@ export interface SubscribeRequestBody {
   endpoint: string;
   expirationTime?: number | null;
   keys: PushKeysPayload;
+  deviceInstanceId?: string | null;
 }
 
 export interface UnsubscribeRequestBody {
@@ -19,6 +20,7 @@ export interface ValidatedSubscribePayload {
   expirationTime: Date | null;
   p256dh: string;
   auth: string;
+  deviceInstanceId?: string | null;
 }
 
 export interface ValidatedUnsubscribePayload {
@@ -87,7 +89,7 @@ function parseExpirationTime(expirationTime: unknown): Date | null | "INVALID" {
 export function parseSubscribeBody(body: unknown): ValidatedSubscribePayload | null {
   if (!isObject(body)) return null;
 
-  const allowedTopLevel = new Set(["endpoint", "expirationTime", "keys"]);
+  const allowedTopLevel = new Set(["endpoint", "expirationTime", "keys", "deviceInstanceId"]);
   for (const k of Object.keys(body)) {
     if (!allowedTopLevel.has(k)) return null;
   }
@@ -101,11 +103,22 @@ export function parseSubscribeBody(body: unknown): ValidatedSubscribePayload | n
   const expDate = parseExpirationTime(body.expirationTime);
   if (expDate === "INVALID") return null;
 
+  let deviceInstanceId: string | null = null;
+  if (body.deviceInstanceId !== undefined && body.deviceInstanceId !== null) {
+    if (typeof body.deviceInstanceId !== "string") return null;
+    const trimmed = body.deviceInstanceId.trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)) {
+      return null;
+    }
+    deviceInstanceId = trimmed;
+  }
+
   return {
     endpoint,
     expirationTime: expDate,
     p256dh: keys.p256dh,
     auth: keys.auth,
+    deviceInstanceId,
   };
 }
 
