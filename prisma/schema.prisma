@@ -48,6 +48,9 @@ model User {
   unblockedCustomersByMe        BarbershopBlockedCustomer[]       @relation("UnblockedByUser")
   customerContactLogs           CustomerContactLog[]              @relation("CustomerContactLogs")
   createdCustomerContactLogs    CustomerContactLog[]              @relation("CreatedCustomerContactLogs")
+  pushDevices                   PushDevice[]
+  globalNotificationPreferences GlobalNotificationPreference[]
+  tenantNotificationPreferences TenantNotificationPreference[]
 
   @@map("users")
 }
@@ -118,6 +121,7 @@ model Barbershop {
   blockedCustomers            BarbershopBlockedCustomer[]
   customerContactLogs         CustomerContactLog[]
   notifications               Notification[]
+  tenantNotificationPreferences TenantNotificationPreference[]
 
   @@map("barbershops")
 }
@@ -464,27 +468,157 @@ model Notification {
   readAt       DateTime? @map("read_at")
   createdAt    DateTime  @default(now()) @map("created_at")
 
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  barbershop Barbershop? @relation(fields: [barbershopId], references: [id], onDelete: SetNull)
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  barbershop Barbershop?            @relation(fields: [barbershopId], references: [id], onDelete: SetNull)
+  deliveries NotificationDelivery[]
 
   @@index([barbershopId])
   @@map("notifications")
 }
 
-model WebPushSubscription {
-  id               String    @id @default(uuid())
-  userId           String    @map("user_id")
-  endpoint         String    @unique
-  p256dh           String
-  auth             String
-  expirationTime   DateTime? @map("expiration_time")
-  failureCount     Int       @default(0) @map("failure_count")
-  lastFailureAt    DateTime? @map("last_failure_at")
-  lastSuccessfulAt DateTime? @map("last_successful_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+enum NotificationProviderStatus {
+  PENDING
+  ACCEPTED
+  FAILED
+  SKIPPED
+}
+
+enum NotificationCategory {
+  APPOINTMENT
+  WAITLIST
+  FINANCIAL
+  SYSTEM
+}
+
+model PushDevice {
+  id                           String                 @id @default(uuid())
+  userId                       String                 @map("user_id")
+  deviceInstanceId             String                 @map("device_instance_id")
+
+  platform                     String?
+  browser                      String?
+  deviceClass                  String?                @map("device_class")
+  displayName                  String?                @map("display_name")
+
+  localReadiness               String?                @map("local_readiness")
+  notificationPermission       String?                @map("notification_permission")
+  pushPermission               String?                @map("push_permission")
+  serviceWorkerState           String?                @map("service_worker_state")
+
+  lastSeenAt                   DateTime?              @map("last_seen_at")
+  lastHealthCheckAt            DateTime?              @map("last_health_check_at")
+  lastSubscriptionReconciledAt DateTime?              @map("last_subscription_reconciled_at")
+  lastPushReceiptAt            DateTime?              @map("last_push_receipt_at")
+  lastNotificationCreatedAt    DateTime?              @map("last_notification_created_at")
+  lastNotificationClickAt      DateTime?              @map("last_notification_click_at")
+
+  revokedAt                    DateTime?              @map("revoked_at")
+
+  createdAt                    DateTime               @default(now()) @map("created_at")
+  updatedAt                    DateTime               @updatedAt @map("updated_at")
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription WebPushSubscription?
+  deliveries   NotificationDelivery[]
+
+  @@unique([userId, deviceInstanceId])
+  @@index([userId, revokedAt])
+  @@index([lastSeenAt])
+  @@map("push_devices")
+}
+
+model NotificationDelivery {
+  id                            String                     @id @default(uuid())
+  notificationId                String                     @map("notification_id")
+  deviceId                      String?                    @map("device_id")
+  subscriptionId                String?                    @map("subscription_id")
+
+  endpointHash                  String                     @map("endpoint_hash")
+  idempotencyKey                String                     @unique @map("idempotency_key")
+
+  providerStatus                NotificationProviderStatus @default(PENDING) @map("provider_status")
+
+  providerStatusCode            Int?                       @map("provider_status_code")
+  providerAcceptedAt            DateTime?                  @map("provider_accepted_at")
+
+  attemptCount                  Int                        @default(0) @map("attempt_count")
+  failureClassification         String?                    @map("failure_classification")
+
+  receiptTokenHash              String?                    @map("receipt_token_hash")
+  receiptTokenExpiresAt         DateTime?                  @map("receipt_token_expires_at")
+
+  serviceWorkerReceivedAt       DateTime?                  @map("service_worker_received_at")
+
+  browserNotificationCreatedAt  DateTime?                  @map("browser_notification_created_at")
+  browserNotificationFailedAt   DateTime?                  @map("browser_notification_failed_at")
+  browserFailureClassification  String?                    @map("browser_failure_classification")
+
+  clickedAt                     DateTime?                  @map("clicked_at")
+  closedAt                      DateTime?                  @map("closed_at")
+
+  createdAt                     DateTime                   @default(now()) @map("created_at")
+  updatedAt                     DateTime                   @updatedAt @map("updated_at")
+
+  notification Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  device       PushDevice?         @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  subscription WebPushSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([notificationId])
+  @@index([deviceId, createdAt])
+  @@index([subscriptionId])
+  @@index([providerStatus, serviceWorkerReceivedAt, createdAt])
+  @@map("notification_deliveries")
+}
+
+model GlobalNotificationPreference {
+  id           String               @id @default(uuid())
+  userId       String               @map("user_id")
+  category     NotificationCategory
+  inAppEnabled Boolean              @default(true) @map("in_app_enabled")
+  pushEnabled  Boolean              @default(true) @map("push_enabled")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@map("global_notification_preferences")
+}
+
+model TenantNotificationPreference {
+  id           String               @id @default(uuid())
+  userId       String               @map("user_id")
+  barbershopId String               @map("barbershop_id")
+  category     NotificationCategory
+  inAppEnabled Boolean              @default(true) @map("in_app_enabled")
+  pushEnabled  Boolean              @default(true) @map("push_enabled")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, barbershopId, category])
+  @@map("tenant_notification_preferences")
+}
+
+model WebPushSubscription {
+  id               String                 @id @default(uuid())
+  userId           String                 @map("user_id")
+  deviceId         String?                @unique @map("device_id")
+  endpoint         String                 @unique
+  p256dh           String
+  auth             String
+  expirationTime   DateTime?              @map("expiration_time")
+  failureCount     Int                    @default(0) @map("failure_count")
+  lastFailureAt    DateTime?              @map("last_failure_at")
+  lastSuccessfulAt DateTime?              @map("last_successful_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device     PushDevice?            @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  deliveries NotificationDelivery[]
 
   @@index([userId])
   @@map("web_push_subscriptions")
