@@ -63,6 +63,31 @@ export interface ClientDeviceHealthPayload {
   isStandalone: boolean;
 }
 
+export function deriveClientDeviceDisplayName(
+  platform: ClientPlatform,
+  browser: ClientBrowser
+): string {
+  const browserLabels: Record<ClientBrowser, string> = {
+    CHROME: "Chrome",
+    EDGE: "Edge",
+    SAFARI: "Safari",
+    FIREFOX: "Firefox",
+    OTHER: "Navegador",
+  };
+
+  const platformLabels: Record<ClientPlatform, string> = {
+    ANDROID: "Android",
+    IOS: "iPhone/iPad",
+    WINDOWS: "Windows",
+    MACOS: "Mac",
+    LINUX: "Linux",
+    CHROMEOS: "ChromeOS",
+    OTHER: "Dispositivo",
+  };
+
+  return `${browserLabels[browser]} no ${platformLabels[platform]}`;
+}
+
 export function detectClientPlatform(): ClientPlatform {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
     return "OTHER";

@@ -11,6 +11,7 @@ import {
   ClientLocalReadiness,
   detectClientBrowser,
   detectClientPlatform,
+  deriveClientDeviceDisplayName,
 } from "@/lib/push/device-health.client";
 
 export type PushPermissionState =
@@ -177,7 +178,7 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
           setDeviceHealth({
             deviceInstanceId: null,
-            displayName: `${browser} no ${platform}`,
+            displayName: deriveClientDeviceDisplayName(platform, browser),
             localReadiness: readiness,
             notificationPermission: localTelemetry.notificationPermission,
             pushPermission: localTelemetry.pushPermission,
@@ -207,7 +208,7 @@ export function PushLifecycleProvider({ children }: { children: React.ReactNode 
 
         setDeviceHealth({
           deviceInstanceId,
-          displayName: `${browser} no ${platform}`,
+          displayName: deriveClientDeviceDisplayName(platform, browser),
           localReadiness: readiness,
           notificationPermission: telemetry.notificationPermission,
           pushPermission: telemetry.pushPermission,

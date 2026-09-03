@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "fs";
+import path from "path";
 
 vi.mock("server-only", () => ({}));
 
@@ -15,6 +17,7 @@ import {
   detectClientBrowser,
   detectClientDeviceClass,
   diagnoseClientLocalReadiness,
+  deriveClientDeviceDisplayName,
 } from "@/lib/push/device-health.client";
 import { POST as deviceHealthPOST } from "@/app/api/push/device-health/route";
 import prisma from "@/lib/prisma";
@@ -677,6 +680,36 @@ describe("P0.1D - D2.3: Device Health Server Helpers & Route", () => {
   });
 
   describe("4. Client Diagnostics Parity", () => {
+    it.each([
+      ["WINDOWS", "CHROME", "Chrome no Windows"],
+      ["ANDROID", "CHROME", "Chrome no Android"],
+      ["WINDOWS", "EDGE", "Edge no Windows"],
+      ["IOS", "SAFARI", "Safari no iPhone/iPad"],
+      ["LINUX", "FIREFOX", "Firefox no Linux"],
+      ["OTHER", "OTHER", "Navegador no Dispositivo"],
+    ] as const)(
+      "formats bounded client device labels for %s + %s",
+      (platform, browser, expected) => {
+        expect(deriveClientDeviceDisplayName(platform, browser)).toBe(expected);
+      }
+    );
+
+    it("uses the bounded formatter for both provider device snapshots", () => {
+      const providerPath = path.join(
+        process.cwd(),
+        "src",
+        "components",
+        "providers",
+        "PushLifecycleProvider.tsx"
+      );
+      const providerSource = fs.readFileSync(providerPath, "utf-8");
+
+      expect(providerSource).not.toContain("`${browser} no ${platform}`");
+      expect(
+        providerSource.match(/deriveClientDeviceDisplayName\(platform, browser\)/g)
+      ).toHaveLength(2);
+    });
+
     it("diagnoses client local readiness matching server decision table parity", () => {
       expect(
         diagnoseClientLocalReadiness({
