@@ -67,9 +67,18 @@ function createInMemoryTx(initialState?: Partial<InMemoryState>) {
     },
     barbershopMember: {
       findMany: async ({ where }: any = {}) => {
-        return state.members.filter((m) => !where?.barbershopId || m.barbershopId === where.barbershopId);
+        return state.members.filter((m) => {
+          if (where?.barbershopId && m.barbershopId !== where.barbershopId) return false;
+          if (where?.OR) {
+            const hasLegacyEntries = state.commissionEntries.some((e) => e.memberId === m.id);
+            const hasLegacyPeriods = state.commissionPeriods.some((p) => p.memberId === m.id);
+            const hasLegacyAdjustments = state.commissionAdjustments.some((a) => a.memberId === m.id);
+            return hasLegacyEntries || hasLegacyPeriods || hasLegacyAdjustments;
+          }
+          return true;
+        });
       },
-      findUnique: async ({ where }: any) => {
+      findUnique: async ({ where }: any = {}) => {
         return state.members.find((m) => m.id === where.id) || null;
       },
     },
@@ -1331,5 +1340,222 @@ describe("C11.2 Legacy Schema Cutover and Idempotent Backfill", () => {
 
     expect(state.commissionCycles.length).toBe(4); // 2 historical PAID + 2 current OPEN
     expect(state.commissionPayouts.length).toBe(2); // 1 per historical PAID cycle
+  });
+
+  describe("C16.2 Provisioning Hotfix: Avoid Empty Cycles Without Legacy Provenance", () => {
+    it("Case A: Tenant with OWNER and BARBER having no commission history -> 0 cycles created", async () => {
+      const shopId = "shop-empty";
+      const ownerId = "member-owner-empty";
+      const barberId = "member-barber-empty";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Empty Shop" }],
+        members: [
+          { id: ownerId, barbershopId: shopId, userId: "user-owner", role: "OWNER" },
+          { id: barberId, barbershopId: shopId, userId: "user-barber", role: "BARBER" },
+        ],
+        commissionEntries: [],
+        commissionPeriods: [],
+        commissionAdjustments: [],
+      });
+
+      const summary = await applyCutoverForTenant(tx, shopId);
+      expect(summary.openCyclesCreatedOrReused).toBe(0);
+      expect(summary.historicalPaidCyclesCreated).toBe(0);
+      expect(summary.reconciledMembersCount).toBe(0);
+      expect(state.commissionCycles.length).toBe(0);
+    });
+
+    it("Case B: Member with outstanding CommissionEntry -> 1 OPEN cycle with liability", async () => {
+      const shopId = "shop-b";
+      const memberId = "member-b";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Shop B" }],
+        members: [{ id: memberId, barbershopId: shopId, userId: "user-b", role: "BARBER" }],
+        commissionEntries: [
+          {
+            id: "entry-b1",
+            barbershopId: shopId,
+            memberId,
+            comandaItemId: "item-b1",
+            competence: "2026-08",
+            baseAmount: new Prisma.Decimal("100.00"),
+            generatedAmount: new Prisma.Decimal("40.00"),
+            releasedAmount: new Prisma.Decimal("40.00"),
+            paidAmount: new Prisma.Decimal("0.00"),
+            reversedAmount: new Prisma.Decimal("0.00"),
+            attributionVersion: 1,
+            isCurrent: true,
+          },
+        ],
+        commissionPeriods: [],
+        commissionAdjustments: [],
+      });
+
+      const summary = await applyCutoverForTenant(tx, shopId);
+      expect(summary.openCyclesCreatedOrReused).toBe(1);
+      expect(summary.unpaidPayableItemsCreated).toBe(1);
+      expect(state.commissionCycles.length).toBe(1);
+      expect(state.commissionCycles[0].status).toBe(CommissionCycleStatus.OPEN);
+      expect(Number(state.commissionCycles[0].remainingBalance)).toBe(40);
+    });
+
+    it("Case C: Member with historical PAID period -> 1 PAID cycle + 1 successor OPEN cycle", async () => {
+      const shopId = "shop-c";
+      const memberId = "member-c";
+      const actorId = "user-actor-c";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Shop C" }],
+        users: [{ id: actorId, name: "Actor C" }],
+        members: [{ id: memberId, barbershopId: shopId, userId: "user-c", role: "BARBER" }],
+        commissionPeriods: [
+          {
+            id: "period-c1",
+            barbershopId: shopId,
+            memberId,
+            competence: "2026-07",
+            status: "PAID",
+            releasedAmount: new Prisma.Decimal("50.00"),
+            paidAmount: new Prisma.Decimal("50.00"),
+            paidById: actorId,
+            paidAt: new Date("2026-08-05"),
+          },
+        ],
+        commissionEntries: [
+          {
+            id: "entry-c1",
+            barbershopId: shopId,
+            memberId,
+            comandaItemId: "item-c1",
+            competence: "2026-07",
+            baseAmount: new Prisma.Decimal("100.00"),
+            generatedAmount: new Prisma.Decimal("50.00"),
+            releasedAmount: new Prisma.Decimal("50.00"),
+            paidAmount: new Prisma.Decimal("50.00"),
+            reversedAmount: new Prisma.Decimal("0.00"),
+            paidAt: new Date("2026-08-05"),
+            commissionPeriodId: "period-c1",
+            attributionVersion: 1,
+            isCurrent: true,
+          },
+        ],
+        commissionAdjustments: [],
+      });
+
+      const summary = await applyCutoverForTenant(tx, shopId);
+      expect(summary.historicalPaidCyclesCreated).toBe(1);
+      expect(summary.openCyclesCreatedOrReused).toBe(1);
+      expect(state.commissionCycles.length).toBe(2);
+      expect(state.commissionCycles.filter((c) => c.status === CommissionCycleStatus.PAID).length).toBe(1);
+      expect(state.commissionCycles.filter((c) => c.status === CommissionCycleStatus.OPEN).length).toBe(1);
+    });
+
+    it("Case D: Member with legacy CommissionAdjustment provenance only -> OPEN cycle created", async () => {
+      const shopId = "shop-d";
+      const memberId = "member-d";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Shop D" }],
+        members: [{ id: memberId, barbershopId: shopId, userId: "user-d", role: "BARBER" }],
+        commissionPeriods: [],
+        commissionEntries: [],
+        commissionAdjustments: [
+          {
+            id: "adj-d1",
+            barbershopId: shopId,
+            memberId,
+            type: "PAID_ADJUSTMENT",
+            amount: new Prisma.Decimal("15.00"),
+            description: "Legacy unliquidated bonus",
+            competence: "2026-08",
+            createdAt: new Date("2026-08-10"),
+          },
+        ],
+      });
+
+      const summary = await applyCutoverForTenant(tx, shopId);
+      expect(summary.openCyclesCreatedOrReused).toBe(1);
+      expect(summary.terminalCycleAdjustmentsCreated).toBe(1);
+      expect(state.commissionCycles.length).toBe(1);
+      expect(Number(state.commissionCycles[0].remainingBalance)).toBe(15);
+    });
+
+    it("Case E: Mixed tenant: only provenance members receive cycles", async () => {
+      const shopId = "shop-mixed";
+      const memberNoHistory = "member-no-hist";
+      const memberWithHistory = "member-with-hist";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Mixed Shop" }],
+        members: [
+          { id: memberNoHistory, barbershopId: shopId, userId: "user-1", role: "OWNER" },
+          { id: memberWithHistory, barbershopId: shopId, userId: "user-2", role: "BARBER" },
+        ],
+        commissionEntries: [
+          {
+            id: "entry-m1",
+            barbershopId: shopId,
+            memberId: memberWithHistory,
+            comandaItemId: "item-m1",
+            competence: "2026-08",
+            baseAmount: new Prisma.Decimal("100.00"),
+            generatedAmount: new Prisma.Decimal("30.00"),
+            releasedAmount: new Prisma.Decimal("30.00"),
+            paidAmount: new Prisma.Decimal("0.00"),
+            reversedAmount: new Prisma.Decimal("0.00"),
+            attributionVersion: 1,
+            isCurrent: true,
+          },
+        ],
+        commissionPeriods: [],
+        commissionAdjustments: [],
+      });
+
+      const summary = await applyCutoverForTenant(tx, shopId);
+      expect(summary.openCyclesCreatedOrReused).toBe(1);
+      expect(state.commissionCycles.length).toBe(1);
+      expect(state.commissionCycles[0].memberId).toBe(memberWithHistory);
+    });
+
+    it("Case F: Rerun produces 0 duplicate cycle and 0 economic delta", async () => {
+      const shopId = "shop-rerun";
+      const memberId = "member-rerun";
+
+      const { tx, state } = createInMemoryTx({
+        barbershops: [{ id: shopId, name: "Rerun Shop" }],
+        members: [
+          { id: "member-zero", barbershopId: shopId, userId: "user-z", role: "OWNER" },
+          { id: memberId, barbershopId: shopId, userId: "user-r", role: "BARBER" },
+        ],
+        commissionEntries: [
+          {
+            id: "entry-r1",
+            barbershopId: shopId,
+            memberId,
+            comandaItemId: "item-r1",
+            competence: "2026-08",
+            baseAmount: new Prisma.Decimal("100.00"),
+            generatedAmount: new Prisma.Decimal("50.00"),
+            releasedAmount: new Prisma.Decimal("50.00"),
+            paidAmount: new Prisma.Decimal("0.00"),
+            reversedAmount: new Prisma.Decimal("0.00"),
+            attributionVersion: 1,
+            isCurrent: true,
+          },
+        ],
+        commissionPeriods: [],
+        commissionAdjustments: [],
+      });
+
+      const run1 = await applyCutoverForTenant(tx, shopId);
+      const run2 = await applyCutoverForTenant(tx, shopId);
+
+      expect(run1.openCyclesCreatedOrReused).toBe(1);
+      expect(run2.openCyclesCreatedOrReused).toBe(1);
+      expect(state.commissionCycles.length).toBe(1);
+      expect(state.commissionPayableItems.length).toBe(1);
+    });
   });
 });

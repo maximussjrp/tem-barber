@@ -270,9 +270,16 @@ export async function applyCutoverForTenant(
     });
   }
 
-  // 2. Fetch members that have legacy entries, periods, or adjustments
+  // 2. Fetch only members that have legacy entries, periods, or adjustments
   const members = await tx.barbershopMember.findMany({
-    where: { barbershopId },
+    where: {
+      barbershopId,
+      OR: [
+        { commissionEntries: { some: {} } },
+        { commissionPeriods: { some: {} } },
+        { commissionAdjustments: { some: {} } },
+      ],
+    },
     select: { id: true, userId: true },
   });
 
