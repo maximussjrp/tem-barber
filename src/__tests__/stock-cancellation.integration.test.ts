@@ -531,11 +531,18 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     expect(Number((await prisma.product.findUnique({ where: { id: prod.id } }))?.currentStock)).toBe(7);
 
     // Reabrir
-    let payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id, status: "CONFIRMED" } });
-    await refundRoute.POST(
+    const payment = await prisma.payment.findFirst({ where: { comandaId: comanda.id, status: "CONFIRMED" } });
+    const refundRes = await refundRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment?.id}/refund`, { amount: 30.00, reason: "Estorno" }),
       { params: Promise.resolve({ id: comanda.id, paymentId: payment!.id }) }
     );
+    const refundBody = await refundRes.clone().json();
+    expect(refundRes.status, JSON.stringify(refundBody)).toBe(200);
+    const comandaAfterRefund = await prisma.comanda.findUniqueOrThrow({ where: { id: comanda.id } });
+    expect(
+      ["OPEN", "IN_SERVICE", "PENDING_PAYMENT"],
+      `status after refund: ${comandaAfterRefund.status}`
+    ).toContain(comandaAfterRefund.status);
 
     // PATCH quantity 3 -> 1
     await itemDetailRoute.PATCH(
@@ -545,7 +552,7 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
 
     // Estoque deve subir para 9 (+2 devolução)
     expect(Number((await prisma.product.findUnique({ where: { id: prod.id } }))?.currentStock)).toBe(9);
-    let refundMovements = await prisma.stockMovement.findMany({ where: { productId: prod.id, type: "REFUND" } });
+  const refundMovements = await prisma.stockMovement.findMany({ where: { productId: prod.id, type: "REFUND" } });
     expect(refundMovements.length).toBe(1);
     expect(Number(refundMovements[0].quantity)).toBe(2);
 
@@ -823,7 +830,10 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
     );
     expect(finalizeRes.status).toBe(200);
 
-    const commEntry = await prisma.commissionEntry.findFirst({ where: { comandaItem: { comandaId: comanda.id } } });
+    const paidItem = await prisma.comandaItem.findFirstOrThrow({
+      where: { comandaId: comanda.id, serviceId: cut2.id },
+    });
+    const commEntry = await prisma.commissionEntry.findFirst({ where: { comandaItemId: paidItem.id } });
     expect(commEntry).not.toBeNull();
     expect(commEntry?.status).toBe("RELEASED");
 
@@ -845,9 +855,10 @@ describeIf("Integração: Reversão de Estoque em Cancelamentos e Edições", ()
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}`, { status: "CANCELLED" }, "PATCH"),
       { params: Promise.resolve({ id: comanda.id }) }
     );
-    expect(cancelRes.status).toBe(200);
+    const cancelBody = await cancelRes.clone().json();
+    expect(cancelRes.status, JSON.stringify(cancelBody)).toBe(200);
 
-    const commEntryAfter = await prisma.commissionEntry.findFirst({ where: { comandaItem: { comandaId: comanda.id } } });
+    const commEntryAfter = await prisma.commissionEntry.findFirst({ where: { comandaItemId: paidItem.id } });
     expect(commEntryAfter?.status).toBe("REVERSED");
 
     const clubUsageAfter = await prisma.clubBenefitUsage.findFirst({

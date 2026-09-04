@@ -7,7 +7,6 @@ const describeIf = testDatabaseUrl && /localhost|127\.0\.0\.1|55439/.test(testDa
 
 let prisma: PrismaClient;
 let shopId: string;
-let planId: string;
 
 async function createTrial() {
   return prisma.$transaction((tx) =>
@@ -18,10 +17,11 @@ async function createTrial() {
 describeIf("TenantSubscription real PostgreSQL concurrency", () => {
   beforeAll(async () => {
     prisma = (await import("@/lib/prisma")).default as PrismaClient;
-    const plan = await prisma.plan.create({
-      data: { code: `test_plan_tenant_conc_${Date.now()}`, name: "Plano Tem Barber", price: "49.90", period: "MONTHLY", maxMembers: 20, isActive: true },
+    await prisma.plan.upsert({
+      where: { code: "pro_monthly" },
+      update: { name: "Plano Tem Barber", price: "49.90", period: "MONTHLY", maxMembers: 20, isActive: true },
+      create: { code: "pro_monthly", name: "Plano Tem Barber", price: "49.90", period: "MONTHLY", maxMembers: 20, isActive: true },
     });
-    planId = plan.id;
     const shop = await prisma.barbershop.create({
       data: {
         name: "Concurrency Test Shop",
@@ -40,7 +40,6 @@ describeIf("TenantSubscription real PostgreSQL concurrency", () => {
 
   afterAll(async () => {
     await prisma.barbershop.delete({ where: { id: shopId } });
-    await prisma.plan.delete({ where: { id: planId } });
     await prisma.$disconnect();
   });
 

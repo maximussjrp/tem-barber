@@ -340,6 +340,7 @@ export async function reopenComanda(
       closedAt: null,
       paidTotal: fromCents(paidCents),
       remainingTotal: fromCents(remainingCents),
+      commissionRevision: { increment: 1 },
     },
     include: comandaInclude,
   });
@@ -713,6 +714,7 @@ export async function cancelComanda(
       total: 0,
       paidTotal: 0,
       remainingTotal: 0,
+      commissionRevision: { increment: 1 },
     },
     include: comandaInclude,
   });
@@ -722,7 +724,9 @@ export async function cancelComanda(
   await syncStockForComanda(tx, input.barbershopId, comanda.id, `Reversão por cancelamento de comanda: ${input.reason}`, true);
 
   // 6. Recalculate commissions
-  await syncCommissionReleaseForComanda(tx, input.barbershopId, comanda.id, "Cancelamento de comanda");
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, comanda.id, "Cancelamento de comanda", {
+    sourceKind: "COMANDA_RECALCULATION",
+  });
 
   // 7. Write cancel audit log
   const member = await tx.barbershopMember.findUnique({

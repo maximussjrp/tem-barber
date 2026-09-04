@@ -531,7 +531,6 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     const reqMonthly = new NextRequest(`http://localhost/api/admin/commissions?competence=${curCompetence}`);
     const resMonthly = await commissionsRoute.GET(reqMonthly);
     const listMonthly = await resMonthly.json();
-    expect(listMonthly).toHaveLength(1); // Somente o barbeiro tem comissão gerada no período real
-    expect(listMonthly[0].status).toBe("OPEN"); // O status do período mensal é "OPEN"
+    expect(listMonthly).toHaveLength(0); // O redesenho não cria novos CommissionPeriod legados.
   });
 });

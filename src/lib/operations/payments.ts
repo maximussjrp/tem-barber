@@ -1,4 +1,4 @@
-import { ComandaStatus, PaymentMethod, Prisma } from "@prisma/client";
+import { ComandaStatus, CommissionPayableSourceKind, PaymentMethod, Prisma } from "@prisma/client";
 import { syncCashSessionExpectedAmount } from "./cash";
 import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, OperationalError, recalculateComandaTotals } from "./comandas";
@@ -26,7 +26,10 @@ export async function registerPayment(
     });
     if (existing) {
       const updated = await recalculateComandaTotals(tx, input.comandaId);
-      await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId, "Liberacao proporcional por pagamento", {
+        sourceKind: CommissionPayableSourceKind.PAYMENT,
+        sourcePaymentId: existing.id,
+      });
       return updated;
     }
   }
@@ -89,7 +92,10 @@ export async function registerPayment(
   }
 
   const updated = await recalculateComandaTotals(tx, input.comandaId);
-  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId, "Liberacao proporcional por pagamento", {
+    sourceKind: CommissionPayableSourceKind.PAYMENT,
+    sourcePaymentId: payment.id,
+  });
   return updated;
 }
 
@@ -115,7 +121,10 @@ export async function refundPayment(
     });
     if (existing) {
       const updated = await recalculateComandaTotals(tx, existing.comandaId);
-      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Recalculo por estorno");
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Recalculo por estorno", {
+        sourceKind: CommissionPayableSourceKind.REFUND,
+        sourcePaymentId: existing.id,
+      });
       return updated;
     }
   }
@@ -211,7 +220,10 @@ export async function refundPayment(
   }
 
   const updated = await recalculateComandaTotals(tx, original.comandaId);
-  await syncCommissionReleaseForComanda(tx, input.barbershopId, original.comandaId, "Recalculo por estorno");
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, original.comandaId, "Recalculo por estorno", {
+    sourceKind: CommissionPayableSourceKind.REFUND,
+    sourcePaymentId: refund.id,
+  });
   if (toCents(updated.remainingTotal) > 0 && updated.status === "CLOSED") {
     return tx.comanda.update({
       where: { id: updated.id },
@@ -353,7 +365,9 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     });
   }
 
-  await syncCommissionReleaseForComanda(tx, barbershopId, comandaId);
+  await syncCommissionReleaseForComanda(tx, barbershopId, comandaId, "Finalizacao da comanda", {
+    sourceKind: CommissionPayableSourceKind.ITEM_COMPLETION,
+  });
   return closed;
 }
 

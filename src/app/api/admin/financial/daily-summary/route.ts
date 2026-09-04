@@ -32,7 +32,15 @@ export async function GET(request: NextRequest) {
       where: {
         barbershopId: data!.barbershopId,
         entryDate: { gte: start, lte: end },
-        type: { in: ["MANUAL_IN", "MANUAL_OUT"] },
+        type: {
+          in: [
+            "MANUAL_IN",
+            "MANUAL_OUT",
+            "COMMISSION_ADVANCE",
+            "COMMISSION_ADVANCE_REVERSAL",
+            "COMMISSION_PAYOUT",
+          ],
+        },
       },
       orderBy: { entryDate: "desc" },
     }),
@@ -64,8 +72,27 @@ export async function GET(request: NextRequest) {
     .filter((entry) => entry.type === "MANUAL_OUT")
     .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
 
+  const commissionAdvanceOut = entries
+    .filter((entry) => entry.type === "COMMISSION_ADVANCE")
+    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
+  const commissionPayoutOut = entries
+    .filter((entry) => entry.type === "COMMISSION_PAYOUT")
+    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
+  const commissionAdvanceReversalIn = entries
+    .filter((entry) => entry.type === "COMMISSION_ADVANCE_REVERSAL")
+    .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
+
   const totalReceived = Object.values(byMethod).reduce((sum, value) => sum + value, 0);
   const counts = Object.fromEntries(commandCounts.map((row) => [row.status, row._count._all]));
+
+  const netCents =
+    totalReceived +
+    manualIn +
+    commissionAdvanceReversalIn -
+    manualOut -
+    commissionAdvanceOut -
+    commissionPayoutOut -
+    refunds;
 
   const movements = [
     ...payments.map((p) => ({
@@ -82,7 +109,7 @@ export async function GET(request: NextRequest) {
       time: e.entryDate,
       description: e.description,
       type: e.type,
-      method: "MANUAL",
+      method: "FINANCIAL",
       amount: money(Math.abs(toCents(e.amount))),
       status: "CONFIRMED",
     })),
@@ -99,7 +126,10 @@ export async function GET(request: NextRequest) {
     refunds: money(refunds),
     manualIn: money(manualIn),
     manualOut: money(manualOut),
-    net: money(totalReceived + manualIn - manualOut - refunds),
+    commissionAdvanceOut: money(commissionAdvanceOut),
+    commissionPayoutOut: money(commissionPayoutOut),
+    commissionAdvanceReversalIn: money(commissionAdvanceReversalIn),
+    net: money(netCents),
     openCommands: counts.OPEN ?? 0,
     pendingCommands: counts.PENDING_PAYMENT ?? 0,
     closedCommands: counts.CLOSED ?? 0,
@@ -107,4 +137,3 @@ export async function GET(request: NextRequest) {
     movements,
   });
 }
-

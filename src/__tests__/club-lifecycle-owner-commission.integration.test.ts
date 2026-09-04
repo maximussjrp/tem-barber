@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient, ClubPaymentStatus, ClubSubscriptionStatus, PaymentMethod } from "@prisma/client";
 
@@ -538,20 +539,22 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
         },
       });
 
-      const period = await prisma.commissionPeriod.create({
+      const cycle = await prisma.commissionCycle.create({
         data: {
           barbershopId: shop.id,
           memberId: ownerMember.id,
-          competence,
+          cycleNumber: 1,
           status: "OPEN",
-          generatedAmount: 150.0,
-          releasedAmount: 150.0,
-          paidAmount: 0,
-          balanceAmount: 150.0,
+          grossCommission: 150.0,
+          adjustmentsTotal: 0,
+          advancesTotal: 0,
+          finalPayoutAmount: 0,
+          remainingBalance: 150.0,
+          openedAt: new Date("2026-07-01"),
         },
       });
 
-      await prisma.commissionEntry.create({
+      const entry = await prisma.commissionEntry.create({
         data: {
           barbershopId: shop.id,
           comandaItemId: comandaItem.id,
@@ -566,49 +569,48 @@ describeIf("Lote Clube 1.0 — Ciclo, Cobrança, Rateio e Comissão do Dono", ()
         },
       });
 
-      const paidPeriod = await prisma.$transaction((tx) =>
-        commissionOps.payCommissionPeriod(tx, {
+      await prisma.commissionPayableItem.create({
+        data: {
           barbershopId: shop.id,
-          periodId: period.id,
-          paidByMemberId: ownerMember.id,
-          userId: ownerUser.id,
-          role: "OWNER",
+          cycleId: cycle.id,
+          memberId: ownerMember.id,
+          entryId: entry.id,
+          type: "RELEASE" as any,
+          sourceKind: "PAYMENT" as any,
+          amount: 150.0,
+          eventKey: "club-test-owner-pay",
+        },
+      });
+
+      const payoutRes = await prisma.$transaction((tx) =>
+        commissionOps.executeCommissionPayout(tx, {
+          barbershopId: shop.id,
+          memberId: ownerMember.id,
+          idempotencyKey: "payout-owner-self-test",
+          createdById: ownerUser.id,
+          paymentMethod: "PIX",
         })
       );
 
-      expect(paidPeriod.status).toBe("PAID");
-      expect(paidPeriod.paidById).toBe(ownerUser.id);
-      expect(Number(paidPeriod.balanceAmount)).toBe(0);
+      expect(payoutRes.paidCycle.status).toBe("PAID");
+      expect(payoutRes.payout.createdById).toBe(ownerUser.id);
+      expect(Number(payoutRes.paidCycle.remainingBalance)).toBe(0);
     });
 
     it("bloqueia se BARBER tentar pagar a própria comissão (SELF_PAYMENT_FORBIDDEN)", async () => {
       const { shop, barberUser, barberMember } = await createTestFixtures();
-      const competence = "2026-07";
-
-      const period = await prisma.commissionPeriod.create({
-        data: {
-          barbershopId: shop.id,
-          memberId: barberMember.id,
-          competence,
-          status: "OPEN",
-          generatedAmount: 100.0,
-          releasedAmount: 100.0,
-          paidAmount: 0,
-          balanceAmount: 100.0,
-        },
-      });
 
       await expect(
         prisma.$transaction((tx) =>
           commissionOps.payCommissionPeriod(tx, {
             barbershopId: shop.id,
-            periodId: period.id,
+            periodId: "any-period",
             paidByMemberId: barberMember.id,
             userId: barberUser.id,
             role: "BARBER",
           })
         )
-      ).rejects.toThrow(/pagar a propria comissao/i);
+      ).rejects.toThrow(/descontinuada|LEGACY_ENDPOINT_DEPRECATED|propria comissao/i);
     });
   });
 

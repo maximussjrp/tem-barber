@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 
@@ -225,7 +226,7 @@ async function seedComandaItem(params: {
     // Forçar status para DONE para bater com as premissas dos testes
     const item = await prisma.comandaItem.update({
       where: { id: updated.items[0].id },
-      data: { status: "DONE" }
+      data: { status: "DONE", completedAt: new Date() }
     });
     const finalComanda = await prisma.comanda.findUnique({
       where: { id: comanda.id },
@@ -242,7 +243,7 @@ async function seedComandaItem(params: {
     // Forçar status para DONE e associar executor para bater com premissas
     const item = await prisma.comandaItem.update({
       where: { id: updated.items[0].id },
-      data: { status: "DONE", executorId: params.executorId }
+      data: { status: "DONE", executorId: params.executorId, completedAt: new Date() }
     });
     const finalComanda = await prisma.comanda.findUnique({
       where: { id: comanda.id },

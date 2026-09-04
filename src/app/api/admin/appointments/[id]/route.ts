@@ -35,6 +35,15 @@ class AppointmentDeleteError extends Error {
   }
 }
 
+class ExecutorCorrectionRequiredError extends Error {
+  readonly code = "EXECUTOR_CORRECTION_REQUIRED";
+  readonly status = 409;
+  constructor(message = "Alteração de executor exige operação versionada de correção de executor.") {
+    super(message);
+    this.name = "ExecutorCorrectionRequiredError";
+  }
+}
+
 function hasNonZeroDecimal(value: unknown) {
   return Number(value ?? 0) !== 0;
 }
@@ -49,7 +58,8 @@ function isCleanDeletableComanda(comanda: {
     status: string;
     completedAt?: Date | null;
     stockMovements: unknown[];
-    commissionEntry: unknown | null;
+    commissionEntry?: unknown | null;
+    commissionEntries?: unknown[];
     clubBenefitUsage: unknown | null;
     clubPointEntry: unknown | null;
   }>;
@@ -62,7 +72,8 @@ function isCleanDeletableComanda(comanda: {
     item.status !== "DONE" &&
     !item.completedAt &&
     item.stockMovements.length === 0 &&
-    item.commissionEntry === null &&
+    (item.commissionEntry === null || item.commissionEntry === undefined) &&
+    (!item.commissionEntries || item.commissionEntries.length === 0) &&
     item.clubBenefitUsage === null &&
     item.clubPointEntry === null
   ));
@@ -213,6 +224,20 @@ export async function PUT(
       async (tx) => {
         let serviceCreateData: { serviceId: string; priceApplied: string | number }[] | undefined;
 
+        if (memberId && memberId !== existing.memberId) {
+          const linkedItemWithCommission = await tx.comandaItem.findFirst({
+            where: {
+              comanda: { appointmentId: id, barbershopId },
+              commissionEntries: { some: { isCurrent: true } },
+            },
+          });
+          if (linkedItemWithCommission) {
+            throw new ExecutorCorrectionRequiredError(
+              "Não é possível alterar o profissional do agendamento pois já existem comissões geradas para a comanda vinculada. Utilize a correção versionada de executor."
+            );
+          }
+        }
+
         if (memberId || isServiceListModified) {
           const { services } = await validateProfessionalServiceCapability(tx, {
             barbershopId,
@@ -273,6 +298,12 @@ export async function PUT(
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
   } catch (error) {
+    if (error instanceof ExecutorCorrectionRequiredError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message },
+        { status: error.status }
+      );
+    }
     if (error instanceof AppointmentConflictError || error instanceof ScheduleBlockConflictApptError) {
       return NextResponse.json(
         { error: error.code, message: error.message },
@@ -340,7 +371,7 @@ export async function PATCH(
         items: {
           include: {
             stockMovements: true,
-            commissionEntry: true,
+            commissionEntries: true,
           },
         },
       },
@@ -357,7 +388,7 @@ export async function PATCH(
       const hasPayments = existingComanda.payments.length > 0;
       const hasFinancial = await prisma.financialEntry.count({ where: { comandaId: existingComanda.id } }) > 0;
       const hasStock = existingComanda.items.some(i => i.stockMovements.length > 0);
-      const hasCommissions = existingComanda.items.some(i => i.commissionEntry !== null);
+      const hasCommissions = existingComanda.items.some(i => i.commissionEntries.length > 0);
 
       if (hasPayments || hasFinancial || hasStock || hasCommissions) {
         return NextResponse.json(
@@ -536,7 +567,7 @@ export async function DELETE(
             items: {
               include: {
                 stockMovements: true,
-                commissionEntry: true,
+                commissionEntries: true,
                 clubBenefitUsage: true,
                 clubPointEntry: true,
               },

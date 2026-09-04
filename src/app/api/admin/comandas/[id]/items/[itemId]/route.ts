@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -42,6 +43,23 @@ export async function PATCH(
       if (!item) throw new OperationalError("ITEM_NOT_FOUND", "Item nao encontrado.", 404);
       if (item.comanda.status === "CLOSED") {
         throw new OperationalError("COMANDA_CLOSED", "Comanda fechada nao pode ser editada.", 422);
+      }
+      if ((body as any).executorId !== undefined && (body as any).executorId !== item.executorId) {
+        const currentEntry = await tx.commissionEntry.findFirst({
+          where: { comandaItemId: itemId, isCurrent: true },
+        });
+        if (currentEntry) {
+          throw new OperationalError(
+            "EXECUTOR_CORRECTION_REQUIRED",
+            "Alteração de executor exige operação versionada de correção de executor.",
+            409
+          );
+        }
+        throw new OperationalError(
+          "DIRECT_EXECUTOR_MUTATION_FORBIDDEN",
+          "Alteração direta de executor não permitida. Utilize a operação de correção de executor.",
+          422
+        );
       }
       if (data!.role === "BARBER" && item.executorId !== data!.memberId) return forbidden();
       if (data!.role === "BARBER" && body.status === "CANCELLED") return forbidden();

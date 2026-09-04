@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     restoreMocks: true,
     clearMocks: true,
+    setupFiles: ["src/__tests__/node.setup.ts"],
     include: ["src/**/*.test.ts"],
   },
   resolve: {

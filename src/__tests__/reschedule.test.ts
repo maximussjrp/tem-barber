@@ -7,6 +7,7 @@ const txMock = {
   barbershopMember: { findFirst: vi.fn() },
   service: { findMany: vi.fn() },
   barberService: { findMany: vi.fn() },
+  comandaItem: { findFirst: vi.fn() },
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
 };
@@ -64,6 +65,7 @@ beforeEach(() => {
   txMock.barberService.findMany.mockImplementation(async ({ where }) =>
     (where.serviceId.in as string[]).map((serviceId) => ({ serviceId }))
   );
+  txMock.comandaItem.findFirst.mockResolvedValue(null);
   prismaMock.service.findMany.mockResolvedValue([
     { id: "svc-new-a", price: "50.00", durationMin: 45 },
     { id: "svc-new-b", price: "25.50", durationMin: 30 },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CommissionNav } from "@/components/admin/commissions/CommissionNav";
 
 type Option = { id: string; name: string; user?: { name: string } };
 type Config = {
@@ -325,11 +326,13 @@ export default function CommissionConfigsPage() {
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div>
-        <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">Configurações de Comissão 2.0</h1>
+        <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">Configurações de Comissão</h1>
         <p className="text-sm text-[var(--text-muted)]">
           Gerencie regras específicas por colaborador, níveis de carreira e matriz de percentuais por serviço.
         </p>
       </div>
+
+      <CommissionNav />
 
       {/* Tabs */}
       <div className="flex border-b border-[var(--border-subtle)] gap-2">

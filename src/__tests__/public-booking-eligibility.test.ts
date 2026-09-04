@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validatePublicBookingEligibility } from "@/lib/appointments/public-booking-eligibility";
 
 const tx = {
@@ -21,6 +22,8 @@ const input = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-26T12:00:00.000Z"));
   tx.barbershop.findFirst.mockResolvedValue({ id: "shop-a" });
   tx.barberService.findMany.mockResolvedValue([{ barberId: "member-a", serviceId: "svc-a" }]);
   tx.service.findMany.mockResolvedValue([{ id: "svc-a", durationMin: 30, price: "50.00" }]);
@@ -56,7 +59,7 @@ describe("public booking direct eligibility", () => {
   });
 
   it("mantem bloqueio de horario passado", async () => {
-    const pastInput = { ...input, dateTime: new Date("2026-08-26T11:00:00.000Z") };
+    const pastInput = { ...input, dateTime: new Date("2026-08-25T11:00:00.000Z") };
     await expect(validatePublicBookingEligibility(tx, pastInput)).rejects.toMatchObject({ reason: "PAST" });
   });
 
@@ -64,4 +67,8 @@ describe("public booking direct eligibility", () => {
     tx.barberService.findMany.mockResolvedValue([]);
     await expect(validatePublicBookingEligibility(tx, input)).rejects.toThrow();
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });

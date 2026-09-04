@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
@@ -86,6 +87,7 @@ export async function GET(request: NextRequest) {
     prisma.commissionEntry.findMany({
       where: {
         barbershopId: data!.barbershopId!,
+        isCurrent: true,
         ...(memberId ? { memberId } : {}),
         ...(status ? { status: status as any } : {}),
         OR: [

@@ -67,7 +67,8 @@ export async function GET(request: NextRequest) {
       openComandas,
       payments,
       financialEntries,
-      releasedCommissions,
+      commissionPayableItems,
+      trueCycleAdjustments,
       estimatedCommissions,
     ] = await Promise.all([
       // Concluded/closed comandas within period
@@ -119,7 +120,7 @@ export async function GET(request: NextRequest) {
         },
       }),
 
-      // Manual and club entries in period
+      // Manual and club entries in period (advances/payouts excluded)
       prisma.financialEntry.findMany({
         where: {
           barbershopId,
@@ -128,31 +129,55 @@ export async function GET(request: NextRequest) {
         },
       }),
 
-      // Released commissions in period
-      prisma.commissionEntry.findMany({
-        where: {
-          barbershopId,
-          updatedAt: { gte: start, lt: endExclusive },
-          status: { in: ["RELEASED", "PAID", "PARTIALLY_RELEASED"] },
-        },
-        select: {
-          memberId: true,
-          releasedAmount: true,
-          reversedAmount: true,
-        },
-      }),
+      // Commission accrued labor delta in period:
+      // SUM(RELEASE) - SUM(REVERSAL where !isHistoricalCorrection)
+      prisma.commissionPayableItem
+        ? prisma.commissionPayableItem.findMany({
+            where: {
+              barbershopId,
+              createdAt: { gte: start, lt: endExclusive },
+              sourceKind: { not: "LEGACY_BACKFILL" },
+            },
+            select: {
+              memberId: true,
+              type: true,
+              amount: true,
+              isHistoricalCorrection: true,
+            },
+          })
+        : Promise.resolve([]),
+
+      // True manual remuneration cycle adjustments (excluding routing companion adjustments)
+      prisma.commissionCycleAdjustment
+        ? prisma.commissionCycleAdjustment.findMany({
+            where: {
+              barbershopId,
+              createdAt: { gte: start, lt: endExclusive },
+              sourcePayableItemId: null,
+              sourceAdvanceReversalId: null,
+            },
+            select: {
+              cycle: { select: { memberId: true } },
+              type: true,
+              amount: true,
+            },
+          })
+        : Promise.resolve([]),
 
       // Estimated (generated, unreleased) commissions in period
-      prisma.commissionEntry.findMany({
-        where: {
-          barbershopId,
-          createdAt: { gte: start, lt: endExclusive },
-          status: "GENERATED",
-        },
-        select: {
-          generatedAmount: true,
-        },
-      }),
+      prisma.commissionEntry
+        ? prisma.commissionEntry.findMany({
+            where: {
+              barbershopId,
+              createdAt: { gte: start, lt: endExclusive },
+              status: "GENERATED",
+              isCurrent: true,
+            },
+            select: {
+              generatedAmount: true,
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     // 1. Calculations for Comandas & Items
@@ -295,19 +320,36 @@ export async function GET(request: NextRequest) {
     const totalExpensesCents = manualExpenseCents;
     const totalReceivedCents = commandReceivedCents + manualIncomeCents + clubRevenueCents;
 
-    // 5. Commissions
+    // 5. Commissions (Accrued Labor Delta: RELEASE - REVERSAL + manual CREDIT - manual DEBIT)
     let releasedCommissionsCents = 0;
     const memberCommissionsMap: Record<string, number> = {};
 
-    for (const comm of releasedCommissions) {
-      const netReleased = toCents(comm.releasedAmount) - toCents(comm.reversedAmount);
-      const posReleased = Math.max(0, netReleased);
-      releasedCommissionsCents += posReleased;
+    if (commissionPayableItems.length > 0 || trueCycleAdjustments.length > 0) {
+      for (const item of commissionPayableItems) {
+        let delta = 0;
+        if (item.type === "RELEASE") {
+          delta = toCents(item.amount);
+        } else if (item.type === "REVERSAL") {
+          delta = -toCents(item.amount);
+        }
 
-      if (comm.memberId) {
-        memberCommissionsMap[comm.memberId] = (memberCommissionsMap[comm.memberId] || 0) + posReleased;
+        releasedCommissionsCents += delta;
+        if (item.memberId) {
+          memberCommissionsMap[item.memberId] = (memberCommissionsMap[item.memberId] || 0) + delta;
+        }
+      }
+
+      for (const adj of trueCycleAdjustments) {
+        const delta = adj.type === "CREDIT" ? toCents(adj.amount) : -toCents(adj.amount);
+        releasedCommissionsCents += delta;
+        const mId = adj.cycle?.memberId;
+        if (mId) {
+          memberCommissionsMap[mId] = (memberCommissionsMap[mId] || 0) + delta;
+        }
       }
     }
+
+    releasedCommissionsCents = Math.max(0, releasedCommissionsCents);
 
     let estimatedCommissionsCents = 0;
     for (const comm of estimatedCommissions) {

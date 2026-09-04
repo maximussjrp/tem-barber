@@ -28,6 +28,12 @@ vi.mock("@/lib/prisma", () => {
       commissionEntry: {
         findMany: vi.fn(),
       },
+      commissionPayableItem: {
+        findMany: vi.fn(),
+      },
+      commissionCycleAdjustment: {
+        findMany: vi.fn(),
+      },
     },
   };
 });
@@ -38,6 +44,8 @@ const mockedComandaItem = vi.mocked(prisma.comandaItem);
 const mockedPayment = vi.mocked(prisma.payment);
 const mockedFinancialEntry = vi.mocked(prisma.financialEntry);
 const mockedCommissionEntry = vi.mocked(prisma.commissionEntry);
+const mockedCommissionPayableItem = vi.mocked(prisma.commissionPayableItem);
+const mockedCommissionCycleAdjustment = vi.mocked(prisma.commissionCycleAdjustment);
 
 describe("PR #16 — Financial Summary Range API Tests", () => {
   const barbershopId1 = "shop-111";
@@ -45,6 +53,8 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedComandaItem.findMany.mockResolvedValue([]);
+    mockedCommissionPayableItem.findMany.mockResolvedValue([]);
+    mockedCommissionCycleAdjustment.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -387,14 +397,12 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
       { id: "p-1", barbershopId: barbershopId1, method: "CASH", amount: new Prisma.Decimal("1000.00"), status: "CONFIRMED" } as any,
     ]);
     mockedFinancialEntry.findMany.mockResolvedValue([]);
-    (mockedCommissionEntry.findMany as any).mockImplementation((args: any) => {
-      if (args?.where?.status?.in) {
-        return Promise.resolve([
-          { memberId: "m-1", releasedAmount: new Prisma.Decimal("300.00"), reversedAmount: new Prisma.Decimal("0.00") },
-        ]);
-      }
-      return Promise.resolve([{ generatedAmount: new Prisma.Decimal("100.00") }]);
-    });
+    mockedCommissionPayableItem.findMany.mockResolvedValue([
+      { memberId: "m-1", type: "RELEASE", amount: new Prisma.Decimal("300.00"), isHistoricalCorrection: false } as any,
+    ]);
+    mockedCommissionEntry.findMany.mockResolvedValue([
+      { generatedAmount: new Prisma.Decimal("100.00") } as any,
+    ]);
 
     const req = createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" });
     const res = await getFinancialSummary(req);
@@ -418,14 +426,11 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
       { id: "p-ref", barbershopId: barbershopId1, method: "PIX", amount: new Prisma.Decimal("40.00"), status: "REFUNDED" } as any,
     ]);
     mockedFinancialEntry.findMany.mockResolvedValue([]);
-    (mockedCommissionEntry.findMany as any).mockImplementation((args: any) => {
-      if (args?.where?.status?.in) {
-        return Promise.resolve([
-          { memberId: "m-1", releasedAmount: new Prisma.Decimal("30.00"), reversedAmount: new Prisma.Decimal("10.00") },
-        ]);
-      }
-      return Promise.resolve([]);
-    });
+    mockedCommissionPayableItem.findMany.mockResolvedValue([
+      { memberId: "m-1", type: "RELEASE", amount: new Prisma.Decimal("30.00"), isHistoricalCorrection: false } as any,
+      { memberId: "m-1", type: "REVERSAL", amount: new Prisma.Decimal("10.00"), isHistoricalCorrection: false } as any,
+    ]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
 
     const req = createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" });
     const res = await getFinancialSummary(req);
@@ -876,14 +881,10 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     });
     mockedPayment.findMany.mockResolvedValue([]);
     mockedFinancialEntry.findMany.mockResolvedValue([]);
-    (mockedCommissionEntry.findMany as any).mockImplementation((args: any) => {
-      if (args?.where?.status?.in) {
-        return Promise.resolve([
-          { memberId: "m-pa", releasedAmount: new Prisma.Decimal("12.00"), reversedAmount: new Prisma.Decimal("0.00") },
-        ]);
-      }
-      return Promise.resolve([]);
-    });
+    mockedCommissionPayableItem.findMany.mockResolvedValue([
+      { memberId: "m-pa", type: "RELEASE", amount: new Prisma.Decimal("12.00"), isHistoricalCorrection: false } as any,
+    ]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
 
     const res = await getFinancialSummary(createRequest({ startDate: "2026-07-01", endDate: "2026-07-31" }));
     const body = await res.json();

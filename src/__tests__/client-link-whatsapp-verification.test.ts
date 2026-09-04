@@ -78,6 +78,9 @@ beforeEach(() => {
     trialEndsAt: null,
     currentPeriodEnd: new Date(Date.now() + 864000000),
   });
+  prismaMock.tenantSubscription.findUnique.mockImplementation(
+    prismaMock.tenantSubscription.findFirst
+  );
 
   prismaMock.barbershopMember.findFirst.mockResolvedValue({
     id: "barber-1",

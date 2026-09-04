@@ -28,29 +28,35 @@ model User {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  memberships                   BarbershopMember[] // Caso o usuário seja funcionário/dono de barbearia
-  appointments                  Appointment[] // Histórico de agendamentos como cliente
-  reviews                       Review[] // Avaliações feitas pelo cliente
-  notifications                 Notification[]
-  webPushSubscriptions          WebPushSubscription[]
-  comandas                      Comanda[]
-  clubSubscriptions             CustomerClubSubscription[]
-  clubSubscriptionPayments      ClubSubscriptionPayment[]
-  whatsappConfirmations         AppointmentWhatsappConfirmation[]
-  customerBarbershopLinks       CustomerBarbershopLink[]
-  verifiedWhatsappCustomerLinks CustomerBarbershopLink[]          @relation("WhatsappVerifiedBy")
-  createdWaitlistSessions       OnlineWaitlistSession[]
-  onlineWaitlistEntries         OnlineWaitlistEntry[]
-  comandaReopenAudits           ComandaReopenAudit[]
-  comandaCancelAudits           ComandaCancelAudit[]              @relation("ComandaCancelledByUser")
-  blockedCustomers              BarbershopBlockedCustomer[]
-  blockedCustomersByMe          BarbershopBlockedCustomer[]       @relation("BlockedByUser")
-  unblockedCustomersByMe        BarbershopBlockedCustomer[]       @relation("UnblockedByUser")
-  customerContactLogs           CustomerContactLog[]              @relation("CustomerContactLogs")
-  createdCustomerContactLogs    CustomerContactLog[]              @relation("CreatedCustomerContactLogs")
-  pushDevices                   PushDevice[]
-  globalNotificationPreferences GlobalNotificationPreference[]
-  tenantNotificationPreferences TenantNotificationPreference[]
+  memberships                       BarbershopMember[] // Caso o usuário seja funcionário/dono de barbearia
+  appointments                      Appointment[] // Histórico de agendamentos como cliente
+  reviews                           Review[] // Avaliações feitas pelo cliente
+  notifications                     Notification[]
+  webPushSubscriptions              WebPushSubscription[]
+  comandas                          Comanda[]
+  clubSubscriptions                 CustomerClubSubscription[]
+  clubSubscriptionPayments          ClubSubscriptionPayment[]
+  whatsappConfirmations             AppointmentWhatsappConfirmation[]
+  customerBarbershopLinks           CustomerBarbershopLink[]
+  verifiedWhatsappCustomerLinks     CustomerBarbershopLink[]            @relation("WhatsappVerifiedBy")
+  createdWaitlistSessions           OnlineWaitlistSession[]
+  onlineWaitlistEntries             OnlineWaitlistEntry[]
+  comandaReopenAudits               ComandaReopenAudit[]
+  comandaCancelAudits               ComandaCancelAudit[]                @relation("ComandaCancelledByUser")
+  blockedCustomers                  BarbershopBlockedCustomer[]
+  blockedCustomersByMe              BarbershopBlockedCustomer[]         @relation("BlockedByUser")
+  unblockedCustomersByMe            BarbershopBlockedCustomer[]         @relation("UnblockedByUser")
+  customerContactLogs               CustomerContactLog[]                @relation("CustomerContactLogs")
+  createdCustomerContactLogs        CustomerContactLog[]                @relation("CreatedCustomerContactLogs")
+  pushDevices                       PushDevice[]
+  globalNotificationPreferences     GlobalNotificationPreference[]
+  tenantNotificationPreferences     TenantNotificationPreference[]
+  createdCommissionAdvances         CommissionAdvance[]                 @relation("AdvanceCreatedBy")
+  createdCommissionAdvanceReversals CommissionAdvanceReversal[]         @relation("AdvanceReversalCreatedBy")
+  createdCommissionPayouts          CommissionPayout[]                  @relation("PayoutCreatedBy")
+  createdCommissionCycleAdjustments CommissionCycleAdjustment[]         @relation("AdjustmentCreatedBy")
+  correctedCommissionAudits         CommissionExecutorCorrectionAudit[] @relation("CorrectionCorrectedBy")
+  commissionAdvanceAudits           CommissionAdvanceAudit[]            @relation("AdvanceAuditChangedBy")
 
   @@map("users")
 }
@@ -84,44 +90,52 @@ model Barbershop {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  members                     BarbershopMember[]
-  services                    Service[]
-  categories                  Category[]
-  appointments                Appointment[]
-  subscriptions               TenantSubscription[]
-  idempotencyKeys             IdempotencyKey[]
-  comandas                    Comanda[]
-  products                    Product[]
-  cashSessions                CashSession[]
-  financialEntries            FinancialEntry[]
-  commissionConfigs           CommissionConfig[]
-  commissionEntries           CommissionEntry[]
-  commissionPeriods           CommissionPeriod[]
-  commissionAdjustments       CommissionAdjustment[]
-  careerLevels                CareerLevel[]
-  serviceCommissionRules      ServiceCommissionRule[]
-  clubPlans                   ClubPlan[]
-  customerClubSubscriptions   CustomerClubSubscription[]
-  clubSubscriptionPayments    ClubSubscriptionPayment[]
-  clubBenefitUsages           ClubBenefitUsage[]
-  clubPointEntries            ClubPointEntry[]
-  clubSettlements             ClubSettlement[]
-  whatsappConfirmations       AppointmentWhatsappConfirmation[]
-  customerBarbershopLinks     CustomerBarbershopLink[]
-  onlineWaitlistSessions      OnlineWaitlistSession[]
-  onlineWaitlistEntries       OnlineWaitlistEntry[]
-  onlineWaitlistMemberConfigs OnlineWaitlistMemberConfig[]
-  asaasBillingCustomers       AsaasBillingCustomer[]
-  asaasBillingSubscriptions   AsaasBillingSubscription[]
-  asaasBillingPayments        AsaasBillingPayment[]
-  asaasWebhookEvents          AsaasWebhookEvent[]
-  billingProfile              BarbershopBillingProfile?
-  comandaReopenAudits         ComandaReopenAudit[]
-  comandaCancelAudits         ComandaCancelAudit[]
-  blockedCustomers            BarbershopBlockedCustomer[]
-  customerContactLogs         CustomerContactLog[]
-  notifications               Notification[]
-  tenantNotificationPreferences TenantNotificationPreference[]
+  members                            BarbershopMember[]
+  services                           Service[]
+  categories                         Category[]
+  appointments                       Appointment[]
+  subscriptions                      TenantSubscription[]
+  idempotencyKeys                    IdempotencyKey[]
+  comandas                           Comanda[]
+  products                           Product[]
+  cashSessions                       CashSession[]
+  financialEntries                   FinancialEntry[]
+  commissionConfigs                  CommissionConfig[]
+  commissionEntries                  CommissionEntry[]
+  commissionPeriods                  CommissionPeriod[]
+  commissionAdjustments              CommissionAdjustment[]
+  careerLevels                       CareerLevel[]
+  serviceCommissionRules             ServiceCommissionRule[]
+  clubPlans                          ClubPlan[]
+  customerClubSubscriptions          CustomerClubSubscription[]
+  clubSubscriptionPayments           ClubSubscriptionPayment[]
+  clubBenefitUsages                  ClubBenefitUsage[]
+  clubPointEntries                   ClubPointEntry[]
+  clubSettlements                    ClubSettlement[]
+  whatsappConfirmations              AppointmentWhatsappConfirmation[]
+  customerBarbershopLinks            CustomerBarbershopLink[]
+  onlineWaitlistSessions             OnlineWaitlistSession[]
+  onlineWaitlistEntries              OnlineWaitlistEntry[]
+  onlineWaitlistMemberConfigs        OnlineWaitlistMemberConfig[]
+  asaasBillingCustomers              AsaasBillingCustomer[]
+  asaasBillingSubscriptions          AsaasBillingSubscription[]
+  asaasBillingPayments               AsaasBillingPayment[]
+  asaasWebhookEvents                 AsaasWebhookEvent[]
+  billingProfile                     BarbershopBillingProfile?
+  comandaReopenAudits                ComandaReopenAudit[]
+  comandaCancelAudits                ComandaCancelAudit[]
+  blockedCustomers                   BarbershopBlockedCustomer[]
+  customerContactLogs                CustomerContactLog[]
+  notifications                      Notification[]
+  tenantNotificationPreferences      TenantNotificationPreference[]
+  commissionCycles                   CommissionCycle[]
+  commissionPayableItems             CommissionPayableItem[]
+  commissionAdvances                 CommissionAdvance[]
+  commissionAdvanceReversals         CommissionAdvanceReversal[]
+  commissionPayouts                  CommissionPayout[]
+  commissionCycleAdjustments         CommissionCycleAdjustment[]
+  commissionExecutorCorrectionAudits CommissionExecutorCorrectionAudit[]
+  commissionAdvanceAudits            CommissionAdvanceAudit[]
 
   @@map("barbershops")
 }
@@ -162,8 +176,8 @@ model BarbershopMember {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  barbershop                 Barbershop                  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  user                       User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  barbershop                 Barbershop                          @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user                       User                                @relation(fields: [userId], references: [id], onDelete: Cascade)
   services                   BarberService[]
   workingHours               WorkingHour[]
   timeOffs                   TimeOff[]
@@ -175,14 +189,20 @@ model BarbershopMember {
   commissionAdjustments      CommissionAdjustment[]
   clubPointEntries           ClubPointEntry[]
   clubSettlementMembers      ClubSettlementMember[]
-  preferredWaitlistEntries   OnlineWaitlistEntry[]       @relation("WaitlistPreferredMember")
-  calledWaitlistEntries      OnlineWaitlistEntry[]       @relation("WaitlistCalledByMember")
+  preferredWaitlistEntries   OnlineWaitlistEntry[]               @relation("WaitlistPreferredMember")
+  calledWaitlistEntries      OnlineWaitlistEntry[]               @relation("WaitlistCalledByMember")
   onlineWaitlistConfig       OnlineWaitlistMemberConfig?
   comandaReopenAudits        ComandaReopenAudit[]
-  comandaCancelAudits        ComandaCancelAudit[]        @relation("ComandaCancelledByMember")
-  blockedCustomersByMe       BarbershopBlockedCustomer[] @relation("BlockedByMember")
-  unblockedCustomersByMe     BarbershopBlockedCustomer[] @relation("UnblockedByMember")
-  createdCustomerContactLogs CustomerContactLog[]        @relation("MemberCreatedCustomerContactLogs")
+  comandaCancelAudits        ComandaCancelAudit[]                @relation("ComandaCancelledByMember")
+  blockedCustomersByMe       BarbershopBlockedCustomer[]         @relation("BlockedByMember")
+  unblockedCustomersByMe     BarbershopBlockedCustomer[]         @relation("UnblockedByMember")
+  createdCustomerContactLogs CustomerContactLog[]                @relation("MemberCreatedCustomerContactLogs")
+  commissionCycles           CommissionCycle[]
+  commissionPayableItems     CommissionPayableItem[]
+  commissionAdvances         CommissionAdvance[]
+  commissionPayouts          CommissionPayout[]
+  correctionAuditsAsOld      CommissionExecutorCorrectionAudit[] @relation("CorrectionOldMember")
+  correctionAuditsAsNew      CommissionExecutorCorrectionAudit[] @relation("CorrectionNewMember")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -491,31 +511,31 @@ enum NotificationCategory {
 }
 
 model PushDevice {
-  id                           String                 @id @default(uuid())
-  userId                       String                 @map("user_id")
-  deviceInstanceId             String                 @map("device_instance_id")
+  id               String @id @default(uuid())
+  userId           String @map("user_id")
+  deviceInstanceId String @map("device_instance_id")
 
-  platform                     String?
-  browser                      String?
-  deviceClass                  String?                @map("device_class")
-  displayName                  String?                @map("display_name")
+  platform    String?
+  browser     String?
+  deviceClass String? @map("device_class")
+  displayName String? @map("display_name")
 
-  localReadiness               String?                @map("local_readiness")
-  notificationPermission       String?                @map("notification_permission")
-  pushPermission               String?                @map("push_permission")
-  serviceWorkerState           String?                @map("service_worker_state")
+  localReadiness         String? @map("local_readiness")
+  notificationPermission String? @map("notification_permission")
+  pushPermission         String? @map("push_permission")
+  serviceWorkerState     String? @map("service_worker_state")
 
-  lastSeenAt                   DateTime?              @map("last_seen_at")
-  lastHealthCheckAt            DateTime?              @map("last_health_check_at")
-  lastSubscriptionReconciledAt DateTime?              @map("last_subscription_reconciled_at")
-  lastPushReceiptAt            DateTime?              @map("last_push_receipt_at")
-  lastNotificationCreatedAt    DateTime?              @map("last_notification_created_at")
-  lastNotificationClickAt      DateTime?              @map("last_notification_click_at")
+  lastSeenAt                   DateTime? @map("last_seen_at")
+  lastHealthCheckAt            DateTime? @map("last_health_check_at")
+  lastSubscriptionReconciledAt DateTime? @map("last_subscription_reconciled_at")
+  lastPushReceiptAt            DateTime? @map("last_push_receipt_at")
+  lastNotificationCreatedAt    DateTime? @map("last_notification_created_at")
+  lastNotificationClickAt      DateTime? @map("last_notification_click_at")
 
-  revokedAt                    DateTime?              @map("revoked_at")
+  revokedAt DateTime? @map("revoked_at")
 
-  createdAt                    DateTime               @default(now()) @map("created_at")
-  updatedAt                    DateTime               @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   subscription WebPushSubscription?
@@ -528,39 +548,39 @@ model PushDevice {
 }
 
 model NotificationDelivery {
-  id                            String                     @id @default(uuid())
-  notificationId                String                     @map("notification_id")
-  deviceId                      String?                    @map("device_id")
-  subscriptionId                String?                    @map("subscription_id")
+  id             String  @id @default(uuid())
+  notificationId String  @map("notification_id")
+  deviceId       String? @map("device_id")
+  subscriptionId String? @map("subscription_id")
 
-  endpointHash                  String                     @map("endpoint_hash")
-  idempotencyKey                String                     @unique @map("idempotency_key")
+  endpointHash   String @map("endpoint_hash")
+  idempotencyKey String @unique @map("idempotency_key")
 
-  providerStatus                NotificationProviderStatus @default(PENDING) @map("provider_status")
+  providerStatus NotificationProviderStatus @default(PENDING) @map("provider_status")
 
-  providerStatusCode            Int?                       @map("provider_status_code")
-  providerAcceptedAt            DateTime?                  @map("provider_accepted_at")
+  providerStatusCode Int?      @map("provider_status_code")
+  providerAcceptedAt DateTime? @map("provider_accepted_at")
 
-  attemptCount                  Int                        @default(0) @map("attempt_count")
-  failureClassification         String?                    @map("failure_classification")
+  attemptCount          Int     @default(0) @map("attempt_count")
+  failureClassification String? @map("failure_classification")
 
-  receiptTokenHash              String?                    @map("receipt_token_hash")
-  receiptTokenExpiresAt         DateTime?                  @map("receipt_token_expires_at")
+  receiptTokenHash      String?   @map("receipt_token_hash")
+  receiptTokenExpiresAt DateTime? @map("receipt_token_expires_at")
 
-  serviceWorkerReceivedAt       DateTime?                  @map("service_worker_received_at")
+  serviceWorkerReceivedAt DateTime? @map("service_worker_received_at")
 
-  browserNotificationCreatedAt  DateTime?                  @map("browser_notification_created_at")
-  browserNotificationFailedAt   DateTime?                  @map("browser_notification_failed_at")
-  browserFailureClassification  String?                    @map("browser_failure_classification")
+  browserNotificationCreatedAt DateTime? @map("browser_notification_created_at")
+  browserNotificationFailedAt  DateTime? @map("browser_notification_failed_at")
+  browserFailureClassification String?   @map("browser_failure_classification")
 
-  clickedAt                     DateTime?                  @map("clicked_at")
-  closedAt                      DateTime?                  @map("closed_at")
+  clickedAt DateTime? @map("clicked_at")
+  closedAt  DateTime? @map("closed_at")
 
-  createdAt                     DateTime                   @default(now()) @map("created_at")
-  updatedAt                     DateTime                   @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  notification Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
-  device       PushDevice?         @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  notification Notification         @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  device       PushDevice?          @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   subscription WebPushSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   @@index([notificationId])
@@ -603,18 +623,18 @@ model TenantNotificationPreference {
 }
 
 model WebPushSubscription {
-  id               String                 @id @default(uuid())
-  userId           String                 @map("user_id")
-  deviceId         String?                @unique @map("device_id")
-  endpoint         String                 @unique
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  deviceId         String?   @unique @map("device_id")
+  endpoint         String    @unique
   p256dh           String
   auth             String
-  expirationTime   DateTime?              @map("expiration_time")
-  failureCount     Int                    @default(0) @map("failure_count")
-  lastFailureAt    DateTime?              @map("last_failure_at")
-  lastSuccessfulAt DateTime?              @map("last_successful_at")
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
+  expirationTime   DateTime? @map("expiration_time")
+  failureCount     Int       @default(0) @map("failure_count")
+  lastFailureAt    DateTime? @map("last_failure_at")
+  lastSuccessfulAt DateTime? @map("last_successful_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   device     PushDevice?            @relation(fields: [deviceId], references: [id], onDelete: SetNull)
@@ -744,34 +764,39 @@ enum FinancialEntryType {
   MANUAL_OUT
   CLUB_REVENUE
   CLUB_BARBER_PAYOUT
+  COMMISSION_ADVANCE
+  COMMISSION_ADVANCE_REVERSAL
+  COMMISSION_PAYOUT
 }
 
 model Comanda {
-  id             String        @id @default(uuid())
-  barbershopId   String        @map("barbershop_id")
-  appointmentId  String?       @unique @map("appointment_id")
-  customerId     String?       @map("customer_id")
-  customerName   String        @map("customer_name")
-  customerPhone  String?       @map("customer_phone")
-  status         ComandaStatus @default(OPEN)
-  subtotal       Decimal       @default(0) @db.Decimal(10, 2)
-  discountTotal  Decimal       @default(0) @map("discount_total") @db.Decimal(10, 2)
-  surchargeTotal Decimal       @default(0) @map("surcharge_total") @db.Decimal(10, 2)
-  total          Decimal       @default(0) @db.Decimal(10, 2)
-  paidTotal      Decimal       @default(0) @map("paid_total") @db.Decimal(10, 2)
-  remainingTotal Decimal       @default(0) @map("remaining_total") @db.Decimal(10, 2)
-  openedAt       DateTime      @default(now()) @map("opened_at")
-  startedAt      DateTime?     @map("started_at")
-  closedAt       DateTime?     @map("closed_at")
-  cancelledAt    DateTime?     @map("cancelled_at")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  id                 String        @id @default(uuid())
+  barbershopId       String        @map("barbershop_id")
+  appointmentId      String?       @unique @map("appointment_id")
+  customerId         String?       @map("customer_id")
+  customerName       String        @map("customer_name")
+  customerPhone      String?       @map("customer_phone")
+  status             ComandaStatus @default(OPEN)
+  subtotal           Decimal       @default(0) @db.Decimal(10, 2)
+  discountTotal      Decimal       @default(0) @map("discount_total") @db.Decimal(10, 2)
+  surchargeTotal     Decimal       @default(0) @map("surcharge_total") @db.Decimal(10, 2)
+  total              Decimal       @default(0) @db.Decimal(10, 2)
+  paidTotal          Decimal       @default(0) @map("paid_total") @db.Decimal(10, 2)
+  remainingTotal     Decimal       @default(0) @map("remaining_total") @db.Decimal(10, 2)
+  openedAt           DateTime      @default(now()) @map("opened_at")
+  startedAt          DateTime?     @map("started_at")
+  closedAt           DateTime?     @map("closed_at")
+  cancelledAt        DateTime?     @map("cancelled_at")
+  commissionRevision Int           @default(1) @map("commission_revision")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
 
-  barbershop   Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  appointment  Appointment?         @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  customer     User?                @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  barbershop   Barbershop              @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  appointment  Appointment?            @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  customer     User?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items        ComandaItem[]
   payments     Payment[]
+  payableItems CommissionPayableItem[]
   reopenAudits ComandaReopenAudit[]
   cancelAudits ComandaCancelAudit[]
 
@@ -854,16 +879,17 @@ model ComandaItem {
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
-  comanda                    Comanda           @relation(fields: [comandaId], references: [id], onDelete: Cascade)
-  service                    Service?          @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  product                    Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
-  executor                   BarbershopMember? @relation(fields: [executorId], references: [id], onDelete: SetNull)
-  clubBenefitRequested       Boolean           @default(false) @map("club_benefit_requested")
-  requestedClubPlanBenefitId String?           @map("requested_club_plan_benefit_id")
+  comanda                    Comanda                             @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  service                    Service?                            @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  product                    Product?                            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  executor                   BarbershopMember?                   @relation(fields: [executorId], references: [id], onDelete: SetNull)
+  clubBenefitRequested       Boolean                             @default(false) @map("club_benefit_requested")
+  requestedClubPlanBenefitId String?                             @map("requested_club_plan_benefit_id")
   clubBenefitUsage           ClubBenefitUsage?
   clubPointEntry             ClubPointEntry?
   stockMovements             StockMovement[]
-  commissionEntry            CommissionEntry?
+  commissionEntries          CommissionEntry[]
+  executorCorrectionAudits   CommissionExecutorCorrectionAudit[]
 
   @@index([barbershopId, comandaId])
   @@index([executorId, status])
@@ -927,12 +953,13 @@ model Payment {
   refundReason   String?              @map("refund_reason")
   createdAt      DateTime             @default(now()) @map("created_at")
 
-  comanda               Comanda                @relation(fields: [comandaId], references: [id], onDelete: Cascade)
-  refundOf              Payment?               @relation("PaymentRefund", fields: [refundOfId], references: [id], onDelete: Restrict)
-  refunds               Payment[]              @relation("PaymentRefund")
-  cashMovements         CashMovement[]
-  financialEntries      FinancialEntry[]
-  commissionAdjustments CommissionAdjustment[]
+  comanda                Comanda                 @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  refundOf               Payment?                @relation("PaymentRefund", fields: [refundOfId], references: [id], onDelete: Restrict)
+  refunds                Payment[]               @relation("PaymentRefund")
+  cashMovements          CashMovement[]
+  financialEntries       FinancialEntry[]
+  commissionAdjustments  CommissionAdjustment[]
+  commissionPayableItems CommissionPayableItem[]
 
   @@unique([barbershopId, idempotencyKey])
   @@index([barbershopId, paidAt])
@@ -969,8 +996,15 @@ model CashMovement {
   description   String
   createdAt     DateTime @default(now()) @map("created_at")
 
-  cashSession CashSession @relation(fields: [cashSessionId], references: [id], onDelete: Cascade)
-  payment     Payment?    @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  cashSession                 CashSession @relation(fields: [cashSessionId], references: [id], onDelete: Cascade)
+  payment                     Payment?    @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  commissionAdvanceId         String?     @unique @map("commission_advance_id")
+  commissionAdvanceReversalId String?     @unique @map("commission_advance_reversal_id")
+  commissionPayoutId          String?     @unique @map("commission_payout_id")
+
+  commissionAdvance         CommissionAdvance?         @relation(fields: [commissionAdvanceId], references: [id], onDelete: Restrict)
+  commissionAdvanceReversal CommissionAdvanceReversal? @relation(fields: [commissionAdvanceReversalId], references: [id], onDelete: Restrict)
+  commissionPayout          CommissionPayout?          @relation(fields: [commissionPayoutId], references: [id], onDelete: Restrict)
 
   @@index([barbershopId, cashSessionId, createdAt])
   @@map("cash_movements")
@@ -992,11 +1026,18 @@ model FinancialEntry {
   settlementMemberId        String?            @unique @map("settlement_member_id")
   createdAt                 DateTime           @default(now()) @map("created_at")
 
-  barbershop              Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  payment                 Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-  clubSubscriptionPayment ClubSubscriptionPayment? @relation(fields: [clubSubscriptionPaymentId], references: [id], onDelete: SetNull)
-  settlement              ClubSettlement?          @relation(fields: [settlementId], references: [id], onDelete: SetNull)
-  settlementMember        ClubSettlementMember?    @relation(fields: [settlementMemberId], references: [id], onDelete: SetNull)
+  barbershop                  Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  payment                     Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  clubSubscriptionPayment     ClubSubscriptionPayment? @relation(fields: [clubSubscriptionPaymentId], references: [id], onDelete: SetNull)
+  settlement                  ClubSettlement?          @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+  settlementMember            ClubSettlementMember?    @relation(fields: [settlementMemberId], references: [id], onDelete: SetNull)
+  commissionAdvanceId         String?                  @unique @map("commission_advance_id")
+  commissionAdvanceReversalId String?                  @unique @map("commission_advance_reversal_id")
+  commissionPayoutId          String?                  @unique @map("commission_payout_id")
+
+  commissionAdvance         CommissionAdvance?         @relation(fields: [commissionAdvanceId], references: [id], onDelete: Restrict)
+  commissionAdvanceReversal CommissionAdvanceReversal? @relation(fields: [commissionAdvanceReversalId], references: [id], onDelete: Restrict)
+  commissionPayout          CommissionPayout?          @relation(fields: [commissionPayoutId], references: [id], onDelete: Restrict)
 
   @@index([barbershopId, entryDate])
   @@index([barbershopId, type])
@@ -1065,29 +1106,40 @@ model CommissionConfig {
 }
 
 model CommissionEntry {
-  id              String                @id @default(uuid())
-  barbershopId    String                @map("barbershop_id")
-  comandaItemId   String                @unique @map("comanda_item_id")
-  memberId        String                @map("member_id")
-  configId        String?               @map("config_id")
-  configSnapshot  Json                  @map("config_snapshot")
-  baseAmount      Decimal               @map("base_amount") @db.Decimal(10, 2)
-  generatedAmount Decimal               @map("generated_amount") @db.Decimal(10, 2)
-  releasedAmount  Decimal               @default(0) @map("released_amount") @db.Decimal(10, 2)
-  paidAmount      Decimal               @default(0) @map("paid_amount") @db.Decimal(10, 2)
-  reversedAmount  Decimal               @default(0) @map("reversed_amount") @db.Decimal(10, 2)
-  competence      String
-  status          CommissionEntryStatus @default(GENERATED)
-  type            CommissionType        @default(SERVICE)
-  createdAt       DateTime              @default(now()) @map("created_at")
-  updatedAt       DateTime              @updatedAt @map("updated_at")
+  id                 String                @id @default(uuid())
+  barbershopId       String                @map("barbershop_id")
+  comandaItemId      String                @map("comanda_item_id")
+  memberId           String                @map("member_id")
+  configId           String?               @map("config_id")
+  configSnapshot     Json                  @map("config_snapshot")
+  baseAmount         Decimal               @map("base_amount") @db.Decimal(10, 2)
+  generatedAmount    Decimal               @map("generated_amount") @db.Decimal(10, 2)
+  releasedAmount     Decimal               @default(0) @map("released_amount") @db.Decimal(10, 2)
+  paidAmount         Decimal               @default(0) @map("paid_amount") @db.Decimal(10, 2)
+  reversedAmount     Decimal               @default(0) @map("reversed_amount") @db.Decimal(10, 2)
+  competence         String
+  attributionVersion Int                   @default(1) @map("attribution_version")
+  isCurrent          Boolean               @default(true) @map("is_current")
+  supersedesEntryId  String?               @unique @map("supersedes_entry_id")
+  status             CommissionEntryStatus @default(GENERATED)
+  type               CommissionType        @default(SERVICE)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
 
-  barbershop  Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  comandaItem ComandaItem            @relation(fields: [comandaItemId], references: [id], onDelete: Cascade)
-  member      BarbershopMember       @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  config      CommissionConfig?      @relation(fields: [configId], references: [id], onDelete: SetNull)
-  adjustments CommissionAdjustment[]
+  barbershop            Barbershop                          @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comandaItem           ComandaItem                         @relation(fields: [comandaItemId], references: [id], onDelete: Cascade)
+  member                BarbershopMember                    @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  config                CommissionConfig?                   @relation(fields: [configId], references: [id], onDelete: SetNull)
+  supersedes            CommissionEntry?                    @relation("CommissionEntrySupersession", fields: [supersedesEntryId], references: [id], onDelete: Restrict)
+  supersededBy          CommissionEntry?                    @relation("CommissionEntrySupersession")
+  payableItems          CommissionPayableItem[]
+  adjustments           CommissionAdjustment[]
+  correctionAuditsAsOld CommissionExecutorCorrectionAudit[] @relation("CorrectionOldEntry")
+  correctionAuditsAsNew CommissionExecutorCorrectionAudit[] @relation("CorrectionNewEntry")
 
+  @@unique([comandaItemId, attributionVersion])
+  @@index([comandaItemId, isCurrent])
+  @@index([barbershopId, memberId, status])
   @@index([barbershopId, competence])
   @@index([barbershopId, status])
   @@index([memberId, competence])
@@ -1145,6 +1197,269 @@ model CommissionAdjustment {
   @@index([paymentId])
   @@index([rolloverFromCompetence])
   @@map("commission_adjustments")
+}
+
+// ----------------------------------------------------
+// 7.2 REDESENHO DE COMISSÕES (CICLOS E LIVRO-RAZÃO)
+// ----------------------------------------------------
+
+enum CommissionCycleStatus {
+  OPEN
+  PAID
+}
+
+enum CommissionPayableType {
+  RELEASE
+  REVERSAL
+}
+
+enum CommissionPayableSourceKind {
+  PAYMENT
+  REFUND
+  ITEM_COMPLETION
+  COMANDA_RECALCULATION
+  EXECUTOR_CORRECTION
+  LEGACY_BACKFILL
+}
+
+enum CommissionDisbursementMethod {
+  PIX
+  CASH
+  TRANSFER
+  OTHER
+}
+
+enum CommissionCycleAdjustmentType {
+  CREDIT
+  DEBIT
+}
+
+model CommissionCycle {
+  id                String                @id @default(uuid())
+  barbershopId      String                @map("barbershop_id")
+  memberId          String                @map("member_id")
+  cycleNumber       Int                   @map("cycle_number")
+  status            CommissionCycleStatus @default(OPEN)
+  grossCommission   Decimal               @default(0) @map("gross_commission") @db.Decimal(10, 2)
+  adjustmentsTotal  Decimal               @default(0) @map("adjustments_total") @db.Decimal(10, 2)
+  advancesTotal     Decimal               @default(0) @map("advances_total") @db.Decimal(10, 2)
+  finalPayoutAmount Decimal               @default(0) @map("final_payout_amount") @db.Decimal(10, 2)
+  remainingBalance  Decimal               @default(0) @map("remaining_balance") @db.Decimal(10, 2)
+  version           Int                   @default(1)
+  openedAt          DateTime              @default(now()) @map("opened_at")
+  closedAt          DateTime?             @map("closed_at")
+  paidAt            DateTime?             @map("paid_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  barbershop   Barbershop                  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member       BarbershopMember            @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  payableItems CommissionPayableItem[]
+  advances     CommissionAdvance[]
+  adjustments  CommissionCycleAdjustment[]
+  payout       CommissionPayout?
+
+  @@unique([barbershopId, memberId, cycleNumber])
+  @@index([barbershopId, memberId, status])
+  @@index([barbershopId, status])
+  @@map("commission_cycles")
+}
+
+model CommissionPayableItem {
+  id                     String                      @id @default(uuid())
+  barbershopId           String                      @map("barbershop_id")
+  cycleId                String                      @map("cycle_id")
+  entryId                String                      @map("entry_id")
+  memberId               String                      @map("member_id")
+  sourceKind             CommissionPayableSourceKind @map("source_kind")
+  sourcePaymentId        String?                     @map("source_payment_id")
+  sourceComandaId        String?                     @map("source_comanda_id")
+  sourceRevision         Int?                        @map("source_revision")
+  legacyEntryId          String?                     @map("legacy_entry_id")
+  reversesPayableItemId  String?                     @map("reverses_payable_item_id")
+  type                   CommissionPayableType
+  amount                 Decimal                     @db.Decimal(10, 2)
+  isHistoricalCorrection Boolean                     @default(false) @map("is_historical_correction")
+  eventKey               String                      @map("event_key")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+
+  barbershop          Barbershop                 @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  cycle               CommissionCycle            @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  entry               CommissionEntry            @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  member              BarbershopMember           @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  sourcePayment       Payment?                   @relation(fields: [sourcePaymentId], references: [id], onDelete: Restrict)
+  sourceComanda       Comanda?                   @relation(fields: [sourceComandaId], references: [id], onDelete: Restrict)
+  reversesPayableItem CommissionPayableItem?     @relation("PayableItemReversals", fields: [reversesPayableItemId], references: [id], onDelete: Restrict)
+  reversals           CommissionPayableItem[]    @relation("PayableItemReversals")
+  cycleAdjustment     CommissionCycleAdjustment?
+
+  @@unique([barbershopId, eventKey])
+  @@index([cycleId])
+  @@index([entryId])
+  @@index([memberId, type])
+  @@index([barbershopId, createdAt])
+  @@index([reversesPayableItemId])
+  @@map("commission_payable_items")
+}
+
+model CommissionAdvance {
+  id             String                       @id @default(uuid())
+  barbershopId   String                       @map("barbershop_id")
+  cycleId        String                       @map("cycle_id")
+  memberId       String                       @map("member_id")
+  amount         Decimal                      @db.Decimal(10, 2)
+  paymentMethod  CommissionDisbursementMethod @map("payment_method")
+  disbursedAt    DateTime                     @default(now()) @map("disbursed_at")
+  notes          String?
+  idempotencyKey String                       @map("idempotency_key")
+  createdById    String                       @map("created_by_id")
+  createdAt      DateTime                     @default(now()) @map("created_at")
+
+  barbershop     Barbershop                  @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  cycle          CommissionCycle             @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  member         BarbershopMember            @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy      User                        @relation("AdvanceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reversals      CommissionAdvanceReversal[]
+  financialEntry FinancialEntry?
+  cashMovement   CashMovement?
+  audits         CommissionAdvanceAudit[]
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([cycleId])
+  @@index([memberId])
+  @@index([barbershopId, disbursedAt])
+  @@map("commission_advances")
+}
+
+model CommissionAdvanceReversal {
+  id                     String                       @id @default(uuid())
+  barbershopId           String                       @map("barbershop_id")
+  advanceId              String                       @map("advance_id")
+  amount                 Decimal                      @db.Decimal(10, 2)
+  returnMethod           CommissionDisbursementMethod @map("return_method")
+  isPhysicalCashReturned Boolean                      @default(false) @map("is_physical_cash_returned")
+  returnedAt             DateTime                     @default(now()) @map("returned_at")
+  reason                 String
+  idempotencyKey         String                       @map("idempotency_key")
+  createdById            String                       @map("created_by_id")
+  createdAt              DateTime                     @default(now()) @map("created_at")
+
+  barbershop      Barbershop                 @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  advance         CommissionAdvance          @relation(fields: [advanceId], references: [id], onDelete: Restrict)
+  createdBy       User                       @relation("AdvanceReversalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  financialEntry  FinancialEntry?
+  cashMovement    CashMovement?
+  cycleAdjustment CommissionCycleAdjustment?
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([advanceId])
+  @@index([barbershopId, returnedAt])
+  @@map("commission_advance_reversals")
+}
+
+model CommissionPayout {
+  id             String                        @id @default(uuid())
+  barbershopId   String                        @map("barbershop_id")
+  cycleId        String                        @unique @map("cycle_id")
+  memberId       String                        @map("member_id")
+  amount         Decimal                       @db.Decimal(10, 2)
+  paymentMethod  CommissionDisbursementMethod? @map("payment_method")
+  paidAt         DateTime                      @default(now()) @map("paid_at")
+  notes          String?
+  idempotencyKey String                        @map("idempotency_key")
+  createdById    String                        @map("created_by_id")
+  createdAt      DateTime                      @default(now()) @map("created_at")
+
+  barbershop     Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  cycle          CommissionCycle  @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  member         BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy      User             @relation("PayoutCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  financialEntry FinancialEntry?
+  cashMovement   CashMovement?
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([memberId])
+  @@index([barbershopId, paidAt])
+  @@map("commission_payouts")
+}
+
+model CommissionCycleAdjustment {
+  id                      String                        @id @default(uuid())
+  barbershopId            String                        @map("barbershop_id")
+  cycleId                 String                        @map("cycle_id")
+  sourcePayableItemId     String?                       @unique @map("source_payable_item_id")
+  sourceAdvanceReversalId String?                       @unique @map("source_advance_reversal_id")
+  sourceAdjustmentId      String?                       @unique @map("source_adjustment_id")
+  sourceCycleId           String?                       @map("source_cycle_id")
+  sourceEntryId           String?                       @map("source_entry_id")
+  type                    CommissionCycleAdjustmentType
+  amount                  Decimal                       @db.Decimal(10, 2)
+  reason                  String
+  idempotencyKey          String?                       @map("idempotency_key")
+  payloadFingerprint      String?                       @map("payload_fingerprint")
+  createdById             String                        @map("created_by_id")
+  createdAt               DateTime                      @default(now()) @map("created_at")
+
+  barbershop            Barbershop                 @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  cycle                 CommissionCycle            @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  sourcePayableItem     CommissionPayableItem?     @relation(fields: [sourcePayableItemId], references: [id], onDelete: Restrict)
+  sourceAdvanceReversal CommissionAdvanceReversal? @relation(fields: [sourceAdvanceReversalId], references: [id], onDelete: Restrict)
+  createdBy             User                       @relation("AdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([cycleId])
+  @@index([barbershopId, createdAt])
+  @@map("commission_cycle_adjustments")
+}
+
+model CommissionExecutorCorrectionAudit {
+  id                 String   @id @default(uuid())
+  barbershopId       String   @map("barbershop_id")
+  comandaItemId      String   @map("comanda_item_id")
+  oldEntryId         String   @map("old_entry_id")
+  newEntryId         String   @map("new_entry_id")
+  oldMemberId        String   @map("old_member_id")
+  newMemberId        String   @map("new_member_id")
+  oldConfigSnapshot  Json     @map("old_config_snapshot")
+  newConfigSnapshot  Json     @map("new_config_snapshot")
+  oldReleasedAmount  Decimal  @map("old_released_amount") @db.Decimal(10, 2)
+  newReleasedAmount  Decimal  @map("new_released_amount") @db.Decimal(10, 2)
+  reason             String
+  idempotencyKey     String   @map("idempotency_key")
+  payloadFingerprint String   @map("payload_fingerprint")
+  correctedById      String   @map("corrected_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  barbershop  Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comandaItem ComandaItem      @relation(fields: [comandaItemId], references: [id], onDelete: Restrict)
+  oldEntry    CommissionEntry  @relation("CorrectionOldEntry", fields: [oldEntryId], references: [id], onDelete: Restrict)
+  newEntry    CommissionEntry  @relation("CorrectionNewEntry", fields: [newEntryId], references: [id], onDelete: Restrict)
+  oldMember   BarbershopMember @relation("CorrectionOldMember", fields: [oldMemberId], references: [id], onDelete: Restrict)
+  newMember   BarbershopMember @relation("CorrectionNewMember", fields: [newMemberId], references: [id], onDelete: Restrict)
+  correctedBy User             @relation("CorrectionCorrectedBy", fields: [correctedById], references: [id], onDelete: Restrict)
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([comandaItemId])
+  @@map("commission_executor_correction_audits")
+}
+
+model CommissionAdvanceAudit {
+  id           String   @id @default(uuid())
+  barbershopId String   @map("barbershop_id")
+  advanceId    String   @map("advance_id")
+  field        String
+  oldValue     String?  @map("old_value")
+  newValue     String?  @map("new_value")
+  reason       String
+  changedById  String   @map("changed_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  advance    CommissionAdvance @relation(fields: [advanceId], references: [id], onDelete: Restrict)
+  changedBy  User              @relation("AdvanceAuditChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([advanceId])
+  @@map("commission_advance_audits")
 }
 
 // ----------------------------------------------------

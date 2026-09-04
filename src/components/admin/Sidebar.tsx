@@ -94,12 +94,8 @@ const navItems = [
     label: "Comissões",
     href: "/admin/comissoes",
     icon: Icons.dashboard,
+    children: [],
     ownerOnly: false,
-    children: [
-      { label: "Geral", href: "/admin/comissoes" },
-      { label: "Configuracoes", href: "/admin/comissoes/configuracoes" },
-      { label: "Periodos", href: "/admin/comissoes/periodos" },
-    ],
   },
   {
     label: "Serviços",

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { ComandaItemStatus, ComandaItemType, CommissionPeriodStatus } from "@prisma/client";
@@ -144,18 +145,18 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
     );
     await prisma.$transaction((tx) => closeComanda(tx, t.shop.id, t.comanda.id));
 
-    // Fecha e paga o periodo (competencia 2026-07)
-    let period = await prisma.commissionPeriod.findFirstOrThrow({
-      where: { barbershopId: t.shop.id, memberId: t.barber1.id, competence: "2026-07" },
-    });
-    await prisma.$transaction(async (tx) => {
-      const { closeCommissionPeriod, payCommissionPeriod } = await import("@/lib/operations/commissions");
-      await closeCommissionPeriod(tx, { barbershopId: t.shop.id, memberId: t.barber1.id, competence: period.competence, userId: t.ownerUser.id });
-      await payCommissionPeriod(tx, { barbershopId: t.shop.id, periodId: period.id, paidByMemberId: t.manager.id, userId: t.ownerUser.id });
-    });
-
-    const entryDebug = await prisma.commissionEntry.findFirstOrThrow();
-    console.log("DEBUG ENTRY AFTER PAY:", JSON.stringify(entryDebug, null, 2));
+    // Fecha e paga o ciclo atual
+    const { executeCommissionPayout, getAuthoritativeCycleBalance } = await import("@/lib/operations/commissions");
+    const payout1 = await prisma.$transaction((tx) =>
+      executeCommissionPayout(tx, {
+        barbershopId: t.shop.id,
+        memberId: t.barber1.id,
+        paymentMethod: "PIX",
+        idempotencyKey: "payout-c-test-1",
+        createdById: t.ownerUser.id,
+      })
+    );
+    expect(payout1.paidCycle.status).toBe("PAID");
 
     // Agora, o cliente pede estorno de 100
     const payment = await prisma.payment.findFirstOrThrow({ where: { comandaId: t.comanda.id, status: "CONFIRMED" } });
@@ -163,26 +164,15 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
       refundPayment(tx, { barbershopId: t.shop.id, paymentId: payment.id, amount: "100.00", reason: "Estorno parcial", userId: t.ownerUser.id })
     );
 
-    // Comissao de 100 paga, estorno de 100 gera reversao de 50 (ja que comissao eh 50%)
-    // Como ja foi paga, deve gerar um PAID_ADJUSTMENT negativo de -50 para a proxima competencia (2026-08)
-    const adjs = await prisma.commissionAdjustment.findMany({
-      where: { type: "PAID_ADJUSTMENT" },
+    // Como o ciclo ja foi pago, estorno de 100 gera reversao de 50 roteada como DEBIT no ciclo sucessor OPEN
+    const debits = await prisma.commissionCycleAdjustment.findMany({
+      where: { barbershopId: t.shop.id, cycle: { memberId: t.barber1.id }, type: "DEBIT" },
     });
-    console.log("DEBUG ADJS:", JSON.stringify(adjs, null, 2));
-    expect(adjs).toHaveLength(1);
-    expect(adjs[0].amount.toNumber()).toBe(-50);
-    expect(adjs[0].competence).toBe("2026-08");
-    expect(adjs[0].rolloverFromCompetence).toBe("2026-07");
+    expect(debits).toHaveLength(1);
+    expect(Number(debits[0].amount)).toBe(50);
 
-    // Sincronizar o periodo de 2026-08 multiplas vezes deve manter exatamente um unico ajuste negativo
-    // e o balanceAmount do periodo 2026-08 deve refletir o saldo negativo (carregado para balanceAmount se houver novo credito, ou mantendo 0 e rolando)
+    // Simula uma nova comanda de 200 no ciclo aberto (gera 100 de comissao bruta)
     await prisma.$transaction(async (tx) => {
-      const { syncCommissionReleaseForComanda } = await import("@/lib/operations/commissions");
-      // Força sync do periodo rodando
-      const entries = await tx.commissionEntry.findMany({ where: { barbershopId: t.shop.id, memberId: t.barber1.id } });
-      const competence = "2026-08";
-      
-      // Simula uma nova comanda de 200 no periodo 2026-08
       const comanda2 = await tx.comanda.create({
         data: { barbershopId: t.shop.id, customerName: "Cliente2", customerPhone: "11999999999" },
       });
@@ -193,32 +183,17 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
         data: { status: ComandaItemStatus.DONE, completedAt: new Date("2026-08-10T12:00:00.000Z") },
       });
       await recalculateComandaTotals(tx, comanda2.id);
-      
-      // Paga comanda2 integralmente (gera credito de 100 na competencia 2026-08)
       await registerPayment(tx, { barbershopId: t.shop.id, comandaId: comanda2.id, method: "PIX", amount: "200.00", userId: t.ownerUser.id });
       await closeComanda(tx, t.shop.id, comanda2.id);
     });
 
-    // O periodo de 2026-08 deve ter generated=100, released=100, mas balanceAmount deve ser 50 (100 released - 50 ajuste negativo)
-    const periodNext = await prisma.commissionPeriod.findUniqueOrThrow({
-      where: { barbershopId_memberId_competence: { barbershopId: t.shop.id, memberId: t.barber1.id, competence: "2026-08" } }
+    const openCycle = await prisma.commissionCycle.findFirstOrThrow({
+      where: { barbershopId: t.shop.id, memberId: t.barber1.id, status: "OPEN" },
     });
-    expect(periodNext.releasedAmount.toNumber()).toBe(100);
-    expect(periodNext.balanceAmount.toNumber()).toBe(50); // Compensou os 50 negativos!
-    
-    // Testa idempotencia: rodar syncOpenCommissionPeriod multiplas vezes nao duplica o ajuste
-    await prisma.$transaction(async (tx) => {
-      // Re-trigger sync 2026-07 period
-      const { closeCommissionPeriod } = await import("@/lib/operations/commissions");
-      // Isso deve avaliar 2026-07 (que continua negativo por causa do estorno parcial do pagamento pago)
-      // e atualizar/garantir o ajuste de rollover para 2026-08.
-      // Como o credito de 2026-08 ja compensou os -50, o balanceAmount em 2026-08 fica 50.
-      // Se rodar de novo, o ajuste de rollover em 2026-08 nao deve duplicar.
-    });
-
-    const adjsAfter = await prisma.commissionAdjustment.findMany({ where: { competence: "2026-08", type: "PAID_ADJUSTMENT" } });
-    expect(adjsAfter).toHaveLength(1);
-    expect(adjsAfter[0].amount.toNumber()).toBe(-50);
+    const authBal = await getAuthoritativeCycleBalance(prisma as any, openCycle.id);
+    expect(authBal.grossCommissionCents).toBe(10000);
+    expect(authBal.adjustmentsTotalCents).toBe(-5000);
+    expect(authBal.economicPayableCents).toBe(5000);
   });
 
   it("garante que o cancelamento manual da comanda reverte todas as comissoes geradas de forma transacional", async () => {
@@ -259,9 +234,9 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
     expect(entryAfter.reversedAmount.toNumber()).toBe(40);
     expect(entryAfter.status).toBe("REVERSED");
 
-    const adjustments = await prisma.commissionAdjustment.findMany({ where: { entryId: entryAfter.id, type: "REVERSAL" } });
-    expect(adjustments).toHaveLength(1);
-    expect(adjustments[0].amount.toNumber()).toBe(-40);
+    const reversals = await prisma.commissionPayableItem.findMany({ where: { entryId: entryAfter.id, type: "REVERSAL" } });
+    expect(reversals).toHaveLength(1);
+    expect(Number(reversals[0].amount)).toBe(40);
   });
 
   it("bloqueia troca de executor com erro 409 se a comissao ja foi paga, ou permite e ajusta se nao paga", async () => {
@@ -277,46 +252,42 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
       registerPayment(tx, { barbershopId: t.shop.id, comandaId: t.comanda.id, method: "PIX", amount: "200.00", userId: t.ownerUser.id })
     );
 
-    // Caso A: Nao paga. Permite alterar executor.
-    await prisma.$transaction(async (tx) => {
-      // Atualiza executor do item de comanda para barber2
-      await tx.comandaItem.update({
-        where: { id: itemId },
-        data: { executorId: t.barber2.id },
-      });
-      
-      const { syncCommissionReleaseForComanda } = await import("@/lib/operations/commissions");
-      // isso deve detectar a troca, remover comissao do barber1 e transferir para o barber2
-      await syncCommissionReleaseForComanda(tx, t.shop.id, t.comanda.id);
-    });
-
-    const entriesBarber2 = await prisma.commissionEntry.findMany({ where: { memberId: t.barber2.id } });
-    expect(entriesBarber2).toHaveLength(1);
-    expect(entriesBarber2[0].releasedAmount.toNumber()).toBe(100);
-
-    const entriesBarber1 = await prisma.commissionEntry.findMany({ where: { memberId: t.barber1.id } });
-    expect(entriesBarber1).toHaveLength(0); // A comissao antiga nao paga foi removida/atualizada
-
-    // Caso B: Paga. Bloqueia com erro 409.
-    await prisma.$transaction((tx) => closeComanda(tx, t.shop.id, t.comanda.id));
-    let period = await prisma.commissionPeriod.findFirstOrThrow({ where: { memberId: t.barber2.id } });
-    await prisma.$transaction(async (tx) => {
-      const { closeCommissionPeriod, payCommissionPeriod } = await import("@/lib/operations/commissions");
-      await closeCommissionPeriod(tx, { barbershopId: t.shop.id, memberId: t.barber2.id, competence: period.competence, userId: t.ownerUser.id });
-      await payCommissionPeriod(tx, { barbershopId: t.shop.id, periodId: period.id, paidByMemberId: t.manager.id, userId: t.ownerUser.id });
-    });
-
-    // Tenta trocar o executor de volta para barber1
+    // Caso A: Tentar trocar executor via update direto sem operação versionada bloqueia com EXECUTOR_CORRECTION_REQUIRED
     await expect(
       prisma.$transaction(async (tx) => {
         await tx.comandaItem.update({
           where: { id: itemId },
-          data: { executorId: t.barber1.id },
+          data: { executorId: t.barber2.id },
         });
         const { syncCommissionReleaseForComanda } = await import("@/lib/operations/commissions");
         await syncCommissionReleaseForComanda(tx, t.shop.id, t.comanda.id);
       })
-    ).rejects.toThrow("alterar o executor"); // Deve disparar erro 409 Conflict
+    ).rejects.toThrow("Alteração de executor exige operação versionada de correção de executor");
+
+    // Caso B: Executar troca versionada via correctCommissionExecutor funciona de forma atômica
+    const { correctCommissionExecutor } = await import("@/lib/operations/commissions");
+    const correctionResult = await prisma.$transaction((tx) =>
+      correctCommissionExecutor(
+        {
+          barbershopId: t.shop.id,
+          comandaItemId: itemId,
+          newExecutorMemberId: t.barber2.id,
+          reason: "Correção de executor autorizada",
+          userId: t.ownerUser.id,
+          role: "OWNER",
+          idempotencyKey: "idem-corr-test-3",
+        },
+        tx
+      )
+    );
+
+    expect(correctionResult.success).toBe(true);
+    const entriesBarber2 = await prisma.commissionEntry.findMany({ where: { memberId: t.barber2.id, isCurrent: true } });
+    expect(entriesBarber2).toHaveLength(1);
+    expect(Number(entriesBarber2[0].releasedAmount)).toBe(100);
+
+    const entriesBarber1 = await prisma.commissionEntry.findMany({ where: { memberId: t.barber1.id, isCurrent: true } });
+    expect(entriesBarber1).toHaveLength(0); // Barbeiro 1 não é mais current
   });
 
   it("garante que o desconto global eh rateado proporcionalmente nos itens comissionaveis com precisao de centavos", async () => {

@@ -461,6 +461,10 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
     expect(refundResManager.status).toBe(200);
 
     // 2. BARBER recebe 403 (Negado)
+    await prisma.barbershopMember.update({
+      where: { id: tenant.owner.id },
+      data: { role: "BARBER" },
+    });
     getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "BARBER" } });
     const refundResBarber = await refundRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/payments/${payment.id}/refund`, {
@@ -472,6 +476,10 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
     expect(refundResBarber.status).toBe(403);
 
     // Restaura role de OWNER para os demais testes
+    await prisma.barbershopMember.update({
+      where: { id: tenant.owner.id },
+      data: { role: "OWNER" },
+    });
     getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
 
     // 3. Motivo curto/vazio falha (menos de 5 chars)

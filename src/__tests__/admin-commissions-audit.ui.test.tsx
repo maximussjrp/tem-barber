@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AdminComissoesPage from "@/app/admin/comissoes/page";
@@ -101,11 +102,49 @@ describe("P1 Comissão — Auditoria por Comanda e Item", () => {
     let requestedDetailUrl = "";
 
     global.fetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/api/admin/commissions/detail")) {
+      if (url.includes("/api/admin/commissions/overview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              overview: [
+                {
+                  member: { id: "member-barber-456", name: "Max Victor Guarinieri", role: "BARBER" },
+                  currentCycle: {
+                    id: "c1",
+                    cycleNumber: 1,
+                    status: "OPEN",
+                    grossCommission: 70,
+                    adjustmentsTotal: 0,
+                    advancesTotal: 0,
+                    remainingBalance: 70,
+                    openedAt: "2026-08-01T00:00:00Z",
+                  },
+                },
+              ],
+            }),
+        });
+      }
+      if (url.includes("/api/admin/commissions/members/member-barber-456")) {
         requestedDetailUrl = url;
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve(mockDetail),
+          json: () =>
+            Promise.resolve({
+              member: { id: "member-barber-456", name: "Max Victor Guarinieri", role: "BARBER" },
+              currentCycle: {
+                id: "c1",
+                cycleNumber: 1,
+                status: "OPEN",
+                grossCommission: 70,
+                adjustmentsTotal: 0,
+                advancesTotal: 0,
+                remainingBalance: 70,
+                payableItems: [
+                  { id: "p1", type: "RELEASE", amount: 70, createdAt: "2026-08-05T12:00:00Z" },
+                ],
+              },
+            }),
         });
       }
       if (url.includes("/api/admin/commissions/report")) {
@@ -124,20 +163,19 @@ describe("P1 Comissão — Auditoria por Comanda e Item", () => {
       expect(screen.getAllByText("Max Victor Guarinieri").length).toBeGreaterThan(0);
     });
 
-    // Clicar na linha para abrir auditoria
-    const row = screen.getAllByText("Max Victor Guarinieri").find((el) => el.closest("tr"))!.closest("tr")!;
-    fireEvent.click(row);
+    // Clicar em Ver detalhes
+    const detailBtn = screen.getByText("Ver detalhes");
+    fireEvent.click(detailBtn);
 
-    // Verificar se o endpoint de auditoria foi chamado com memberId="member-barber-456" e NÃO "period-123"
+    // Verificar se o endpoint de detalhe do membro foi chamado
     await waitFor(() => {
-      expect(requestedDetailUrl).toContain("memberId=member-barber-456");
-      expect(requestedDetailUrl).not.toContain("memberId=period-123");
+      expect(requestedDetailUrl).toContain("/api/admin/commissions/members/member-barber-456");
     });
 
-    // Verificar se o drawer abriu com os dados corretos
+    // Verificar se o modal de extrato abriu com os dados corretos
     await waitFor(() => {
-      expect(screen.getByText("Auditoria: Max Victor Guarinieri")).toBeInTheDocument();
-      expect(screen.getByText("Combo Corte + Barba")).toBeInTheDocument();
+      expect(screen.getByText("Extrato do Profissional")).toBeInTheDocument();
+      expect(screen.getByText("RELEASE")).toBeInTheDocument();
     });
   });
 });

@@ -7,7 +7,7 @@ const { prismaMock } = vi.hoisted(() => ({
     barbershop: { findFirst: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
     review: { findMany: vi.fn() },
-    tenantSubscription: { findFirst: vi.fn() },
+    tenantSubscription: { findUnique: vi.fn() },
   },
 }));
 
@@ -105,7 +105,7 @@ describe("P1 Vitrine Pública LOTE A3 — Redesign Editorial Premium", () => {
     };
 
     prismaMock.barbershop.findFirst.mockResolvedValueOnce(barbershop);
-    prismaMock.tenantSubscription.findFirst.mockResolvedValueOnce(overrides?.subscription ?? activeSubscription);
+    prismaMock.tenantSubscription.findUnique.mockResolvedValueOnce(overrides?.subscription ?? activeSubscription);
     prismaMock.barbershopMember.findFirst.mockResolvedValueOnce({
       workingHours: overrides?.ownerWorkingHours ?? baseMember.workingHours,
     });

@@ -201,6 +201,43 @@ describeIf("release operacional 1B - comissoes", () => {
     expect(entry.status).toBe("RELEASED");
   });
 
+  it("card processing fee is neutral to the gross customer commissionable base", async () => {
+    const tenant = await seedTenant("card-fee-neutral");
+    await prisma.service.update({ where: { id: tenant.service.id }, data: { price: "100.00" } });
+    await prisma.$transaction((tx) =>
+      upsertCommissionConfig(tx, {
+        barbershopId: tenant.shop.id,
+        memberId: tenant.barber.id,
+        serviceId: tenant.service.id,
+        type: "PERCENTAGE",
+        value: "40",
+      })
+    );
+    await addDoneService({
+      barbershopId: tenant.shop.id,
+      comandaId: tenant.comanda.id,
+      serviceId: tenant.service.id,
+      executorId: tenant.barber.id,
+    });
+
+    const cardProcessorFee = 5;
+    await prisma.$transaction((tx) =>
+      registerPayment(tx, {
+        barbershopId: tenant.shop.id,
+        comandaId: tenant.comanda.id,
+        method: "CREDIT",
+        amount: "100.00",
+        userId: tenant.ownerUser.id,
+      })
+    );
+
+    const entry = await prisma.commissionEntry.findFirstOrThrow();
+    expect(100 - cardProcessorFee).toBe(95); // separate merchant settlement semantic
+    expect(entry.baseAmount.toString()).toBe("100");
+    expect(entry.generatedAmount.toString()).toBe("40");
+    expect(entry.releasedAmount.toString()).toBe("40");
+  });
+
   it("estorno reduz liberado, registra reversao e preserva historico", async () => {
     const tenant = await seedTenant("d");
     await prisma.$transaction((tx) =>
@@ -217,14 +254,14 @@ describeIf("release operacional 1B - comissoes", () => {
     );
 
     const entry = await prisma.commissionEntry.findFirstOrThrow();
-    const reversal = await prisma.commissionAdjustment.findFirstOrThrow({ where: { type: "REVERSAL" } });
+    const reversal = await prisma.commissionPayableItem.findFirstOrThrow({ where: { type: "REVERSAL" } });
     expect(entry.generatedAmount.toString()).toBe("40");
     expect(entry.releasedAmount.toString()).toBe("20");
     expect(entry.reversedAmount.toString()).toBe("20");
-    expect(reversal.amount.toString()).toBe("-20");
+    expect(Number(reversal.amount)).toBe(20);
   });
 
-  it("fecha periodo, marca como pago e impede pagamento pelo proprio profissional", async () => {
+  it("fecha ciclo, liquida comissao e cria sucessor aberto", async () => {
     const tenant = await seedTenant("e");
     await prisma.$transaction((tx) =>
       upsertCommissionConfig(tx, { barbershopId: tenant.shop.id, type: "FIXED_VALUE", value: "30.00" })
@@ -235,32 +272,20 @@ describeIf("release operacional 1B - comissoes", () => {
     );
     await prisma.$transaction((tx) => closeComanda(tx, tenant.shop.id, tenant.comanda.id));
 
-    let period = await prisma.commissionPeriod.findFirstOrThrow({
-      where: { competence: "2026-07" },
-    });
-    await prisma.$transaction(async (tx) => {
-      const { closeCommissionPeriod } = await import("@/lib/operations/commissions");
-      await closeCommissionPeriod(tx, { barbershopId: tenant.shop.id, memberId: tenant.barber.id, competence: period.competence, userId: tenant.ownerUser.id });
-    });
-    period = await prisma.commissionPeriod.findFirstOrThrow({
-      where: { competence: "2026-07" },
-    });
-
-    await expect(
-      prisma.$transaction(async (tx) => {
-        const { payCommissionPeriod } = await import("@/lib/operations/commissions");
-        await payCommissionPeriod(tx, { barbershopId: tenant.shop.id, periodId: period.id, paidByMemberId: tenant.barber.id, userId: tenant.ownerUser.id });
+    const { executeCommissionPayout } = await import("@/lib/operations/commissions");
+    const payoutResult = await prisma.$transaction((tx) =>
+      executeCommissionPayout(tx, {
+        barbershopId: tenant.shop.id,
+        memberId: tenant.barber.id,
+        paymentMethod: "PIX",
+        idempotencyKey: "payout-integration-test-e",
+        createdById: tenant.ownerUser.id,
       })
-    ).rejects.toThrow("propria comissao");
+    );
 
-    await prisma.$transaction(async (tx) => {
-      const { payCommissionPeriod } = await import("@/lib/operations/commissions");
-      await payCommissionPeriod(tx, { barbershopId: tenant.shop.id, periodId: period.id, paidByMemberId: tenant.manager.id, userId: tenant.ownerUser.id });
-    });
-    const paid = await prisma.commissionPeriod.findFirstOrThrow({
-      where: { competence: "2026-07" },
-    });
-    expect(paid.status).toBe("PAID");
-    expect(paid.balanceAmount.toString()).toBe("0");
+    expect(payoutResult.paidCycle.status).toBe("PAID");
+    expect(Number(payoutResult.paidCycle.finalPayoutAmount)).toBe(30);
+    expect(Number(payoutResult.paidCycle.remainingBalance)).toBe(0);
+    expect(payoutResult.nextCycle.status).toBe("OPEN");
   });
 });
