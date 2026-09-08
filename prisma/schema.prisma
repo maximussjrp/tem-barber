@@ -62,6 +62,9 @@ model User {
   marketingConsentEventsAsActor     CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorUser")
   createdReactivationCampaigns      ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByUser")
   reactivationCampaignRecipients    ReactivationCampaignRecipient[]     @relation("ReactivationCampaignCustomer")
+  metaConnectionsCreated            MetaConnection[]                    @relation("MetaConnectionCreatedByUser")
+  metaOnboardingSessionsCreated     MetaOnboardingSession[]             @relation("MetaOnboardingSessionCreatedByUser")
+  metaConnectionEventsAsActor       MetaConnectionEvent[]               @relation("MetaConnectionEventActorUser")
 
   @@map("users")
 }
@@ -145,6 +148,10 @@ model Barbershop {
   customerMarketingConsentEvents     CustomerMarketingConsentEvent[]
   reactivationCampaigns              ReactivationCampaign[]
   reactivationCampaignRecipients     ReactivationCampaignRecipient[]
+  metaConnection                     MetaConnection?
+  metaOnboardingSessions             MetaOnboardingSession[]
+  metaConnectionEvents               MetaConnectionEvent[]
+  webhookInboxes                     WebhookInbox[]
 
   @@map("barbershops")
 }
@@ -2274,4 +2281,157 @@ model ReactivationCampaignRecipient {
   @@index([barbershopId, sentConfirmedAt])
   @@index([campaignId, dispatchStatus])
   @@map("reactivation_campaign_recipients")
+}
+
+// ----------------------------------------------------
+// 23. R6.1A — META CONNECTION SECURITY FOUNDATION
+// ----------------------------------------------------
+
+enum MetaConnectionStatus {
+  INITIATED
+  CONNECTED
+  DEGRADED
+  DISCONNECTED
+  FAILED
+}
+
+enum MetaOnboardingSessionStatus {
+  INITIATED
+  CONSUMED
+  EXPIRED
+  CANCELLED
+}
+
+enum MetaConnectionEventType {
+  ONBOARDING_STARTED
+  CONNECTED
+  DEGRADED
+  DISCONNECTED
+  RECONNECTED
+  CONFIG_UPDATED
+  HEALTH_CHECK_FAILED
+  HEALTH_CHECK_PASSED
+}
+
+enum WebhookProcessingStatus {
+  PENDING
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+model MetaConnection {
+  id                   String               @id @default(uuid())
+  barbershopId         String               @unique @map("barbershop_id")
+  businessId           String?              @map("business_id")
+  wabaId               String?              @map("waba_id")
+  phoneNumberId        String?              @unique @map("phone_number_id")
+  displayPhoneNumber   String?              @map("display_phone_number")
+  verifiedName         String?              @map("verified_name")
+  qualityRating        String?              @map("quality_rating")
+  wabaReviewStatus     String?              @map("waba_review_status")
+  status               MetaConnectionStatus @default(INITIATED)
+  connectedAt          DateTime?            @map("connected_at")
+  systemUserAssignedAt DateTime?            @map("system_user_assigned_at")
+  webhookSubscribedAt  DateTime?            @map("webhook_subscribed_at")
+  phoneRegisteredAt    DateTime?            @map("phone_registered_at")
+  disconnectedAt       DateTime?            @map("disconnected_at")
+  lastProviderSyncAt   DateTime?            @map("last_provider_sync_at")
+  lastHealthCheckAt    DateTime?            @map("last_health_check_at")
+  lastErrorCode        String?              @map("last_error_code")
+  lastErrorMessage     String?              @map("last_error_message")
+  createdByUserId      String               @map("created_by_user_id")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  barbershop       Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdByUser    User                  @relation("MetaConnectionCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  secret           MetaConnectionSecret?
+  connectionEvents MetaConnectionEvent[]
+  webhookInboxes   WebhookInbox[]
+
+  @@index([wabaId])
+  @@index([status])
+  @@map("meta_connections")
+}
+
+model MetaConnectionSecret {
+  id                        String   @id @default(uuid())
+  metaConnectionId          String   @unique @map("meta_connection_id")
+  registrationPinCiphertext String   @map("registration_pin_ciphertext")
+  registrationPinIv         String   @map("registration_pin_iv")
+  registrationPinAuthTag    String   @map("registration_pin_auth_tag")
+  encryptionKeyVersion      String   @map("encryption_key_version")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  metaConnection MetaConnection @relation(fields: [metaConnectionId], references: [id], onDelete: Cascade)
+
+  @@map("meta_connection_secrets")
+}
+
+model MetaOnboardingSession {
+  id              String                      @id @default(uuid())
+  barbershopId    String                      @map("barbershop_id")
+  createdByUserId String                      @map("created_by_user_id")
+  nonceHash       String                      @unique @map("nonce_hash")
+  status          MetaOnboardingSessionStatus @default(INITIATED)
+  expiresAt       DateTime                    @map("expires_at")
+  consumedAt      DateTime?                   @map("consumed_at")
+  createdAt       DateTime                    @default(now()) @map("created_at")
+
+  barbershop    Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdByUser User       @relation("MetaOnboardingSessionCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([barbershopId, status, expiresAt])
+  @@index([createdByUserId])
+  @@map("meta_onboarding_sessions")
+}
+
+model MetaConnectionEvent {
+  id               String                  @id @default(uuid())
+  barbershopId     String                  @map("barbershop_id")
+  metaConnectionId String?                 @map("meta_connection_id")
+  type             MetaConnectionEventType
+  actorUserId      String?                 @map("actor_user_id")
+  metadata         Json?
+  createdAt        DateTime                @default(now()) @map("created_at")
+
+  barbershop     Barbershop      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  metaConnection MetaConnection? @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  actorUser      User?           @relation("MetaConnectionEventActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, createdAt])
+  @@index([metaConnectionId, createdAt])
+  @@map("meta_connection_events")
+}
+
+model WebhookInbox {
+  id                  String                  @id @default(uuid())
+  provider            String                  @default("meta")
+  eventKey            String                  @map("event_key")
+  eventType           String                  @map("event_type")
+  wabaId              String?                 @map("waba_id")
+  phoneNumberId       String?                 @map("phone_number_id")
+  providerMessageId   String?                 @map("provider_message_id")
+  metaConnectionId    String?                 @map("meta_connection_id")
+  barbershopId        String?                 @map("barbershop_id")
+  providerOccurredAt  DateTime?               @map("provider_occurred_at")
+  payload             Json
+  payloadHash         String                  @map("payload_hash")
+  processingStatus    WebhookProcessingStatus @default(PENDING) @map("processing_status")
+  attemptCount        Int                     @default(0) @map("attempt_count")
+  processingError     String?                 @map("processing_error")
+  signatureVerifiedAt DateTime                @map("signature_verified_at")
+  receivedAt          DateTime                @default(now()) @map("received_at")
+  processedAt         DateTime?               @map("processed_at")
+
+  barbershop     Barbershop?     @relation(fields: [barbershopId], references: [id], onDelete: SetNull)
+  metaConnection MetaConnection? @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, eventKey])
+  @@index([processingStatus, receivedAt])
+  @@index([barbershopId, receivedAt])
+  @@index([phoneNumberId, receivedAt])
+  @@map("webhook_inbox")
 }
