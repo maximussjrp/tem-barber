@@ -47,7 +47,7 @@ vi.mock("@/lib/prisma", () => ({
 import { POST as reconcileAttributionPOST } from "@/app/api/admin/clients/reactivation/manual-campaigns/[campaignId]/reconcile-attribution/route";
 import { GET as getAttributionSummaryGET } from "@/app/api/admin/clients/reactivation/manual-campaigns/[campaignId]/attribution/route";
 import { GET as getRecipientDetailGET } from "@/app/api/admin/clients/reactivation/manual-campaigns/[campaignId]/recipients/[recipientId]/attribution/route";
-import { GET as getCustomerHistoryGET } from "@/app/api/admin/clients/[customerId]/attribution-history/route";
+import { GET as getCustomerHistoryGET } from "@/app/api/admin/clients/[id]/attribution-history/route";
 
 describe("Smart CRM R5.1 — Attribution Core API & Engine Unit Tests", () => {
   beforeEach(() => {
@@ -302,7 +302,7 @@ describe("Smart CRM R5.1 — Attribution Core API & Engine Unit Tests", () => {
       });
 
       const res = await getCustomerHistoryGET(req, {
-        params: Promise.resolve({ customerId: "cust-1" }),
+        params: Promise.resolve({ id: "cust-1" }),
       });
 
       expect(res.status).toBe(401);
@@ -319,7 +319,7 @@ describe("Smart CRM R5.1 — Attribution Core API & Engine Unit Tests", () => {
       });
 
       const res = await getCustomerHistoryGET(req, {
-        params: Promise.resolve({ customerId: "cust-1" }),
+        params: Promise.resolve({ id: "cust-1" }),
       });
 
       expect(res.status).toBe(403);
@@ -345,7 +345,7 @@ describe("Smart CRM R5.1 — Attribution Core API & Engine Unit Tests", () => {
       });
 
       const res = await getCustomerHistoryGET(req, {
-        params: Promise.resolve({ customerId: "cust-1" }),
+        params: Promise.resolve({ id: "cust-1" }),
       });
 
       expect(res.status).toBe(200);

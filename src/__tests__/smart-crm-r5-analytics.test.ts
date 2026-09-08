@@ -38,7 +38,7 @@ vi.mock("@/lib/prisma", () => ({
 import { GET as listCampaignsGET } from "@/app/api/admin/clients/reactivation/manual-campaigns/route";
 import { GET as getAttributionSummaryGET } from "@/app/api/admin/clients/reactivation/manual-campaigns/[campaignId]/attribution/route";
 import { GET as getRecipientAttributionGET } from "@/app/api/admin/clients/reactivation/manual-campaigns/[campaignId]/recipients/[recipientId]/attribution/route";
-import { GET as getCustomerAttributionHistoryGET } from "@/app/api/admin/clients/[customerId]/attribution-history/route";
+import { GET as getCustomerAttributionHistoryGET } from "@/app/api/admin/clients/[id]/attribution-history/route";
 
 describe("Smart CRM R5.2 Analytics API Routes", () => {
   beforeEach(() => {

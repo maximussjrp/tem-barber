@@ -13,7 +13,7 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ customerId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { error, data } = await getAdminSession();
   if (error) return error;
@@ -23,7 +23,7 @@ export async function GET(
     return NextResponse.json({ error: "Barbearia não encontrada." }, { status: 403 });
   }
 
-  const { customerId } = await params;
+  const { id: customerId } = await params;
   if (!customerId) {
     return NextResponse.json({ error: "ID do cliente é obrigatório." }, { status: 400 });
   }
@@ -73,7 +73,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ customerId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { error, data } = await getAdminSession();
   if (error) return error;
@@ -84,7 +84,7 @@ export async function POST(
     return NextResponse.json({ error: "Acesso não autorizado." }, { status: 403 });
   }
 
-  const { customerId } = await params;
+  const { id: customerId } = await params;
   if (!customerId) {
     return NextResponse.json({ error: "ID do cliente é obrigatório." }, { status: 400 });
   }

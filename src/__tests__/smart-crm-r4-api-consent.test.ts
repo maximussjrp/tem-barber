@@ -55,7 +55,7 @@ vi.mock("@/lib/prisma", () => ({
   default: prismaMock,
 }));
 
-import { GET, POST } from "@/app/api/admin/clients/[customerId]/marketing-consent/route";
+import { GET, POST } from "@/app/api/admin/clients/[id]/marketing-consent/route";
 
 describe("Smart CRM R4 — Marketing Consent API Tests", () => {
   beforeEach(() => {
@@ -74,7 +74,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "OPTED_IN", eventKey: "evt-1" }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(401);
     });
 
@@ -89,7 +89,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "OPTED_IN", eventKey: "evt-1" }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(403);
     });
   });
@@ -106,7 +106,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "OPTED_IN" }), // missing eventKey
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe("INVALID_EVENT_KEY");
@@ -123,7 +123,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "INVALID_STATUS", eventKey: "evt-1" }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe("INVALID_STATUS");
@@ -142,7 +142,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "OPTED_IN", eventKey: "evt-1" }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-nonexistent" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-nonexistent" }) });
       expect(res.status).toBe(404);
     });
 
@@ -165,7 +165,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({ status: "OPTED_IN", eventKey: "evt-conflict" }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(409);
       const json = await res.json();
       expect(json.error).toBe("EVENT_KEY_CONFLICT");
@@ -196,7 +196,7 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         }),
       });
 
-      const res = await POST(req, { params: Promise.resolve({ customerId: "c-1" }) });
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
