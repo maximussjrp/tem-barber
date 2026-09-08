@@ -50,6 +50,20 @@ function adminPutRequest(id: string, body: unknown) {
   });
 }
 
+function getFutureMondayISO(time: string): string {
+  const d = new Date();
+  const currentDay = d.getUTCDay();
+  let daysToAdd = (1 - currentDay + 7) % 7;
+  if (daysToAdd === 0) {
+    daysToAdd = 7;
+  }
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + daysToAdd));
+  const year = target.getUTCFullYear();
+  const month = String(target.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(target.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T${time}`;
+}
+
 async function seedTenant(label: string) {
   const shop = await prisma.barbershop.create({
     data: {
@@ -196,7 +210,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const body = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-09-07T13:00:00.000Z",
+      dateTime: getFutureMondayISO("13:00:00.000Z"),
       customerPhone: tenant.customer.phone,
     };
 
@@ -226,13 +240,13 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const body1 = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-09-07T14:00:00.000Z",
+      dateTime: getFutureMondayISO("14:00:00.000Z"),
       customerPhone: tenant.customer.phone,
     };
     const body2 = {
       memberId: tenant.member.id,
       serviceIds: [tenant.service.id],
-      dateTime: "2026-09-07T14:00:00.000Z",
+      dateTime: getFutureMondayISO("14:00:00.000Z"),
       customerPhone: customer2.phone,
     };
 
@@ -282,7 +296,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     const responses = await Promise.all([
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust1.phone, memberId: tenantA.member.id, dateTime: "2026-09-07T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust1.phone, memberId: tenantA.member.id, dateTime: getFutureMondayISO("15:00:00.000Z") },
           "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
           tenantA.shop.slug
         ),
@@ -290,7 +304,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust2.phone, memberId: tenantA.member.id, dateTime: "2026-09-07T15:30:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust2.phone, memberId: tenantA.member.id, dateTime: getFutureMondayISO("15:30:00.000Z") },
           "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
           tenantA.shop.slug
         ),
@@ -298,7 +312,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
       ),
       publicBook(
         publicRequest(
-          { serviceIds: [tenantA.service.id], customerPhone: cust3.phone, memberId: secondMember.id, dateTime: "2026-09-07T15:00:00.000Z" },
+          { serviceIds: [tenantA.service.id], customerPhone: cust3.phone, memberId: secondMember.id, dateTime: getFutureMondayISO("15:00:00.000Z") },
           "ffffffff-ffff-4fff-8fff-ffffffffffff",
           tenantA.shop.slug
         ),
@@ -309,7 +323,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
           {
             memberId: tenantB.member.id,
             serviceIds: [tenantB.service.id],
-            dateTime: "2026-09-07T15:00:00.000Z",
+            dateTime: getFutureMondayISO("15:00:00.000Z"),
             customerPhone: cust4.phone,
           },
           "99999999-9999-4999-8999-999999999999",
@@ -340,7 +354,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
         serviceIds: [tenant.service.id],
-        dateTime: "2026-09-07T16:00:00.000Z",
+        dateTime: getFutureMondayISO("16:00:00.000Z"),
       })
     );
     const conflict = await adminCreate(
@@ -348,7 +362,7 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
         serviceIds: [tenant.service.id],
-        dateTime: "2026-09-07T16:15:00.000Z",
+        dateTime: getFutureMondayISO("16:15:00.000Z"),
       })
     );
     const second = await prisma.appointment.create({
@@ -356,14 +370,14 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
         barbershopId: tenant.shop.id,
         memberId: tenant.member.id,
         customerId: tenant.customer.id,
-        dateTime: new Date("2026-09-07T17:00:00.000Z"),
+        dateTime: new Date(getFutureMondayISO("17:00:00.000Z")),
         totalPrice: "50.00",
         durationMin: 30,
         services: { create: [{ serviceId: tenant.service.id, priceApplied: "50.00" }] },
       },
     });
     const putConflict = await adminUpdate(adminPutRequest(second.id, {
-      dateTime: "2026-09-07T16:00:00.000Z",
+      dateTime: getFutureMondayISO("16:00:00.000Z"),
     }), {
       params: Promise.resolve({ id: second.id }),
     });
@@ -372,6 +386,6 @@ describeIf("concorrencia e idempotencia de agendamentos com PostgreSQL", () => {
     expect(first.status).toBe(201);
     expect(conflict.status).toBe(409);
     expect(putConflict.status).toBe(409);
-    expect(unchanged.dateTime.toISOString()).toBe("2026-09-07T17:00:00.000Z");
+    expect(unchanged.dateTime.toISOString()).toBe(getFutureMondayISO("17:00:00.000Z"));
   });
 });
