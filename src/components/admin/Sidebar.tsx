@@ -86,7 +86,20 @@ const navItems = [
   { label: "Agendamentos",  href: "/admin/agendamentos", icon: Icons.calendar,  children: [], ownerOnly: false },
   { label: "Fila Online",   href: "/admin/fila",         icon: Icons.calendar,  children: [], ownerOnly: false },
   { label: "Comandas",      href: "/admin/comandas",     icon: Icons.calendar,  children: [], ownerOnly: false },
-  { label: "Clientes",      href: "/admin/clientes",     icon: Icons.clients,   children: [], ownerOnly: false },
+  {
+    label: "Clientes",
+    href: "/admin/clientes",
+    icon: Icons.clients,
+    ownerOnly: false,
+    children: [
+      { label: "Base de clientes", href: "/admin/clientes" },
+      {
+        label: "Reativação",
+        href: "/admin/clientes/reativacao",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+    ],
+  },
   { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [], ownerOnly: false },
   { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [], ownerOnly: false },
   { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [], ownerOnly: false },

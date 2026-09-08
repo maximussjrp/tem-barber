@@ -57,6 +57,11 @@ model User {
   createdCommissionCycleAdjustments CommissionCycleAdjustment[]         @relation("AdjustmentCreatedBy")
   correctedCommissionAudits         CommissionExecutorCorrectionAudit[] @relation("CorrectionCorrectedBy")
   commissionAdvanceAudits           CommissionAdvanceAudit[]            @relation("AdvanceAuditChangedBy")
+  customerMarketingConsents         CustomerMarketingConsent[]          @relation("CustomerMarketingConsents")
+  customerMarketingConsentEvents    CustomerMarketingConsentEvent[]     @relation("CustomerMarketingConsentEvents")
+  marketingConsentEventsAsActor     CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorUser")
+  createdReactivationCampaigns      ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByUser")
+  reactivationCampaignRecipients    ReactivationCampaignRecipient[]     @relation("ReactivationCampaignCustomer")
 
   @@map("users")
 }
@@ -136,6 +141,10 @@ model Barbershop {
   commissionCycleAdjustments         CommissionCycleAdjustment[]
   commissionExecutorCorrectionAudits CommissionExecutorCorrectionAudit[]
   commissionAdvanceAudits            CommissionAdvanceAudit[]
+  customerMarketingConsents          CustomerMarketingConsent[]
+  customerMarketingConsentEvents     CustomerMarketingConsentEvent[]
+  reactivationCampaigns              ReactivationCampaign[]
+  reactivationCampaignRecipients     ReactivationCampaignRecipient[]
 
   @@map("barbershops")
 }
@@ -176,33 +185,36 @@ model BarbershopMember {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  barbershop                 Barbershop                          @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  user                       User                                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  services                   BarberService[]
-  workingHours               WorkingHour[]
-  timeOffs                   TimeOff[]
-  appointments               Appointment[]
-  comandaItems               ComandaItem[]
-  commissionConfigs          CommissionConfig[]
-  commissionEntries          CommissionEntry[]
-  commissionPeriods          CommissionPeriod[]
-  commissionAdjustments      CommissionAdjustment[]
-  clubPointEntries           ClubPointEntry[]
-  clubSettlementMembers      ClubSettlementMember[]
-  preferredWaitlistEntries   OnlineWaitlistEntry[]               @relation("WaitlistPreferredMember")
-  calledWaitlistEntries      OnlineWaitlistEntry[]               @relation("WaitlistCalledByMember")
-  onlineWaitlistConfig       OnlineWaitlistMemberConfig?
-  comandaReopenAudits        ComandaReopenAudit[]
-  comandaCancelAudits        ComandaCancelAudit[]                @relation("ComandaCancelledByMember")
-  blockedCustomersByMe       BarbershopBlockedCustomer[]         @relation("BlockedByMember")
-  unblockedCustomersByMe     BarbershopBlockedCustomer[]         @relation("UnblockedByMember")
-  createdCustomerContactLogs CustomerContactLog[]                @relation("MemberCreatedCustomerContactLogs")
-  commissionCycles           CommissionCycle[]
-  commissionPayableItems     CommissionPayableItem[]
-  commissionAdvances         CommissionAdvance[]
-  commissionPayouts          CommissionPayout[]
-  correctionAuditsAsOld      CommissionExecutorCorrectionAudit[] @relation("CorrectionOldMember")
-  correctionAuditsAsNew      CommissionExecutorCorrectionAudit[] @relation("CorrectionNewMember")
+  barbershop                        Barbershop                          @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user                              User                                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services                          BarberService[]
+  workingHours                      WorkingHour[]
+  timeOffs                          TimeOff[]
+  appointments                      Appointment[]
+  comandaItems                      ComandaItem[]
+  commissionConfigs                 CommissionConfig[]
+  commissionEntries                 CommissionEntry[]
+  commissionPeriods                 CommissionPeriod[]
+  commissionAdjustments             CommissionAdjustment[]
+  clubPointEntries                  ClubPointEntry[]
+  clubSettlementMembers             ClubSettlementMember[]
+  preferredWaitlistEntries          OnlineWaitlistEntry[]               @relation("WaitlistPreferredMember")
+  calledWaitlistEntries             OnlineWaitlistEntry[]               @relation("WaitlistCalledByMember")
+  onlineWaitlistConfig              OnlineWaitlistMemberConfig?
+  comandaReopenAudits               ComandaReopenAudit[]
+  comandaCancelAudits               ComandaCancelAudit[]                @relation("ComandaCancelledByMember")
+  blockedCustomersByMe              BarbershopBlockedCustomer[]         @relation("BlockedByMember")
+  unblockedCustomersByMe            BarbershopBlockedCustomer[]         @relation("UnblockedByMember")
+  createdCustomerContactLogs        CustomerContactLog[]                @relation("MemberCreatedCustomerContactLogs")
+  commissionCycles                  CommissionCycle[]
+  commissionPayableItems            CommissionPayableItem[]
+  commissionAdvances                CommissionAdvance[]
+  commissionPayouts                 CommissionPayout[]
+  correctionAuditsAsOld             CommissionExecutorCorrectionAudit[] @relation("CorrectionOldMember")
+  correctionAuditsAsNew             CommissionExecutorCorrectionAudit[] @relation("CorrectionNewMember")
+  marketingConsentEventsAsActor     CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorMember")
+  createdReactivationCampaigns      ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByMember")
+  suggestedInReactivationRecipients ReactivationCampaignRecipient[]     @relation("ReactivationRecipientSuggestedMember")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -244,16 +256,17 @@ model Service {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  barbershop             Barbershop              @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  category               Category                @relation(fields: [categoryId], references: [id])
-  barbers                BarberService[]
-  appointments           AppointmentService[]
-  comandaItems           ComandaItem[]
-  commissionConfigs      CommissionConfig[]
-  serviceCommissionRules ServiceCommissionRule[]
-  clubPlanBenefits       ClubPlanBenefit[]
-  clubBenefitUsages      ClubBenefitUsage[]
-  onlineWaitlistEntries  OnlineWaitlistEntry[]
+  barbershop                        Barbershop                      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  category                          Category                        @relation(fields: [categoryId], references: [id])
+  barbers                           BarberService[]
+  appointments                      AppointmentService[]
+  comandaItems                      ComandaItem[]
+  commissionConfigs                 CommissionConfig[]
+  serviceCommissionRules            ServiceCommissionRule[]
+  clubPlanBenefits                  ClubPlanBenefit[]
+  clubBenefitUsages                 ClubBenefitUsage[]
+  onlineWaitlistEntries             OnlineWaitlistEntry[]
+  suggestedInReactivationRecipients ReactivationCampaignRecipient[] @relation("ReactivationRecipientSuggestedService")
 
   @@map("services")
 }
@@ -356,17 +369,20 @@ model Appointment {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  barbershop           Barbershop                       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  barber               BarbershopMember                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  customer             User                             @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  services             AppointmentService[]
-  review               Review?
-  comandas             Comanda[]
-  whatsappConfirmation AppointmentWhatsappConfirmation?
-  fitInWaitlistEntries OnlineWaitlistEntry[]            @relation("WaitlistFitInAppointment")
+  barbershop                       Barbershop                       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  barber                           BarbershopMember                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  customer                         User                             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  services                         AppointmentService[]
+  review                           Review?
+  comandas                         Comanda[]
+  whatsappConfirmation             AppointmentWhatsappConfirmation?
+  fitInWaitlistEntries             OnlineWaitlistEntry[]            @relation("WaitlistFitInAppointment")
+  attributedReactivationRecipients ReactivationCampaignRecipient[]  @relation("ReactivationRecipientAttributedAppointment")
 
   @@index([barbershopId, dateTime])
   @@index([memberId, dateTime])
+  @@index([barbershopId, customerId, status, dateTime])
+  @@index([barbershopId, customerId, createdAt])
   @@map("appointments")
 }
 
@@ -419,23 +435,25 @@ model CustomerBarbershopLink {
 }
 
 model CustomerContactLog {
-  id                String   @id @default(uuid())
-  barbershopId      String   @map("barbershop_id")
-  customerId        String   @map("customer_id")
-  channel           String   @db.VarChar(32)
-  templateKey       String   @map("template_key") @db.VarChar(64)
-  templateLabel     String   @map("template_label") @db.VarChar(120)
-  note              String?  @db.VarChar(500)
-  contactedAt       DateTime @map("contacted_at")
-  createdByUserId   String   @map("created_by_user_id")
-  createdByMemberId String?  @map("created_by_member_id")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id                      String   @id @default(uuid())
+  barbershopId            String   @map("barbershop_id")
+  customerId              String   @map("customer_id")
+  channel                 String   @db.VarChar(32)
+  templateKey             String   @map("template_key") @db.VarChar(64)
+  templateLabel           String   @map("template_label") @db.VarChar(120)
+  note                    String?  @db.VarChar(500)
+  contactedAt             DateTime @map("contacted_at")
+  reactivationRecipientId String?  @unique @map("reactivation_recipient_id")
+  createdByUserId         String   @map("created_by_user_id")
+  createdByMemberId       String?  @map("created_by_member_id")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
-  barbershop      Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  customer        User              @relation("CustomerContactLogs", fields: [customerId], references: [id], onDelete: Cascade)
-  createdByUser   User              @relation("CreatedCustomerContactLogs", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  createdByMember BarbershopMember? @relation("MemberCreatedCustomerContactLogs", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+  barbershop            Barbershop                     @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer              User                           @relation("CustomerContactLogs", fields: [customerId], references: [id], onDelete: Cascade)
+  createdByUser         User                           @relation("CreatedCustomerContactLogs", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByMember       BarbershopMember?              @relation("MemberCreatedCustomerContactLogs", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+  reactivationRecipient ReactivationCampaignRecipient? @relation(fields: [reactivationRecipientId], references: [id], onDelete: SetNull)
 
   @@index([barbershopId, customerId, contactedAt])
   @@index([barbershopId, contactedAt])
@@ -791,17 +809,19 @@ model Comanda {
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
-  barbershop   Barbershop              @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  appointment  Appointment?            @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  customer     User?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  items        ComandaItem[]
-  payments     Payment[]
-  payableItems CommissionPayableItem[]
-  reopenAudits ComandaReopenAudit[]
-  cancelAudits ComandaCancelAudit[]
+  barbershop                       Barbershop                      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  appointment                      Appointment?                    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  customer                         User?                           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items                            ComandaItem[]
+  payments                         Payment[]
+  payableItems                     CommissionPayableItem[]
+  reopenAudits                     ComandaReopenAudit[]
+  cancelAudits                     ComandaCancelAudit[]
+  attributedReactivationRecipients ReactivationCampaignRecipient[] @relation("ReactivationRecipientAttributedComanda")
 
   @@index([barbershopId, status])
   @@index([barbershopId, openedAt])
+  @@index([barbershopId, customerId, status, closedAt])
   @@map("comandas")
 }
 
@@ -893,6 +913,7 @@ model ComandaItem {
 
   @@index([barbershopId, comandaId])
   @@index([executorId, status])
+  @@index([barbershopId, type, status, completedAt])
   @@map("comanda_items")
 }
 
@@ -2057,4 +2078,200 @@ model BarbershopBlockedCustomer {
   @@index([barbershopId, active])
   @@index([userId])
   @@map("barbershop_blocked_customers")
+}
+
+// ----------------------------------------------------
+// 14. SMART CRM / CUSTOMER REACTIVATION
+// ----------------------------------------------------
+
+enum MarketingConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum MarketingConsentSource {
+  BOOKING_CHECKBOX
+  CUSTOMER_REQUEST_WHATSAPP
+  CUSTOMER_REQUEST_IN_PERSON
+  ADMIN_WITH_PROOF
+  IMPORT_WITH_PROOF
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RecipientDispatchStatus {
+  READY
+  EXCLUDED
+  WHATSAPP_OPENED
+  SENT_CONFIRMED
+  FAILED
+  OPTED_OUT
+}
+
+enum RecipientConversionStatus {
+  NONE
+  BOOKED
+  ATTENDED
+  DIRECT_RETURN
+  REVENUE_ATTRIBUTED
+}
+
+enum CustomerTimingState {
+  NO_HISTORY
+  NOT_DUE
+  DUE_SOON
+  DUE
+  OVERDUE
+  INACTIVE
+}
+
+enum ExpectedReturnSource {
+  PERSONAL
+  SERVICE_MEDIAN
+  BARBERSHOP_MEDIAN
+  PLATFORM_FALLBACK
+}
+
+model CustomerMarketingConsent {
+  id              String                 @id @default(uuid())
+  barbershopId    String                 @map("barbershop_id")
+  customerId      String                 @map("customer_id")
+  channel         String                 @db.VarChar(32)
+  purpose         String                 @db.VarChar(64)
+  status          MarketingConsentStatus
+  source          MarketingConsentSource
+  evidence        String?
+  lastEventId     String?                @map("last_event_id")
+  optedOutAt      DateTime?              @map("opted_out_at")
+  lastConfirmedAt DateTime?              @map("last_confirmed_at")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  barbershop Barbershop                     @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer   User                           @relation("CustomerMarketingConsents", fields: [customerId], references: [id], onDelete: Cascade)
+  lastEvent  CustomerMarketingConsentEvent? @relation("ConsentLastEvent", fields: [lastEventId], references: [id], onDelete: SetNull)
+
+  @@unique([barbershopId, customerId, channel, purpose])
+  @@index([barbershopId, status])
+  @@map("customer_marketing_consents")
+}
+
+model CustomerMarketingConsentEvent {
+  id            String                 @id @default(uuid())
+  barbershopId  String                 @map("barbershop_id")
+  customerId    String                 @map("customer_id")
+  channel       String                 @db.VarChar(32)
+  purpose       String                 @db.VarChar(64)
+  eventType     MarketingConsentStatus @map("event_type")
+  source        MarketingConsentSource
+  reason        String?
+  evidence      String?
+  eventKey      String                 @map("event_key")
+  actorUserId   String?                @map("actor_user_id")
+  actorMemberId String?                @map("actor_member_id")
+  occurredAt    DateTime               @map("occurred_at")
+  createdAt     DateTime               @default(now()) @map("created_at")
+
+  barbershop  Barbershop                 @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer    User                       @relation("CustomerMarketingConsentEvents", fields: [customerId], references: [id], onDelete: Restrict)
+  actorUser   User?                      @relation("MarketingConsentEventActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorMember BarbershopMember?          @relation("MarketingConsentEventActorMember", fields: [actorMemberId], references: [id], onDelete: SetNull)
+  consents    CustomerMarketingConsent[] @relation("ConsentLastEvent")
+
+  @@unique([barbershopId, eventKey])
+  @@index([barbershopId, customerId, occurredAt])
+  @@map("customer_marketing_consent_events")
+}
+
+model ReactivationCampaign {
+  id                           String         @id @default(uuid())
+  barbershopId                 String         @map("barbershop_id")
+  name                         String         @db.VarChar(120)
+  channel                      String         @db.VarChar(32)
+  status                       CampaignStatus @default(DRAFT)
+  targetSegment                Json           @map("target_segment")
+  scoreVersion                 String         @default("smart-crm-score-v1") @map("score_version") @db.VarChar(64)
+  recurrenceVersion            String         @default("smart-crm-recurrence-v1") @map("recurrence_version") @db.VarChar(64)
+  attributionVersion           String         @default("smart-crm-attribution-v1") @map("attribution_version") @db.VarChar(64)
+  bookingAttributionWindowDays Int            @default(14) @map("booking_attribution_window_days")
+  directReturnWindowDays       Int            @default(30) @map("direct_return_window_days")
+  cooldownDays                 Int            @default(14) @map("cooldown_days")
+  scheduledFor                 DateTime?      @map("scheduled_for")
+  startedAt                    DateTime?      @map("started_at")
+  completedAt                  DateTime?      @map("completed_at")
+  cancelledAt                  DateTime?      @map("cancelled_at")
+  createdByUserId              String         @map("created_by_user_id")
+  createdByMemberId            String?        @map("created_by_member_id")
+  totalRecipients              Int            @default(0) @map("total_recipients")
+  sentCount                    Int            @default(0) @map("sent_count")
+  failedCount                  Int            @default(0) @map("failed_count")
+  convertedCount               Int            @default(0) @map("converted_count")
+  totalRevenueAttributed       Decimal        @default(0) @map("total_revenue_attributed") @db.Decimal(10, 2)
+  createdAt                    DateTime       @default(now()) @map("created_at")
+  updatedAt                    DateTime       @updatedAt @map("updated_at")
+
+  barbershop      Barbershop                      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdByUser   User                            @relation("ReactivationCampaignCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByMember BarbershopMember?               @relation("ReactivationCampaignCreatedByMember", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+  recipients      ReactivationCampaignRecipient[]
+
+  @@unique([id, barbershopId])
+  @@index([barbershopId, status, createdAt])
+  @@map("reactivation_campaigns")
+}
+
+model ReactivationCampaignRecipient {
+  id                           String                    @id @default(uuid())
+  campaignId                   String                    @map("campaign_id")
+  barbershopId                 String                    @map("barbershop_id")
+  customerId                   String                    @map("customer_id")
+  customerNameSnapshot         String                    @map("customer_name_snapshot")
+  customerPhoneSnapshot        String                    @map("customer_phone_snapshot")
+  timingStateSnapshot          CustomerTimingState       @map("timing_state_snapshot")
+  scoreSnapshot                Int                       @map("score_snapshot")
+  expectedReturnDateSnapshot   DateTime?                 @map("expected_return_date_snapshot")
+  expectedReturnSourceSnapshot ExpectedReturnSource?     @map("expected_return_source_snapshot")
+  lastVisitDateSnapshot        DateTime?                 @map("last_visit_date_snapshot")
+  daysOverdueSnapshot          Int?                      @map("days_overdue_snapshot")
+  avgTicketSnapshot            Decimal?                  @map("avg_ticket_snapshot") @db.Decimal(10, 2)
+  preferredMemberIdSnapshot    String?                   @map("preferred_member_id_snapshot")
+  preferredServiceIdSnapshot   String?                   @map("preferred_service_id_snapshot")
+  dispatchStatus               RecipientDispatchStatus   @default(READY) @map("dispatch_status")
+  dispatchError                String?                   @map("dispatch_error")
+  dispatchAttemptCount         Int                       @default(0) @map("dispatch_attempt_count")
+  payloadSnapshot              Json?                     @map("payload_snapshot")
+  externalMessageId            String?                   @map("external_message_id")
+  sentConfirmedAt              DateTime?                 @map("sent_confirmed_at")
+  conversionStatus             RecipientConversionStatus @default(NONE) @map("conversion_status")
+  attributedAppointmentId      String?                   @map("attributed_appointment_id")
+  attributedComandaId          String?                   @map("attributed_comanda_id")
+  canonicalReturnDate          DateTime?                 @map("canonical_return_date") @db.Date
+  conversionAttributedAt       DateTime?                 @map("conversion_attributed_at")
+  revenueAttributed            Decimal?                  @map("revenue_attributed") @db.Decimal(10, 2)
+  failureReason                String?                   @map("failure_reason")
+  createdAt                    DateTime                  @default(now()) @map("created_at")
+  updatedAt                    DateTime                  @updatedAt @map("updated_at")
+
+  campaign              ReactivationCampaign @relation(fields: [campaignId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  barbershop            Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer              User                 @relation("ReactivationCampaignCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  lastSuggestedMember   BarbershopMember?    @relation("ReactivationRecipientSuggestedMember", fields: [preferredMemberIdSnapshot], references: [id], onDelete: SetNull)
+  lastSuggestedService  Service?             @relation("ReactivationRecipientSuggestedService", fields: [preferredServiceIdSnapshot], references: [id], onDelete: SetNull)
+  attributedAppointment Appointment?         @relation("ReactivationRecipientAttributedAppointment", fields: [attributedAppointmentId], references: [id], onDelete: SetNull)
+  attributedComanda     Comanda?             @relation("ReactivationRecipientAttributedComanda", fields: [attributedComandaId], references: [id], onDelete: SetNull)
+  customerContactLog    CustomerContactLog?
+
+  @@unique([campaignId, customerId])
+  @@unique([barbershopId, customerId, canonicalReturnDate])
+  @@index([barbershopId, customerId, sentConfirmedAt])
+  @@index([barbershopId, conversionStatus])
+  @@index([barbershopId, sentConfirmedAt])
+  @@index([campaignId, dispatchStatus])
+  @@map("reactivation_campaign_recipients")
 }

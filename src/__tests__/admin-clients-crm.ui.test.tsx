@@ -9,6 +9,11 @@ const routerPushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPushMock }),
   useParams: () => ({ id: "client-1" }),
+  usePathname: () => "/admin/clientes",
+}));
+
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: { user: { role: "OWNER" } }, status: "authenticated" }),
 }));
 
 const clientPayload = {
@@ -156,7 +161,7 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     expect(body).not.toHaveProperty("barbershopId");
   });
 
-  it("lista cliente manual, filtra e oferece WhatsApp sem registrar contato", async () => {
+  it("lista cliente manual, filtra e não oferece raw WhatsApp marketing bypass", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ clients: [clientPayload], total: 1, page: 1, pageSize: 30 }),
@@ -170,12 +175,13 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sem agendamento" }));
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("filter=without_appointment"));
 
-    expect(screen.getByRole("link", { name: "WhatsApp" })).toHaveAttribute("href", expect.stringContaining("https://wa.me/5517991089190"));
-    expect(screen.queryByRole("button", { name: "Copiar mensagem" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "WhatsApp" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reativar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ficha" })).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("contact"));
   });
 
-  it("mostra métricas, último contato e filtros de contato na listagem", async () => {
+  it("mostra métricas, último contato e filtros secundários sob Mais filtros", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -194,11 +200,20 @@ describe("P1 Clientes/CRM LOTE A UI", () => {
     expect(screen.getByText("Bruno Contato")).toBeInTheDocument();
     expect(screen.getByText("Nunca contatado")).toBeInTheDocument();
     expect(screen.getByText("Último contato: 05/08/2026")).toBeInTheDocument();
-    expect(screen.getAllByText("Nunca contatados").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("Sem contato há 30 dias").length).toBeGreaterThanOrEqual(2);
+
+    // Primary filters are visible
+    expect(screen.getByRole("button", { name: "Todos" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Com agendamento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sem agendamento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Próximo agendamento" })).toBeInTheDocument();
+
+    // Secondary filters are inside "Mais filtros"
+    expect(screen.queryByRole("button", { name: "Sem contato há 60 dias" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Mais filtros/i }));
+
+    expect(screen.getByRole("button", { name: "Sem contato há 30 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sem contato há 60 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sem contato há 90 dias" })).toBeInTheDocument();
-    expect(screen.getAllByText("Contatados recentemente").length).toBeGreaterThanOrEqual(2);
 
     await userEvent.click(screen.getByRole("button", { name: "Sem contato há 30 dias" }));
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("filter=no_contact_30"));

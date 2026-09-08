@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, @next/next/no-html-link-for-pages */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -48,13 +49,18 @@ interface Client {
   };
 }
 
+import { ClientNav } from "@/components/admin/clients/ClientNav";
+
 const PAGE_SIZE = 30;
 
-const FILTERS: Array<{ value: ClientFilter; label: string }> = [
+const PRIMARY_FILTERS: Array<{ value: ClientFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "with_appointment", label: "Com agendamento" },
   { value: "without_appointment", label: "Sem agendamento" },
   { value: "upcoming", label: "Próximo agendamento" },
+];
+
+const SECONDARY_FILTERS: Array<{ value: ClientFilter; label: string }> = [
   { value: "open_comanda", label: "Comanda aberta" },
   { value: "club", label: "Clube" },
   { value: "blocked", label: "Bloqueados" },
@@ -119,15 +125,7 @@ function formatDate(iso: string | null) {
   });
 }
 
-function buildWhatsappMessage(client: Client) {
-  return `Oi, ${client.name}, aqui e da barbearia. Quer agendar seu horario?`;
-}
 
-function whatsappLink(phone: string, message: string) {
-  const digits = phone.replace(/\D/g, "");
-  const intl = digits.startsWith("55") ? digits : `55${digits}`;
-  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
-}
 
 export default function ClientesPage() {
   const router = useRouter();
@@ -145,6 +143,7 @@ export default function ClientesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -341,6 +340,8 @@ export default function ClientesPage() {
         </div>
       </div>
 
+      <ClientNav />
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
           <p className="text-[10px] uppercase text-stone-500 font-bold">Clientes</p>
@@ -381,8 +382,8 @@ export default function ClientesPage() {
           title="Buscar clientes"
           className="w-full max-w-md bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-2.5 text-stone-100 placeholder-stone-600 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
         />
-        <div className="flex flex-wrap gap-2">
-          {FILTERS.map((item) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {PRIMARY_FILTERS.map((item) => (
             <button
               key={item.value}
               type="button"
@@ -396,9 +397,43 @@ export default function ClientesPage() {
               {item.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setShowMoreFilters(!showMoreFilters)}
+            aria-expanded={showMoreFilters}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
+              SECONDARY_FILTERS.some((f) => f.value === filter)
+                ? "bg-stone-800 text-amber-400 border-amber-500/50"
+                : "bg-stone-900 text-stone-400 border-stone-800 hover:text-stone-200"
+            }`}
+          >
+            <span>Mais filtros</span>
+            {SECONDARY_FILTERS.some((f) => f.value === filter) && (
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            )}
+            <span className="text-[10px]">{showMoreFilters ? "▲" : "▼"}</span>
+          </button>
         </div>
-      </div>
 
+        {showMoreFilters && (
+          <div className="p-3 bg-stone-950/60 border border-stone-800/80 rounded-lg flex flex-wrap gap-2 animate-in fade-in duration-150">
+            {SECONDARY_FILTERS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setFilter(item.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  filter === item.value
+                    ? "bg-amber-500 text-stone-950 border-amber-500"
+                    : "bg-stone-900 text-stone-400 border-stone-800 hover:text-stone-200"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg overflow-hidden">
         {loading ? (
@@ -424,8 +459,6 @@ export default function ClientesPage() {
             </div>
             <div className="divide-y divide-stone-800/60">
               {clients.map((client) => {
-                const message = buildWhatsappMessage(client);
-                const wa = whatsappLink(client.phone, message);
                 const contactLabel = client.stats.lastContactedAt
                   ? `Último contato: ${formatDate(client.stats.lastContactedAt)}`
                   : "Nunca contatado";
@@ -480,18 +513,17 @@ export default function ClientesPage() {
                       )}
                     </div>
                     <div className="flex flex-wrap justify-start lg:justify-end gap-2">
-                      <a
-                        href={wa}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-lg bg-[#25D366]/10 text-[#25D366] border border-[#25D366]/20 text-xs font-bold hover:bg-[#25D366]/20"
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/admin/clientes/reativacao?search=${encodeURIComponent(client.name)}`)}
+                        className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-bold hover:bg-amber-500/20 transition-colors"
                       >
-                        WhatsApp
-                      </a>
+                        Reativar
+                      </button>
                       <button
                         type="button"
                         onClick={() => router.push(`/admin/clientes/${client.id}`)}
-                        className="px-3 py-1.5 rounded-lg bg-stone-950 text-stone-300 border border-stone-800 text-xs font-bold hover:bg-stone-800"
+                        className="px-3 py-1.5 rounded-lg bg-stone-950 text-stone-300 border border-stone-800 text-xs font-bold hover:bg-stone-800 transition-colors"
                       >
                         Ficha
                       </button>
