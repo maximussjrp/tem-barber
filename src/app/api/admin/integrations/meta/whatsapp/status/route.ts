@@ -37,6 +37,7 @@ export async function GET() {
       status: connection.status,
       connection: {
         id: connection.id,
+        connectionMode: connection.connectionMode,
         businessId: connection.businessId,
         wabaId: connection.wabaId,
         phoneNumberId: connection.phoneNumberId,

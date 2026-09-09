@@ -105,6 +105,10 @@ export async function POST(req: NextRequest) {
           const val = change.value || {};
           const phoneNumberId = val.metadata?.phone_number_id
             ? String(val.metadata.phone_number_id)
+            : val.phone_number_id
+            ? String(val.phone_number_id)
+            : change.phone_number_id
+            ? String(change.phone_number_id)
             : null;
 
           // 1. Check messages array

@@ -2302,8 +2302,18 @@ enum MetaOnboardingSessionStatus {
   CANCELLED
 }
 
+enum MetaConnectionMode {
+  COEXISTENCE
+  CLOUD_API_ONLY
+}
+
 enum MetaConnectionEventType {
   ONBOARDING_STARTED
+  ONBOARDING_COMPLETED
+  ONBOARDING_FAILED
+  ASSETS_DISCOVERED
+  SYSTEM_USER_ASSIGNED
+  WEBHOOK_SUBSCRIBED
   CONNECTED
   DEGRADED
   DISCONNECTED
@@ -2323,6 +2333,7 @@ enum WebhookProcessingStatus {
 model MetaConnection {
   id                   String               @id @default(uuid())
   barbershopId         String               @unique @map("barbershop_id")
+  connectionMode       MetaConnectionMode   @default(COEXISTENCE) @map("connection_mode")
   businessId           String?              @map("business_id")
   wabaId               String?              @map("waba_id")
   phoneNumberId        String?              @unique @map("phone_number_id")

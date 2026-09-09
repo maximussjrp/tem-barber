@@ -29,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { POST } from "@/app/api/admin/integrations/meta/whatsapp/onboarding/session/route";
+import { getMetaReadiness } from "@/lib/meta/config";
 
 describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => {
   const originalEnv = process.env;
@@ -211,6 +212,72 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
           }),
         })
       );
+    });
+  });
+
+  describe("Meta Config & Readiness Pre-Live Hardening", () => {
+    it("requires META_GRAPH_API_VERSION without implicit fallback", () => {
+      process.env = {
+        NODE_ENV: "test",
+        META_APP_ID: "app_1",
+        META_APP_SECRET: "sec_1",
+        META_BUSINESS_ID: "biz_1",
+        META_SYSTEM_USER_ID: "sys_1",
+        META_SYSTEM_USER_ACCESS_TOKEN: "token_1",
+        META_WEBHOOK_VERIFY_TOKEN: "verify_1",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
+        META_WABA_SYSTEM_USER_TASK: "MANAGE",
+        META_CREDENTIAL_ENCRYPTION_KEY_V1: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+
+      const readiness = getMetaReadiness();
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing).toContain("META_GRAPH_API_VERSION");
+      expect(readiness.graphApiVersion).toBe("");
+    });
+
+    it("requires META_WABA_SYSTEM_USER_TASK to be explicitly MANAGE or DEVELOP", () => {
+      process.env = {
+        NODE_ENV: "test",
+        META_APP_ID: "app_1",
+        META_APP_SECRET: "sec_1",
+        META_BUSINESS_ID: "biz_1",
+        META_SYSTEM_USER_ID: "sys_1",
+        META_SYSTEM_USER_ACCESS_TOKEN: "token_1",
+        META_WEBHOOK_VERIFY_TOKEN: "verify_1",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
+        META_GRAPH_API_VERSION: "v21.0",
+        META_WABA_SYSTEM_USER_TASK: "INVALID_TASK",
+        META_CREDENTIAL_ENCRYPTION_KEY_V1: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+
+      const readiness = getMetaReadiness();
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing).toContain("META_WABA_SYSTEM_USER_TASK");
+    });
+
+    it("guarantees secrets are absent from readiness output", () => {
+      process.env = {
+        NODE_ENV: "test",
+        META_APP_ID: "app_1",
+        META_APP_SECRET: "secret_app_sensitive",
+        META_BUSINESS_ID: "biz_1",
+        META_SYSTEM_USER_ID: "sys_1",
+        META_SYSTEM_USER_ACCESS_TOKEN: "secret_sys_token",
+        META_WEBHOOK_VERIFY_TOKEN: "secret_verify_token",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
+        META_GRAPH_API_VERSION: "v21.0",
+        META_WABA_SYSTEM_USER_TASK: "MANAGE",
+        META_CREDENTIAL_ENCRYPTION_KEY_V1: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+
+      const readiness = getMetaReadiness();
+      expect(readiness.ready).toBe(true);
+      const jsonStr = JSON.stringify(readiness);
+      expect(jsonStr).not.toContain("secret_app_sensitive");
+      expect(jsonStr).not.toContain("secret_sys_token");
+      expect(jsonStr).not.toContain("secret_verify_token");
+      expect(jsonStr).not.toContain("0123456789abcdef");
     });
   });
 });

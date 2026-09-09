@@ -9,6 +9,7 @@ import {
   verifyMetaWebhookSignature,
   generateAppSecretProof,
 } from "@/lib/meta/crypto";
+import { getEncryptionKey } from "@/lib/meta/config";
 
 describe("Meta Crypto Module", () => {
   const originalEnv = process.env;
@@ -228,6 +229,40 @@ describe("Meta Crypto Module", () => {
         .update(token)
         .digest("hex");
       expect(proof).toBe(expected);
+    });
+  });
+
+  describe("Encryption Key Encoding & Resolution", () => {
+    it("accepts valid 64-char Hex key (32 bytes)", () => {
+      process.env.META_CREDENTIAL_ENCRYPTION_KEY_TEST_HEX =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+      const key = getEncryptionKey("test_hex");
+      expect(key).toBeInstanceOf(Buffer);
+      expect(key.length).toBe(32);
+    });
+
+    it("accepts valid Base64 key decoding to 32 bytes", () => {
+      const rawBytes = Buffer.from(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "hex"
+      );
+      process.env.META_CREDENTIAL_ENCRYPTION_KEY_TEST_B64 = rawBytes.toString("base64");
+      const key = getEncryptionKey("test_b64");
+      expect(key).toBeInstanceOf(Buffer);
+      expect(key.length).toBe(32);
+      expect(key.equals(rawBytes)).toBe(true);
+    });
+
+    it("prohibits raw 32-character UTF-8 key", () => {
+      // 32-character plain ascii string that is not hex and not 32-byte base64
+      process.env.META_CREDENTIAL_ENCRYPTION_KEY_TEST_UTF8 =
+        "12345678901234567890123456789012";
+      expect(() => getEncryptionKey("test_utf8")).toThrow(/must be explicitly encoded/);
+    });
+
+    it("rejects invalid key length or format", () => {
+      process.env.META_CREDENTIAL_ENCRYPTION_KEY_TEST_INVALID = "short_invalid_key";
+      expect(() => getEncryptionKey("test_invalid")).toThrow(/must be explicitly encoded/);
     });
   });
 });

@@ -373,5 +373,139 @@ describe("Meta WhatsApp Webhook API", () => {
       const json = await res.json();
       expect(json.error).toBe("Erro interno ao processar webhook.");
     });
+
+    describe("Coexistence Webhook Ingestion (history, smb_app_state_sync, smb_message_echoes)", () => {
+      it("ingests 'history' webhook event into inbox without mutating customers or appointments", async () => {
+        const payload = {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              id: "waba_coex_1",
+              changes: [
+                {
+                  field: "history",
+                  value: {
+                    metadata: { phone_number_id: "phone_coex_1" },
+                    threads: [{ id: "thread_123", messages_count: 10 }],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        prismaMock.metaConnection.findUnique.mockResolvedValueOnce({
+          id: "conn_coex_1",
+          barbershopId: "shop_coex_1",
+        });
+        prismaMock.webhookInbox.upsert.mockResolvedValueOnce({ id: "inbox_history_1" });
+
+        const req = createSignedRequest(payload);
+        const res = await POST(req);
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.received).toBe(true);
+
+        expect(prismaMock.webhookInbox.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({
+              eventType: "history",
+              phoneNumberId: "phone_coex_1",
+              barbershopId: "shop_coex_1",
+              processingStatus: "PENDING",
+            }),
+          })
+        );
+      });
+
+      it("ingests 'smb_app_state_sync' webhook event into inbox without domain mutation", async () => {
+        const payload = {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              id: "waba_coex_2",
+              changes: [
+                {
+                  field: "smb_app_state_sync",
+                  value: {
+                    metadata: { phone_number_id: "phone_coex_2" },
+                    state: "SYNCED",
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        prismaMock.metaConnection.findUnique.mockResolvedValueOnce({
+          id: "conn_coex_2",
+          barbershopId: "shop_coex_2",
+        });
+        prismaMock.webhookInbox.upsert.mockResolvedValueOnce({ id: "inbox_sync_1" });
+
+        const req = createSignedRequest(payload);
+        const res = await POST(req);
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.received).toBe(true);
+
+        expect(prismaMock.webhookInbox.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({
+              eventType: "smb_app_state_sync",
+              phoneNumberId: "phone_coex_2",
+              barbershopId: "shop_coex_2",
+              processingStatus: "PENDING",
+            }),
+          })
+        );
+      });
+
+      it("ingests 'smb_message_echoes' webhook event into inbox without domain mutation", async () => {
+        const payload = {
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              id: "waba_coex_3",
+              changes: [
+                {
+                  field: "smb_message_echoes",
+                  value: {
+                    metadata: { phone_number_id: "phone_coex_3" },
+                    echoes: [{ id: "echo_1", text: "Sent from phone app" }],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        prismaMock.metaConnection.findUnique.mockResolvedValueOnce({
+          id: "conn_coex_3",
+          barbershopId: "shop_coex_3",
+        });
+        prismaMock.webhookInbox.upsert.mockResolvedValueOnce({ id: "inbox_echo_1" });
+
+        const req = createSignedRequest(payload);
+        const res = await POST(req);
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.received).toBe(true);
+
+        expect(prismaMock.webhookInbox.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({
+              eventType: "smb_message_echoes",
+              phoneNumberId: "phone_coex_3",
+              barbershopId: "shop_coex_3",
+              processingStatus: "PENDING",
+            }),
+          })
+        );
+      });
+    });
   });
 });

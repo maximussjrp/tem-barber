@@ -154,6 +154,11 @@ const navItems = [
         href: "/admin/configuracoes/plano-cobranca",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
+      {
+        label: "WhatsApp",
+        href: "/admin/configuracoes/whatsapp",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
       { label: "Horários",  href: "/admin/configuracoes/horarios" },
       { label: "Equipe",    href: "/admin/equipe" },
     ],
