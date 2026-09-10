@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 
 const { requireOperationalSessionMock, prismaMock } = vi.hoisted(() => {
@@ -24,8 +24,19 @@ vi.mock("@/lib/prisma", () => ({
 import { GET } from "@/app/api/admin/integrations/meta/whatsapp/status/route";
 
 describe("GET /api/admin/integrations/meta/whatsapp/status", () => {
+  const originalEnv = process.env;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env = {
+      ...originalEnv,
+      META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:
+        "admin_system_user_token_must_never_be_exposed",
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
   });
 
   describe("RBAC Enforcement", () => {
@@ -185,6 +196,9 @@ describe("GET /api/admin/integrations/meta/whatsapp/status", () => {
       expect(json.connection.accessToken).toBeUndefined();
       expect(json.connection.secret).toBeUndefined();
       expect(json.connection.pin).toBeUndefined();
+      expect(JSON.stringify(json)).not.toContain(
+        "admin_system_user_token_must_never_be_exposed"
+      );
     });
   });
 });

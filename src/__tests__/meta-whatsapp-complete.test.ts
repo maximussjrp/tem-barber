@@ -63,6 +63,7 @@ describe("Meta WhatsApp Coexistence Onboarding Complete & Orchestrator", () => {
       META_BUSINESS_ID: "biz_999000",
       META_SYSTEM_USER_ID: "sys_user_555",
       META_SYSTEM_USER_ACCESS_TOKEN: "sys_token_abc",
+      META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin_sys_token_def",
       META_WEBHOOK_VERIFY_TOKEN: "verify_token_xyz",
       META_EMBEDDED_SIGNUP_CONFIG_ID: "signup_cfg_1",
       META_GRAPH_API_VERSION: "v21.0",
@@ -2001,6 +2002,8 @@ describe("Meta WhatsApp Coexistence Onboarding Complete & Orchestrator", () => {
       const sentinelCode = "R6_TEST_OAUTH_CODE_DO_NOT_PERSIST";
       const sentinelTransientToken = "R6_TEST_TRANSIENT_TOKEN_DO_NOT_PERSIST";
       const sentinelSystemToken = "sys_token_abc";
+      const sentinelAdminSystemToken = "R6_TEST_ADMIN_SYSTEM_TOKEN_DO_NOT_PERSIST";
+      process.env.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN = sentinelAdminSystemToken;
 
       setMetaFetchHandler(async (url) => {
         const urlStr = String(url);
@@ -2058,6 +2061,7 @@ describe("Meta WhatsApp Coexistence Onboarding Complete & Orchestrator", () => {
       expect(upsertString).not.toContain(sentinelCode);
       expect(upsertString).not.toContain(sentinelTransientToken);
       expect(upsertString).not.toContain(sentinelSystemToken);
+      expect(upsertString).not.toContain(sentinelAdminSystemToken);
 
       // Check MetaConnectionEvent.createMany payload for sentinels
       const eventCalls = prismaMock.metaConnectionEvent.createMany.mock.calls;
@@ -2065,6 +2069,7 @@ describe("Meta WhatsApp Coexistence Onboarding Complete & Orchestrator", () => {
       expect(eventString).not.toContain(sentinelCode);
       expect(eventString).not.toContain(sentinelTransientToken);
       expect(eventString).not.toContain(sentinelSystemToken);
+      expect(eventString).not.toContain(sentinelAdminSystemToken);
 
       // Check MetaOnboardingSession.update payload for sentinels
       const sessionUpdateCalls = prismaMock.metaOnboardingSession.update.mock.calls;
@@ -2072,6 +2077,7 @@ describe("Meta WhatsApp Coexistence Onboarding Complete & Orchestrator", () => {
       expect(sessionUpdateString).not.toContain(sentinelCode);
       expect(sessionUpdateString).not.toContain(sentinelTransientToken);
       expect(sessionUpdateString).not.toContain(sentinelSystemToken);
+      expect(sessionUpdateString).not.toContain(sentinelAdminSystemToken);
     });
   });
 

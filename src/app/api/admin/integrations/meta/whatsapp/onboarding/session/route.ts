@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireOperationalSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
-import { getMetaConfig } from "@/lib/meta/config";
+import { getMetaConfig, getMetaReadiness } from "@/lib/meta/config";
 import { generateOnboardingNonce, hashOnboardingNonce } from "@/lib/meta/crypto";
 
 export async function POST() {
@@ -19,7 +19,8 @@ export async function POST() {
   }
 
   const config = getMetaConfig();
-  if (!config.appId || !config.embeddedSignupConfigId) {
+  const readiness = getMetaReadiness();
+  if (!readiness.ready) {
     return NextResponse.json(
       {
         error: "Configuração do Meta WhatsApp incompleta no servidor.",
@@ -75,6 +76,7 @@ export async function POST() {
       nonce,
       appId: config.appId,
       configId: config.embeddedSignupConfigId,
+      graphApiVersion: config.graphApiVersion,
       expiresAt: expiresAt.toISOString(),
     });
   } catch (err: unknown) {

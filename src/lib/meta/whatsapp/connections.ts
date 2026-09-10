@@ -68,6 +68,7 @@ export async function completeCoexistenceOnboarding(
     !config.businessId ||
     !config.systemUserId ||
     !config.systemUserAccessToken ||
+    !config.adminSystemUserAccessToken ||
     !config.graphApiVersion ||
     !config.wabaSystemUserTask
   ) {

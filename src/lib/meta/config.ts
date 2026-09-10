@@ -11,6 +11,7 @@ export interface MetaConfig {
   businessId: string;
   systemUserId: string;
   systemUserAccessToken: string;
+  adminSystemUserAccessToken: string;
   webhookVerifyToken: string;
   embeddedSignupConfigId: string;
   graphApiVersion: string;
@@ -34,6 +35,7 @@ const REQUIRED_CONFIG_KEYS = [
   "META_BUSINESS_ID",
   "META_SYSTEM_USER_ID",
   "META_SYSTEM_USER_ACCESS_TOKEN",
+  "META_ADMIN_SYSTEM_USER_ACCESS_TOKEN",
   "META_WEBHOOK_VERIFY_TOKEN",
   "META_EMBEDDED_SIGNUP_CONFIG_ID",
   "META_GRAPH_API_VERSION",
@@ -47,6 +49,8 @@ export function getMetaConfig(): MetaConfig {
   const businessId = process.env.META_BUSINESS_ID || "";
   const systemUserId = process.env.META_SYSTEM_USER_ID || "";
   const systemUserAccessToken = process.env.META_SYSTEM_USER_ACCESS_TOKEN || "";
+  const adminSystemUserAccessToken =
+    process.env.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN || "";
   const webhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
   const embeddedSignupConfigId = process.env.META_EMBEDDED_SIGNUP_CONFIG_ID || "";
   const graphApiVersion = process.env.META_GRAPH_API_VERSION || "";
@@ -64,6 +68,7 @@ export function getMetaConfig(): MetaConfig {
     businessId,
     systemUserId,
     systemUserAccessToken,
+    adminSystemUserAccessToken,
     webhookVerifyToken,
     embeddedSignupConfigId,
     graphApiVersion,

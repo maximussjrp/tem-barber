@@ -39,7 +39,17 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
     process.env = {
       ...originalEnv,
       META_APP_ID: "meta_app_123",
+      META_APP_SECRET: "meta_app_secret_test",
+      META_BUSINESS_ID: "business_123",
+      META_SYSTEM_USER_ID: "system_user_123",
+      META_SYSTEM_USER_ACCESS_TOKEN: "system_user_token_test",
       META_EMBEDDED_SIGNUP_CONFIG_ID: "config_signup_456",
+      META_GRAPH_API_VERSION: "v21.0",
+      META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin_token_test_123",
+      META_WEBHOOK_VERIFY_TOKEN: "webhook_verify_test",
+      META_WABA_SYSTEM_USER_TASK: "MANAGE",
+      META_CREDENTIAL_ENCRYPTION_KEY_V1:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     };
   });
 
@@ -154,6 +164,44 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
       expect(json.error).toContain("incompleta no servidor");
     });
 
+    it("returns 503 if META_GRAPH_API_VERSION is missing on server", async () => {
+      process.env.META_GRAPH_API_VERSION = "";
+
+      requireOperationalSessionMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          userId: "user_owner",
+          role: "OWNER",
+          memberId: "mem_1",
+          barbershopId: "shop_123",
+        },
+      });
+
+      const res = await POST();
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toContain("incompleta no servidor");
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("returns 503 without creating a session if the admin system user token is missing", async () => {
+      process.env.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN = "";
+
+      requireOperationalSessionMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          userId: "user_owner",
+          role: "OWNER",
+          memberId: "mem_1",
+          barbershopId: "shop_123",
+        },
+      });
+
+      const res = await POST();
+      expect(res.status).toBe(503);
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
     it("successfully creates onboarding session for OWNER, invalidates old sessions, and logs event", async () => {
       requireOperationalSessionMock.mockResolvedValueOnce({
         error: null,
@@ -182,7 +230,10 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
       expect(json.nonce).toHaveLength(64);
       expect(json.appId).toBe("meta_app_123");
       expect(json.configId).toBe("config_signup_456");
+      expect(json.graphApiVersion).toBe("v21.0");
       expect(json.expiresAt).toBeDefined();
+      expect(json.adminSystemUserAccessToken).toBeUndefined();
+      expect(JSON.stringify(json)).not.toContain("admin_token_test_123");
 
       // Verify updateMany was called to cancel previous INITIATED sessions
       expect(prismaMock.metaOnboardingSession.updateMany).toHaveBeenCalledWith({
@@ -224,6 +275,7 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
         META_BUSINESS_ID: "biz_1",
         META_SYSTEM_USER_ID: "sys_1",
         META_SYSTEM_USER_ACCESS_TOKEN: "token_1",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin_token_1",
         META_WEBHOOK_VERIFY_TOKEN: "verify_1",
         META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
         META_WABA_SYSTEM_USER_TASK: "MANAGE",
@@ -236,6 +288,26 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
       expect(readiness.graphApiVersion).toBe("");
     });
 
+    it("requires META_ADMIN_SYSTEM_USER_ACCESS_TOKEN as mandatory configuration", () => {
+      process.env = {
+        NODE_ENV: "test",
+        META_APP_ID: "app_1",
+        META_APP_SECRET: "sec_1",
+        META_BUSINESS_ID: "biz_1",
+        META_SYSTEM_USER_ID: "sys_1",
+        META_SYSTEM_USER_ACCESS_TOKEN: "token_1",
+        META_WEBHOOK_VERIFY_TOKEN: "verify_1",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
+        META_GRAPH_API_VERSION: "v21.0",
+        META_WABA_SYSTEM_USER_TASK: "MANAGE",
+        META_CREDENTIAL_ENCRYPTION_KEY_V1: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+
+      const readiness = getMetaReadiness();
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing).toContain("META_ADMIN_SYSTEM_USER_ACCESS_TOKEN");
+    });
+
     it("requires META_WABA_SYSTEM_USER_TASK to be explicitly MANAGE or DEVELOP", () => {
       process.env = {
         NODE_ENV: "test",
@@ -244,6 +316,7 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
         META_BUSINESS_ID: "biz_1",
         META_SYSTEM_USER_ID: "sys_1",
         META_SYSTEM_USER_ACCESS_TOKEN: "token_1",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin_token_1",
         META_WEBHOOK_VERIFY_TOKEN: "verify_1",
         META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
         META_GRAPH_API_VERSION: "v21.0",
@@ -264,6 +337,7 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
         META_BUSINESS_ID: "biz_1",
         META_SYSTEM_USER_ID: "sys_1",
         META_SYSTEM_USER_ACCESS_TOKEN: "secret_sys_token",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "secret_admin_sys_token",
         META_WEBHOOK_VERIFY_TOKEN: "secret_verify_token",
         META_EMBEDDED_SIGNUP_CONFIG_ID: "cfg_1",
         META_GRAPH_API_VERSION: "v21.0",
@@ -276,6 +350,7 @@ describe("POST /api/admin/integrations/meta/whatsapp/onboarding/session", () => 
       const jsonStr = JSON.stringify(readiness);
       expect(jsonStr).not.toContain("secret_app_sensitive");
       expect(jsonStr).not.toContain("secret_sys_token");
+      expect(jsonStr).not.toContain("secret_admin_sys_token");
       expect(jsonStr).not.toContain("secret_verify_token");
       expect(jsonStr).not.toContain("0123456789abcdef");
     });

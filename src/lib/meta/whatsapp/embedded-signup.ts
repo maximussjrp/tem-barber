@@ -42,9 +42,26 @@ declare global {
 
 /**
  * Loads Meta/Facebook JavaScript SDK asynchronously if not already present.
+ * Strictly uses server-provided Graph API version without implicit fallbacks or hardcodes.
  */
-export function loadFacebookSdk(appId: string): Promise<void> {
-  return new Promise((resolve) => {
+export function loadFacebookSdk(
+  appId: string,
+  graphApiVersion: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (
+      !graphApiVersion ||
+      typeof graphApiVersion !== "string" ||
+      graphApiVersion.trim() === ""
+    ) {
+      reject(
+        new Error(
+          "Graph API version is required from server configuration to initialize Meta Facebook SDK."
+        )
+      );
+      return;
+    }
+
     if (typeof window === "undefined") {
       resolve();
       return;
@@ -55,12 +72,13 @@ export function loadFacebookSdk(appId: string): Promise<void> {
       return;
     }
 
+    const trimmedVersion = graphApiVersion.trim();
     window.fbAsyncInit = function () {
       window.FB?.init({
         appId,
         autoLogAppEvents: true,
         xfbml: true,
-        version: "v21.0",
+        version: trimmedVersion,
       });
       resolve();
     };

@@ -365,6 +365,9 @@ export async function getAssignedUsersForWaba(
 
 /**
  * Assigns platform system user to WABA with explicit reconciliation check before POST.
+ * Uses META_SYSTEM_USER_ACCESS_TOKEN for GET reconciliation.
+ * Uses META_ADMIN_SYSTEM_USER_ACCESS_TOKEN for POST mutation.
+ * Reconciliation fails closed: if GET fails, provider operation stops and POST is never called.
  */
 export async function assignSystemUserToWaba(
   wabaId: string,
@@ -373,25 +376,30 @@ export async function assignSystemUserToWaba(
 ): Promise<{ assigned: boolean; alreadyExisted: boolean }> {
   const config = getMetaConfig();
 
-  // Reconciliation: check if system user already has the required task assigned across all pages
-  try {
-    const existingAssigned = await getAssignedUsersForWaba(
-      wabaId,
-      systemUserId,
-      task
+  // 1. Reconciliation: check if system user already has the required task assigned across all pages
+  // Fails closed without try/catch: if GET fails, error propagates and POST is never executed
+  const existingAssigned = await getAssignedUsersForWaba(
+    wabaId,
+    systemUserId,
+    task
+  );
+  const existing = existingAssigned.find((u) => u.id === systemUserId);
+  if (existing && existing.tasks.includes(task)) {
+    return { assigned: true, alreadyExisted: true };
+  }
+
+  // 2. Mutation: POST /assigned_users strictly requires META_ADMIN_SYSTEM_USER_ACCESS_TOKEN
+  if (!config.adminSystemUserAccessToken) {
+    throw new MetaApiError(
+      "Meta Admin System User Access Token not configured on server.",
+      { isTransient: false }
     );
-    const existing = existingAssigned.find((u) => u.id === systemUserId);
-    if (existing && existing.tasks.includes(task)) {
-      return { assigned: true, alreadyExisted: true };
-    }
-  } catch {
-    // If querying assigned_users fails, proceed to attempt direct assignment
   }
 
   await metaGraphFetch<{ success: boolean }>({
     method: "POST",
     endpoint: `/${wabaId}/assigned_users`,
-    accessToken: config.systemUserAccessToken,
+    accessToken: config.adminSystemUserAccessToken,
     body: {
       user: systemUserId,
       tasks: [task],
@@ -404,6 +412,7 @@ export async function assignSystemUserToWaba(
 /**
  * Queries subscribed apps for a WABA to support reconciliation before POST.
  * Supports pagination to find target app subscription across pages.
+ * Strictly requires exact match on app ID; missing ID is an unknown entry and never matches.
  */
 export async function getWabaSubscriptions(
   wabaId: string,
@@ -416,9 +425,14 @@ export async function getWabaSubscriptions(
     config.systemUserAccessToken,
     {},
     targetAppId
-      ? (s) =>
-          !s.whatsapp_business_api_data?.id ||
-          String(s.whatsapp_business_api_data.id) === targetAppId
+      ? (s) => {
+          const appId = s.whatsapp_business_api_data?.id;
+          return (
+            appId !== undefined &&
+            appId !== null &&
+            String(appId) === String(targetAppId)
+          );
+        }
       : undefined
   );
 
@@ -427,27 +441,30 @@ export async function getWabaSubscriptions(
 
 /**
  * Subscribes platform app to WABA webhooks with explicit reconciliation check before POST.
+ * Uses META_SYSTEM_USER_ACCESS_TOKEN.
+ * Reconciliation fails closed: if GET fails, provider operation stops and POST is never called.
  */
 export async function subscribeAppToWaba(
   wabaId: string
 ): Promise<{ subscribed: boolean; alreadyExisted: boolean }> {
   const config = getMetaConfig();
 
-  // Reconciliation: check if app is already subscribed across all pages
-  try {
-    const existingSubs = await getWabaSubscriptions(wabaId, config.appId);
-    const alreadySubscribed =
-      existingSubs.length > 0 &&
-      existingSubs.some((sub) => {
-        const appId = sub.whatsapp_business_api_data?.id;
-        return !appId || String(appId) === String(config.appId);
-      });
+  // 1. Reconciliation: check if app is already subscribed across all pages
+  // Fails closed without try/catch: if GET fails, error propagates and POST is never executed
+  const existingSubs = await getWabaSubscriptions(wabaId, config.appId);
+  const alreadySubscribed =
+    existingSubs.length > 0 &&
+    existingSubs.some((sub) => {
+      const appId = sub.whatsapp_business_api_data?.id;
+      return (
+        appId !== undefined &&
+        appId !== null &&
+        String(appId) === String(config.appId)
+      );
+    });
 
-    if (alreadySubscribed) {
-      return { subscribed: true, alreadyExisted: true };
-    }
-  } catch {
-    // If querying subscriptions fails, proceed to attempt subscription
+  if (alreadySubscribed) {
+    return { subscribed: true, alreadyExisted: true };
   }
 
   await metaGraphFetch<{ success: boolean }>({

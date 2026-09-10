@@ -1,9 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MetaWhatsappSettingsPage from "@/app/admin/configuracoes/whatsapp/page";
 
-const { mockUseSession } = vi.hoisted(() => ({
+const {
+  mockUseSession,
+  mockLoadFacebookSdk,
+  mockLaunchCoexistenceEmbeddedSignup,
+} = vi.hoisted(() => ({
   mockUseSession: vi.fn(),
+  mockLoadFacebookSdk: vi.fn().mockResolvedValue(undefined),
+  mockLaunchCoexistenceEmbeddedSignup: vi.fn(),
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -11,8 +17,8 @@ vi.mock("next-auth/react", () => ({
 }));
 
 vi.mock("@/lib/meta/whatsapp/embedded-signup", () => ({
-  loadFacebookSdk: vi.fn().mockResolvedValue(undefined),
-  launchCoexistenceEmbeddedSignup: vi.fn(),
+  loadFacebookSdk: mockLoadFacebookSdk,
+  launchCoexistenceEmbeddedSignup: mockLaunchCoexistenceEmbeddedSignup,
 }));
 
 describe("Meta WhatsApp Settings Admin UI Component", () => {
@@ -65,6 +71,80 @@ describe("Meta WhatsApp Settings Admin UI Component", () => {
     const connectBtn = screen.getByRole("button", { name: "Conectar WhatsApp" });
     expect(connectBtn).toBeInTheDocument();
     expect(connectBtn).not.toBeDisabled();
+  });
+
+  it("passes the server-configured Graph API version to the SDK loader", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          configured: false,
+          status: "NOT_CONFIGURED",
+          connection: null,
+          systemReadiness: { ready: true, activeKeyVersion: "v1" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessionId: "session_123",
+          nonce: "nonce_123",
+          appId: "app_123",
+          configId: "config_123",
+          graphApiVersion: "v23.0",
+          expiresAt: new Date().toISOString(),
+        }),
+      });
+
+    render(<MetaWhatsappSettingsPage />);
+
+    const connectBtn = await screen.findByRole("button", {
+      name: "Conectar WhatsApp",
+    });
+    fireEvent.click(connectBtn);
+
+    await waitFor(() => {
+      expect(mockLoadFacebookSdk).toHaveBeenCalledWith("app_123", "v23.0");
+    });
+    expect(mockLaunchCoexistenceEmbeddedSignup).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails safely without loading or launching the SDK when Graph API version is missing", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          configured: false,
+          status: "NOT_CONFIGURED",
+          connection: null,
+          systemReadiness: { ready: true, activeKeyVersion: "v1" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessionId: "session_123",
+          nonce: "nonce_123",
+          appId: "app_123",
+          configId: "config_123",
+          expiresAt: new Date().toISOString(),
+        }),
+      });
+
+    render(<MetaWhatsappSettingsPage />);
+
+    const connectBtn = await screen.findByRole("button", {
+      name: "Conectar WhatsApp",
+    });
+    fireEvent.click(connectBtn);
+
+    expect(
+      await screen.findByText("Versão da Graph API não fornecida pelo servidor.")
+    ).toBeInTheDocument();
+    expect(mockLoadFacebookSdk).not.toHaveBeenCalled();
+    expect(mockLaunchCoexistenceEmbeddedSignup).not.toHaveBeenCalled();
   });
 
   it("hides connection button and shows notice for MANAGER role", async () => {

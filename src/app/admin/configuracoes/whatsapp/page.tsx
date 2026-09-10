@@ -117,10 +117,16 @@ export default function MetaWhatsappSettingsPage() {
         throw new Error(sessionJson.error || "Falha ao iniciar sessão de conexão.");
       }
 
-      const { sessionId, nonce, appId, configId } = sessionJson;
+      const { sessionId, nonce, appId, configId, graphApiVersion } = sessionJson;
+      if (
+        typeof graphApiVersion !== "string" ||
+        graphApiVersion.trim() === ""
+      ) {
+        throw new Error("Versão da Graph API não fornecida pelo servidor.");
+      }
 
-      // 2. Load SDK
-      await loadFacebookSdk(appId);
+      // 2. Load SDK with explicit server-provided Graph API version
+      await loadFacebookSdk(appId, graphApiVersion);
 
       // 3. Launch Embedded Signup
       launchCoexistenceEmbeddedSignup({
