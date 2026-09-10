@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -88,8 +88,14 @@ vi.mock("@/lib/push/delivery.server", () => ({
 
 describe("P0.1C Route Integration Suite (7 Direct Routes)", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-10T12:00:00.000Z"));
     vi.clearAllMocks();
     capturedAfterCallbacks = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("1. Public booking route registers after() hook and triggers delivery on NORMAL booking (no actor exclusion)", async () => {

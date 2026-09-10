@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -41,6 +41,8 @@ import { deriveTenantSubscriptionAccess } from "@/lib/billing/subscription-acces
 
 describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-31T11:58:35.000Z"));
     vi.clearAllMocks();
     prismaMock.asaasWebhookEvent.create.mockResolvedValue({ id: "wh_evt_1", receivedAt: new Date("2026-08-01T00:00:00Z") });
     prismaMock.asaasWebhookEvent.findFirst.mockResolvedValue(null);
@@ -51,6 +53,10 @@ describe("Phase 2.3C2 Deterministic Tenant Entitlement Engine - Mandatory Tests"
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.tenantSubscription.findUnique.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("1. UTC Calendar Arithmetic", () => {
