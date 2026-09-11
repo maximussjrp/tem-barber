@@ -67,6 +67,67 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
     return new NextRequest(url);
   }
 
+  it("Phase 0: freezes tenant, Sao Paulo boundaries, receivable statuses and ledger sources", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({ error: null, data: {
+      userId: "owner", role: "OWNER", memberId: "owner-member", barbershopId: barbershopId1,
+    } } as any);
+    mockedComanda.findMany.mockResolvedValue([]);
+    mockedPayment.findMany.mockResolvedValue([]);
+    mockedFinancialEntry.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+
+    const response = await getFinancialSummary(createRequest({ startDate: "2026-07-15", endDate: "2026-07-15", barbershopId: "foreign-shop" }));
+    expect(response.status).toBe(200);
+    const period = { gte: new Date("2026-07-15T03:00:00.000Z"), lt: new Date("2026-07-16T03:00:00.000Z") };
+    for (const delegate of [mockedComanda, mockedComandaItem, mockedPayment, mockedFinancialEntry, mockedCommissionEntry, mockedCommissionPayableItem, mockedCommissionCycleAdjustment]) {
+      expect(delegate.findMany).toHaveBeenCalled();
+      for (const [query] of vi.mocked(delegate.findMany).mock.calls) {
+        expect(query?.where?.barbershopId).toBe(barbershopId1);
+      }
+    }
+    expect(mockedComanda.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      barbershopId: barbershopId1, status: "CLOSED", closedAt: period,
+    } }));
+    // Receivables are a current snapshot, without a date filter. CLOSED debt
+    // is deliberately excluded until a later functional phase changes it.
+    expect(mockedComanda.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      barbershopId: barbershopId1, status: { in: ["OPEN", "IN_SERVICE", "PENDING_PAYMENT"] },
+    } }));
+    expect(mockedPayment.findMany).toHaveBeenCalledWith({ where: { barbershopId: barbershopId1, paidAt: period } });
+    expect(mockedFinancialEntry.findMany).toHaveBeenCalledWith({ where: {
+      barbershopId: barbershopId1, entryDate: period, type: { in: ["MANUAL_IN", "MANUAL_OUT", "CLUB_REVENUE"] },
+    } });
+    expect(mockedComandaItem.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      barbershopId: barbershopId1, type: "SERVICE", status: "DONE", completedAt: period,
+    } }));
+  });
+
+  it("Phase 0: net command receipts subtract refund Payment once, independent of mirrored ledger entries", async () => {
+    mockedRequireOperationalSession.mockResolvedValue({ error: null, data: {
+      userId: "owner", role: "OWNER", memberId: "owner-member", barbershopId: barbershopId1,
+    } } as any);
+    mockedComanda.findMany.mockResolvedValue([]);
+    mockedCommissionEntry.findMany.mockResolvedValue([]);
+    mockedPayment.findMany.mockResolvedValue([
+      { id: "original", method: "PIX", status: "CONFIRMED", amount: new Prisma.Decimal("100"), refundedAmount: new Prisma.Decimal("10.10") },
+      { id: "refund", method: "PIX", status: "REFUNDED", refundOfId: "original", amount: new Prisma.Decimal("-10.10") },
+    ] as any);
+    mockedFinancialEntry.findMany.mockResolvedValue([
+      { type: "MANUAL_IN", amount: new Prisma.Decimal("40") },
+      { type: "MANUAL_OUT", amount: new Prisma.Decimal("-15") },
+      { type: "CLUB_REVENUE", amount: new Prisma.Decimal("120") },
+    ] as any);
+    const response = await getFinancialSummary(createRequest({ startDate: "2026-07-15", endDate: "2026-07-15" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.totals).toMatchObject({ commandReceived: 89.9, manualIncome: 40, manualExpenses: 15, clubRevenue: 120, totalReceived: 249.9, totalExpenses: 15, operationalResult: 234.9 });
+    // Methods currently display gross confirmed receipts, before refunds.
+    expect(body.paymentMethods.find((m: any) => m.method === "PIX")).toMatchObject({ amount: 100, count: 1 });
+    expect(mockedFinancialEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      type: { in: ["MANUAL_IN", "MANUAL_OUT", "CLUB_REVENUE"] },
+    }) }));
+  });
+
   it("1. Rejeita se não autenticado (401)", async () => {
     const errorResponse = NextResponse.json({ error: "Não autenticado." }, { status: 401 });
     mockedRequireOperationalSession.mockResolvedValue({

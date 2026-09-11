@@ -105,4 +105,16 @@ describe("finalizacao apos reabertura de comanda ja paga", () => {
     expect(prismaMock.financialEntry.create).not.toHaveBeenCalled();
     expect(closeComandaMock).toHaveBeenCalledWith(prismaMock, "shop-1", "comanda-1");
   });
+
+  it.each([
+    { payments: [], code: "PAYMENT_REQUIRED" },
+    { payments: [{ method: "PIX", amount: "10.10" }], code: "PAYMENT_TOTAL_MISMATCH" },
+  ])("Phase 0: outstanding balance blocks finalize with $code", async ({ payments, code }) => {
+    recalculateComandaTotalsMock.mockResolvedValue({ id: "comanda-1", remainingTotal: "50.00" });
+    const res = await finalizePost(request({ payments }), { params: Promise.resolve({ id: "comanda-1" }) });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: code });
+    expect(registerPaymentMock).not.toHaveBeenCalled();
+    expect(closeComandaMock).not.toHaveBeenCalled();
+  });
 });

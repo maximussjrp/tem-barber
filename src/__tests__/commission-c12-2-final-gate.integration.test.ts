@@ -3,13 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { PrismaClient } from "@prisma/client";
 import {
   ComandaItemStatus,
-  ComandaItemType,
   CommissionCycleAdjustmentType,
   CommissionCycleStatus,
   CommissionDisbursementMethod,
   CommissionEntryStatus,
   CommissionPayableType,
-  Prisma,
   UserRole,
 } from "@prisma/client";
 import { NextRequest } from "next/server";
@@ -21,6 +19,7 @@ import { closeComanda, refundPayment, registerPayment } from "@/lib/operations/p
 import {
   CommissionError,
   createCommissionAdvance,
+  reverseCommissionAdvance,
   executeCommissionPayout,
   generateCommissionsForComanda,
   getAuthoritativeCycleBalance,
@@ -38,10 +37,16 @@ vi.mock("@/lib/api-auth", async () => {
 });
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-const canRunIntegration =
-  testDatabaseUrl &&
-  /match_barber_test|localhost|127\.0\.0\.1|55439|5434/.test(testDatabaseUrl) &&
-  !/prod|production/i.test(testDatabaseUrl);
+const canRunIntegration = (() => {
+  if (!testDatabaseUrl) return false;
+  try {
+    const url = new URL(testDatabaseUrl);
+    return ["postgres:", "postgresql:"].includes(url.protocol)
+      && ["localhost", "127.0.0.1"].includes(url.hostname)
+      && /^(match_barber_test|tem_barber_test)(?:_[a-z0-9_]+)?$/i.test(url.pathname.slice(1))
+      && !/prod/i.test(url.pathname);
+  } catch { return false; }
+})();
 const describeIf = canRunIntegration ? describe : describe.skip;
 
 let prisma: PrismaClient;
@@ -251,6 +256,107 @@ describeIf("C12.2 final gate accounting and cancellation proofs", () => {
 
   afterAll(async () => {
     await prisma?.$disconnect();
+  });
+
+  it("Phase 0: real CASH partial payment, retry, mixed close and refund preserve exact ledgers", async () => {
+    const tenant = await seedTenant("baseline-payment");
+    const barbershopId = tenant.barbershop.id;
+    const { comanda } = await createDoneServiceComanda({ barbershopId, serviceId: tenant.service.id, executorId: tenant.barber.id });
+    const input = { barbershopId, comandaId: comanda.id, userId: tenant.ownerUser.id, method: "CASH" as const, amount: "10.10", idempotencyKey: "baseline-cash" };
+    const cashBefore = await prisma.cashSession.findFirstOrThrow({ where: { barbershopId, status: "OPEN" } });
+    await prisma.$transaction(tx => registerPayment(tx, input));
+    await prisma.$transaction(tx => registerPayment(tx, input));
+    const partial = await prisma.comanda.findUniqueOrThrow({ where: { id: comanda.id } });
+    expect(toCents(partial.paidTotal)).toBe(1010);
+    expect(toCents(partial.remainingTotal)).toBe(8990);
+    expect(partial.status).toBe("OPEN");
+    await expect(prisma.$transaction(tx => closeComanda(tx, barbershopId, comanda.id))).rejects.toMatchObject({ code: "COMANDA_NOT_PAID" });
+    expect(await prisma.payment.count({ where: { barbershopId } })).toBe(1);
+    expect(await prisma.financialEntry.count({ where: { barbershopId, type: "COMMAND_REVENUE" } })).toBe(1);
+    expect(await prisma.cashMovement.count({ where: { barbershopId } })).toBe(1);
+    const cashAfter = await prisma.cashSession.findUniqueOrThrow({ where: { id: cashBefore.id } });
+    expect(toCents(cashAfter.expectedAmount) - toCents(cashBefore.expectedAmount)).toBe(1010);
+
+    await prisma.$transaction(async tx => {
+      await registerPayment(tx, { ...input, method: "PIX", amount: "89.90", idempotencyKey: "baseline-pix" });
+      await closeComanda(tx, barbershopId, comanda.id);
+    });
+    const paid = await prisma.comanda.findUniqueOrThrow({ where: { id: comanda.id } });
+    expect(paid.status).toBe("CLOSED");
+    expect(paid.closedAt).not.toBeNull();
+    expect(toCents(paid.paidTotal)).toBe(10000);
+    expect(toCents(paid.remainingTotal)).toBe(0);
+    const payments = await prisma.payment.findMany({ where: { barbershopId } });
+    expect(payments).toHaveLength(2);
+    expect(payments.map(p => p.method).sort()).toEqual(["CASH", "PIX"]);
+    const entries = await prisma.financialEntry.findMany({ where: { barbershopId, type: "COMMAND_REVENUE" } });
+    expect(entries).toHaveLength(2);
+    for (const payment of payments) {
+      expect(entries.filter(e => e.paymentId === payment.id)).toHaveLength(1);
+      expect(toCents(entries.find(e => e.paymentId === payment.id)!.amount)).toBe(toCents(payment.amount));
+    }
+    const original = payments.find(p => p.method === "CASH")!;
+    const refundInput = { barbershopId, comandaId: comanda.id, paymentId: original.id, amount: "0.01", userId: tenant.ownerUser.id, reason: "Phase 0 baseline", idempotencyKey: "baseline-refund" };
+    await prisma.$transaction(tx => refundPayment(tx, refundInput));
+    await prisma.$transaction(tx => refundPayment(tx, refundInput));
+    const reopened = await prisma.comanda.findUniqueOrThrow({ where: { id: comanda.id } });
+    expect(reopened).toMatchObject({ status: "PENDING_PAYMENT", closedAt: null });
+    expect(toCents(reopened.paidTotal)).toBe(9999);
+    expect(toCents(reopened.remainingTotal)).toBe(1);
+    const preserved = await prisma.payment.findUniqueOrThrow({ where: { id: original.id } });
+    expect(preserved.status).toBe("CONFIRMED");
+    expect(toCents(preserved.refundedAmount)).toBe(1);
+    expect(await prisma.payment.count({ where: { barbershopId } })).toBe(3);
+    const refunds = await prisma.financialEntry.findMany({ where: { barbershopId, type: "REFUND" } });
+    expect(refunds).toHaveLength(1);
+    expect(toCents(refunds[0].amount)).toBe(-1);
+    const refundPaymentRow = await prisma.payment.findUniqueOrThrow({ where: { id: refunds[0].paymentId! } });
+    expect(refundPaymentRow).toMatchObject({ refundOfId: original.id, status: "REFUNDED" });
+    expect(toCents(refundPaymentRow.amount)).toBe(-1);
+    const movements = await prisma.cashMovement.findMany({ where: { barbershopId } });
+    expect(movements.map(m => toCents(m.amount)).sort((a, b) => a - b)).toEqual([-1, 1010]);
+  });
+
+  it.each(["payment", "refund", "advance", "payout", "advance-reversal"] as const)("Phase 0: PostgreSQL rolls back %s when FinancialEntry creation fails", async operation => {
+    const tenant = await seedTenant(`rollback-${operation}`);
+    const barbershopId = tenant.barbershop.id;
+    const { comanda } = await createDoneServiceComanda({ barbershopId, serviceId: tenant.service.id, executorId: tenant.barber.id });
+    const paymentInput = { barbershopId, comandaId: comanda.id, userId: tenant.ownerUser.id, method: "PIX" as const, amount: "100.00", idempotencyKey: "seed-payment" };
+    if (operation !== "payment") await prisma.$transaction(tx => registerPayment(tx, paymentInput));
+    const commissionInput = { barbershopId, memberId: tenant.barber.id, createdById: tenant.ownerUser.id, amount: "10.10", paymentMethod: CommissionDisbursementMethod.PIX, idempotencyKey: "failed-operation" };
+    const advance = operation === "advance-reversal"
+      ? await prisma.$transaction(tx => createCommissionAdvance(tx, { ...commissionInput, idempotencyKey: "seed-advance" }))
+      : null;
+    const payment = await prisma.payment.findFirst({ where: { barbershopId } });
+    // Compare full persisted rows, including caches, history and audit records.
+    // No in-memory transaction emulation is used for these assertions.
+    const snapshot = () => Promise.all([
+      prisma.comanda.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.payment.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.financialEntry.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.cashMovement.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.cashSession.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionCycle.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionEntry.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionPayableItem.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionAdvance.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionAdvanceReversal.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionAdvanceAudit.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+      prisma.commissionPayout.findMany({ where: { barbershopId }, orderBy: { id: "asc" } }),
+    ]);
+    const before = await snapshot();
+    const failure = new Error("Phase 0 injected FinancialEntry failure");
+    await expect(prisma.$transaction(async tx => {
+      const spy = vi.spyOn(tx.financialEntry, "create").mockRejectedValueOnce(failure);
+      try {
+        if (operation === "payment") return await registerPayment(tx, paymentInput);
+        if (operation === "refund") return await refundPayment(tx, { barbershopId, paymentId: payment!.id, amount: "10.10", reason: "Baseline rollback", userId: tenant.ownerUser.id });
+        if (operation === "advance") return await createCommissionAdvance(tx, commissionInput);
+        if (operation === "payout") return await executeCommissionPayout(tx, { ...commissionInput, amount: "100.00" });
+        return await reverseCommissionAdvance(tx, { barbershopId, advanceId: advance!.id, amount: "0.01", returnMethod: CommissionDisbursementMethod.PIX, reason: "Baseline rollback", idempotencyKey: "failed-reversal", createdById: tenant.ownerUser.id });
+      } finally { spy.mockRestore(); }
+    })).rejects.toBe(failure);
+    expect(await snapshot()).toEqual(before);
   });
 
   it("proves payout and advance payouts do not double operating commission expense through financial summary", async () => {
