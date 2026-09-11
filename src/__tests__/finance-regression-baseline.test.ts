@@ -15,6 +15,7 @@ vi.mock("@/lib/operations/commissions", () => ({ syncCommissionReleaseForComanda
 function fixture() {
   const comandas: any[] = [
     { id: "command-a", barbershopId: "shop-a", status: "OPEN", customerId: null, appointmentId: "appointment-a", closedAt: null, openedAt: new Date(), paidTotal: fromCents(0), remainingTotal: fromCents(10100) },
+    { id: "command-a2", barbershopId: "shop-a", status: "OPEN", customerId: null, closedAt: null, openedAt: new Date(), paidTotal: fromCents(0), remainingTotal: fromCents(10100) },
     { id: "command-b", barbershopId: "shop-b", status: "OPEN", customerId: null, closedAt: null, openedAt: new Date(), paidTotal: fromCents(0), remainingTotal: fromCents(10100) },
   ];
   const items = comandas.map(c => ({ id: `item-${c.id}`, comandaId: c.id, barbershopId: c.barbershopId, type: "SERVICE", status: "DONE", total: fromCents(10100) }));
@@ -163,20 +164,82 @@ describe("Phase 0: current payment, refund and physical cash contracts", () => {
     expect(db.entries.map(e => e.barbershopId)).toEqual(["shop-a", "shop-b"]);
   });
 
-  it("documents current scope gap: replay key is checked before validating the supplied command tenant", async () => {
-    await pay();
-    db.tx.comanda.findFirst.mockClear();
-    // Exercise the real downstream guard too: it silently returns when the
-    // foreign command is absent, so it does not undo the earlier recalculation.
-    const actual = await vi.importActual<typeof import("@/lib/operations/commissions")>("@/lib/operations/commissions");
-    vi.mocked(syncCommissionReleaseForComanda).mockImplementationOnce(actual.syncCommissionReleaseForComanda);
-    const result = await pay("PIX", { comandaId: "command-b" });
-    // Characterization of the current defect, NOT the desired tenant contract.
-    // registerPayment replays a shop-a key but recalculates the caller's id.
-    expect(db.tx.comanda.findFirst).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ where: { id: "command-b", barbershopId: "shop-a" } }));
-    expect(result.id).toBe("command-b");
-    expect(result.barbershopId).toBe("shop-b");
-    expect(db.tx.comanda.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "command-b" } }));
+  it("valid replay with same key, comanda, method and amount succeeds without duplicate effects", async () => {
+    const first = await pay("PIX");
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    const second = await pay("PIX");
+    expect(second.id).toBe(first.id);
+    expect(db.payments).toHaveLength(1);
+    expect(db.entries).toHaveLength(1);
+    expect(db.movements).toHaveLength(0);
+  });
+
+  it("valid replay on a CLOSED comanda succeeds and does not throw COMANDA_NOT_PAYABLE", async () => {
+    const first = await pay("PIX");
+    db.comandas[0].status = "CLOSED";
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    const second = await pay("PIX");
+    expect(second.id).toBe(first.id);
+    expect(db.payments).toHaveLength(1);
+    expect(db.entries).toHaveLength(1);
+    expect(db.movements).toHaveLength(0);
+  });
+
+  it("rejects replay with comandaId of another tenant with COMANDA_NOT_FOUND without mutations", async () => {
+    await pay("PIX");
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    await expect(pay("PIX", { comandaId: "command-b" })).rejects.toMatchObject({
+      code: "COMANDA_NOT_FOUND",
+      status: 404,
+    });
+    expect(db.tx.comanda.update).not.toHaveBeenCalled();
+    expect(syncCommissionReleaseForComanda).not.toHaveBeenCalled();
+    expect(db.payments).toHaveLength(1);
+    expect(db.entries).toHaveLength(1);
+    expect(db.movements).toHaveLength(0);
+  });
+
+  it("rejects replay with another comandaId in the same tenant with IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await pay("PIX");
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    await expect(pay("PIX", { comandaId: "command-a2" })).rejects.toMatchObject({
+      code: "IDEMPOTENCY_KEY_CONFLICT",
+      status: 409,
+    });
+    expect(db.tx.comanda.update).not.toHaveBeenCalled();
+    expect(syncCommissionReleaseForComanda).not.toHaveBeenCalled();
+    expect(db.payments).toHaveLength(1);
+    expect(db.entries).toHaveLength(1);
+  });
+
+  it("rejects replay with same comandaId but different payment method with IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await pay("PIX");
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    await expect(pay("CASH")).rejects.toMatchObject({
+      code: "IDEMPOTENCY_KEY_CONFLICT",
+      status: 409,
+    });
+    expect(db.tx.comanda.update).not.toHaveBeenCalled();
+    expect(syncCommissionReleaseForComanda).not.toHaveBeenCalled();
+    expect(db.payments).toHaveLength(1);
+    expect(db.entries).toHaveLength(1);
+  });
+
+  it("rejects replay with same comandaId but different amount with IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await pay("PIX", { amount: "101.00" });
+    db.tx.comanda.update.mockClear();
+    vi.mocked(syncCommissionReleaseForComanda).mockClear();
+    await expect(pay("PIX", { amount: "50.00" })).rejects.toMatchObject({
+      code: "IDEMPOTENCY_KEY_CONFLICT",
+      status: 409,
+    });
+    expect(db.tx.comanda.update).not.toHaveBeenCalled();
+    expect(syncCommissionReleaseForComanda).not.toHaveBeenCalled();
     expect(db.payments).toHaveLength(1);
     expect(db.entries).toHaveLength(1);
   });

@@ -317,6 +317,81 @@ describeIf("C12.2 final gate accounting and cancellation proofs", () => {
     expect(movements.map(m => toCents(m.amount)).sort((a, b) => a - b)).toEqual([-1, 1010]);
   });
 
+  it("P0: PostgreSQL real two-tenant isolation proves idempotency key replay with foreign comandaId is rejected with COMANDA_NOT_FOUND without mutating foreign tenant", async () => {
+    const tenantA = await seedTenant("tenant-a");
+    const tenantB = await seedTenant("tenant-b");
+
+    const { comanda: comandaA } = await createDoneServiceComanda({
+      barbershopId: tenantA.barbershop.id,
+      serviceId: tenantA.service.id,
+      executorId: tenantA.barber.id,
+    });
+    const { comanda: comandaB } = await createDoneServiceComanda({
+      barbershopId: tenantB.barbershop.id,
+      serviceId: tenantB.service.id,
+      executorId: tenantB.barber.id,
+    });
+
+    const idempotencyKey = "shared-idempotency-key-p0";
+
+    await prisma.$transaction((tx) =>
+      registerPayment(tx, {
+        barbershopId: tenantA.barbershop.id,
+        comandaId: comandaA.id,
+        method: "PIX",
+        amount: "50.00",
+        userId: tenantA.ownerUser.id,
+        idempotencyKey,
+      })
+    );
+
+    const comandaBBefore = await prisma.comanda.findUniqueOrThrow({ where: { id: comandaB.id } });
+    const paymentsCountBefore = await prisma.payment.count();
+    const financialEntriesCountBefore = await prisma.financialEntry.count();
+    const cashMovementsCountBefore = await prisma.cashMovement.count();
+    const commissionEntriesTenantBBefore = await prisma.commissionEntry.count({
+      where: { comandaItem: { barbershopId: tenantB.barbershop.id } },
+    });
+    const commissionPayablesTenantBBefore = await prisma.commissionPayableItem.count({
+      where: { barbershopId: tenantB.barbershop.id },
+    });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        registerPayment(tx, {
+          barbershopId: tenantA.barbershop.id,
+          comandaId: comandaB.id,
+          method: "PIX",
+          amount: "50.00",
+          userId: tenantA.ownerUser.id,
+          idempotencyKey,
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "COMANDA_NOT_FOUND",
+      status: 404,
+    });
+
+    const comandaBAfter = await prisma.comanda.findUniqueOrThrow({ where: { id: comandaB.id } });
+    expect(comandaBAfter).toEqual(comandaBBefore);
+    expect(toCents(comandaBAfter.paidTotal)).toBe(toCents(comandaBBefore.paidTotal));
+    expect(toCents(comandaBAfter.remainingTotal)).toBe(toCents(comandaBBefore.remainingTotal));
+
+    expect(await prisma.payment.count()).toBe(paymentsCountBefore);
+    expect(await prisma.financialEntry.count()).toBe(financialEntriesCountBefore);
+    expect(await prisma.cashMovement.count()).toBe(cashMovementsCountBefore);
+    expect(
+      await prisma.commissionEntry.count({
+        where: { comandaItem: { barbershopId: tenantB.barbershop.id } },
+      })
+    ).toBe(commissionEntriesTenantBBefore);
+    expect(
+      await prisma.commissionPayableItem.count({
+        where: { barbershopId: tenantB.barbershop.id },
+      })
+    ).toBe(commissionPayablesTenantBBefore);
+  });
+
   it.each(["payment", "refund", "advance", "payout", "advance-reversal"] as const)("Phase 0: PostgreSQL rolls back %s when FinancialEntry creation fails", async operation => {
     const tenant = await seedTenant(`rollback-${operation}`);
     const barbershopId = tenant.barbershop.id;

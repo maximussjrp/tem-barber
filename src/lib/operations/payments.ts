@@ -15,6 +15,13 @@ export async function registerPayment(
     idempotencyKey?: string | null;
   }
 ) {
+  const amount = positiveCents(input.amount, "Pagamento");
+
+  const comanda = await tx.comanda.findFirst({
+    where: { id: input.comandaId, barbershopId: input.barbershopId },
+  });
+  if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+
   if (input.idempotencyKey) {
     const existing = await tx.payment.findUnique({
       where: {
@@ -25,8 +32,20 @@ export async function registerPayment(
       },
     });
     if (existing) {
-      const updated = await recalculateComandaTotals(tx, input.comandaId);
-      await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId, "Liberacao proporcional por pagamento", {
+      if (
+        existing.comandaId !== input.comandaId ||
+        existing.method !== input.method ||
+        toCents(existing.amount) !== amount
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada para outro pagamento.",
+          409
+        );
+      }
+
+      const updated = await recalculateComandaTotals(tx, existing.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Liberacao proporcional por pagamento", {
         sourceKind: CommissionPayableSourceKind.PAYMENT,
         sourcePaymentId: existing.id,
       });
@@ -34,11 +53,6 @@ export async function registerPayment(
     }
   }
 
-  const amount = positiveCents(input.amount, "Pagamento");
-  const comanda = await tx.comanda.findFirst({
-    where: { id: input.comandaId, barbershopId: input.barbershopId },
-  });
-  if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
   if (comanda.status === "CLOSED" || comanda.status === "CANCELLED") {
     throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda nao aceita pagamento.", 422);
   }
