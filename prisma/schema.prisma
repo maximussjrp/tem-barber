@@ -28,43 +28,49 @@ model User {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  memberships                       BarbershopMember[] // Caso o usuário seja funcionário/dono de barbearia
-  appointments                      Appointment[] // Histórico de agendamentos como cliente
-  reviews                           Review[] // Avaliações feitas pelo cliente
-  notifications                     Notification[]
-  webPushSubscriptions              WebPushSubscription[]
-  comandas                          Comanda[]
-  clubSubscriptions                 CustomerClubSubscription[]
-  clubSubscriptionPayments          ClubSubscriptionPayment[]
-  whatsappConfirmations             AppointmentWhatsappConfirmation[]
-  customerBarbershopLinks           CustomerBarbershopLink[]
-  verifiedWhatsappCustomerLinks     CustomerBarbershopLink[]            @relation("WhatsappVerifiedBy")
-  createdWaitlistSessions           OnlineWaitlistSession[]
-  onlineWaitlistEntries             OnlineWaitlistEntry[]
-  comandaReopenAudits               ComandaReopenAudit[]
-  comandaCancelAudits               ComandaCancelAudit[]                @relation("ComandaCancelledByUser")
-  blockedCustomers                  BarbershopBlockedCustomer[]
-  blockedCustomersByMe              BarbershopBlockedCustomer[]         @relation("BlockedByUser")
-  unblockedCustomersByMe            BarbershopBlockedCustomer[]         @relation("UnblockedByUser")
-  customerContactLogs               CustomerContactLog[]                @relation("CustomerContactLogs")
-  createdCustomerContactLogs        CustomerContactLog[]                @relation("CreatedCustomerContactLogs")
-  pushDevices                       PushDevice[]
-  globalNotificationPreferences     GlobalNotificationPreference[]
-  tenantNotificationPreferences     TenantNotificationPreference[]
-  createdCommissionAdvances         CommissionAdvance[]                 @relation("AdvanceCreatedBy")
-  createdCommissionAdvanceReversals CommissionAdvanceReversal[]         @relation("AdvanceReversalCreatedBy")
-  createdCommissionPayouts          CommissionPayout[]                  @relation("PayoutCreatedBy")
-  createdCommissionCycleAdjustments CommissionCycleAdjustment[]         @relation("AdjustmentCreatedBy")
-  correctedCommissionAudits         CommissionExecutorCorrectionAudit[] @relation("CorrectionCorrectedBy")
-  commissionAdvanceAudits           CommissionAdvanceAudit[]            @relation("AdvanceAuditChangedBy")
-  customerMarketingConsents         CustomerMarketingConsent[]          @relation("CustomerMarketingConsents")
-  customerMarketingConsentEvents    CustomerMarketingConsentEvent[]     @relation("CustomerMarketingConsentEvents")
-  marketingConsentEventsAsActor     CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorUser")
-  createdReactivationCampaigns      ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByUser")
-  reactivationCampaignRecipients    ReactivationCampaignRecipient[]     @relation("ReactivationCampaignCustomer")
-  metaConnectionsCreated            MetaConnection[]                    @relation("MetaConnectionCreatedByUser")
-  metaOnboardingSessionsCreated     MetaOnboardingSession[]             @relation("MetaOnboardingSessionCreatedByUser")
-  metaConnectionEventsAsActor       MetaConnectionEvent[]               @relation("MetaConnectionEventActorUser")
+  memberships                         BarbershopMember[] // Caso o usuário seja funcionário/dono de barbearia
+  appointments                        Appointment[] // Histórico de agendamentos como cliente
+  reviews                             Review[] // Avaliações feitas pelo cliente
+  notifications                       Notification[]
+  webPushSubscriptions                WebPushSubscription[]
+  comandas                            Comanda[]
+  clubSubscriptions                   CustomerClubSubscription[]
+  clubSubscriptionPayments            ClubSubscriptionPayment[]
+  whatsappConfirmations               AppointmentWhatsappConfirmation[]
+  customerBarbershopLinks             CustomerBarbershopLink[]
+  verifiedWhatsappCustomerLinks       CustomerBarbershopLink[]            @relation("WhatsappVerifiedBy")
+  createdWaitlistSessions             OnlineWaitlistSession[]
+  onlineWaitlistEntries               OnlineWaitlistEntry[]
+  comandaReopenAudits                 ComandaReopenAudit[]
+  comandaCancelAudits                 ComandaCancelAudit[]                @relation("ComandaCancelledByUser")
+  blockedCustomers                    BarbershopBlockedCustomer[]
+  blockedCustomersByMe                BarbershopBlockedCustomer[]         @relation("BlockedByUser")
+  unblockedCustomersByMe              BarbershopBlockedCustomer[]         @relation("UnblockedByUser")
+  customerContactLogs                 CustomerContactLog[]                @relation("CustomerContactLogs")
+  createdCustomerContactLogs          CustomerContactLog[]                @relation("CreatedCustomerContactLogs")
+  pushDevices                         PushDevice[]
+  globalNotificationPreferences       GlobalNotificationPreference[]
+  tenantNotificationPreferences       TenantNotificationPreference[]
+  createdCommissionAdvances           CommissionAdvance[]                 @relation("AdvanceCreatedBy")
+  createdCommissionAdvanceReversals   CommissionAdvanceReversal[]         @relation("AdvanceReversalCreatedBy")
+  createdCommissionPayouts            CommissionPayout[]                  @relation("PayoutCreatedBy")
+  createdCommissionCycleAdjustments   CommissionCycleAdjustment[]         @relation("AdjustmentCreatedBy")
+  correctedCommissionAudits           CommissionExecutorCorrectionAudit[] @relation("CorrectionCorrectedBy")
+  commissionAdvanceAudits             CommissionAdvanceAudit[]            @relation("AdvanceAuditChangedBy")
+  customerMarketingConsents           CustomerMarketingConsent[]          @relation("CustomerMarketingConsents")
+  customerMarketingConsentEvents      CustomerMarketingConsentEvent[]     @relation("CustomerMarketingConsentEvents")
+  marketingConsentEventsAsActor       CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorUser")
+  createdReactivationCampaigns        ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByUser")
+  reactivationCampaignRecipients      ReactivationCampaignRecipient[]     @relation("ReactivationCampaignCustomer")
+  metaConnectionsCreated              MetaConnection[]                    @relation("MetaConnectionCreatedByUser")
+  metaOnboardingSessionsCreated       MetaOnboardingSession[]             @relation("MetaOnboardingSessionCreatedByUser")
+  metaConnectionEventsAsActor         MetaConnectionEvent[]               @relation("MetaConnectionEventActorUser")
+  createdFinancialRoutines            FinancialRoutine[]                  @relation("FinancialRoutineCreatedBy")
+  createdFinancialTitles              FinancialTitle[]                    @relation("FinancialTitleCreatedBy")
+  cancelledFinancialTitles            FinancialTitle[]                    @relation("FinancialTitleCancelledBy")
+  createdFinancialSettlements         FinancialSettlement[]               @relation("FinancialSettlementCreatedBy")
+  createdFinancialSettlementReversals FinancialSettlementReversal[]       @relation("FinancialSettlementReversalCreatedBy")
+  financialTitleEventsAsActor         FinancialTitleEvent[]               @relation("FinancialTitleEventActorUser")
 
   @@map("users")
 }
@@ -152,6 +158,14 @@ model Barbershop {
   metaOnboardingSessions             MetaOnboardingSession[]
   metaConnectionEvents               MetaConnectionEvent[]
   webhookInboxes                     WebhookInbox[]
+  financialCategories                FinancialCategory[]
+  financialCategorySystemMappings    FinancialCategorySystemMapping[]
+  financialRoutines                  FinancialRoutine[]
+  financialTitles                    FinancialTitle[]
+  financialSettlements               FinancialSettlement[]
+  financialSettlementReversals       FinancialSettlementReversal[]
+  financialTitleEvents               FinancialTitleEvent[]
+  financialEntryAllocations          FinancialEntryAllocation[]
 
   @@map("barbershops")
 }
@@ -462,7 +476,7 @@ model CustomerContactLog {
   createdByMember       BarbershopMember?              @relation("MemberCreatedCustomerContactLogs", fields: [createdByMemberId], references: [id], onDelete: SetNull)
   reactivationRecipient ReactivationCampaignRecipient? @relation(fields: [reactivationRecipientId], references: [id], onDelete: SetNull)
 
-  @@index([barbershopId, customerId, contactedAt])
+  @@index([barbershopId, customerId, contactedAt], map: "customer_contact_logs_barbershop_id_customer_id_contacted_at_id")
   @@index([barbershopId, contactedAt])
   @@index([customerId])
   @@index([createdByUserId])
@@ -1067,9 +1081,21 @@ model FinancialEntry {
   commissionAdvanceReversal CommissionAdvanceReversal? @relation(fields: [commissionAdvanceReversalId], references: [id], onDelete: Restrict)
   commissionPayout          CommissionPayout?          @relation(fields: [commissionPayoutId], references: [id], onDelete: Restrict)
 
+  financialSettlementId         String? @map("financial_settlement_id")
+  financialSettlementReversalId String? @map("financial_settlement_reversal_id")
+
+  financialSettlement         FinancialSettlement?         @relation(fields: [financialSettlementId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  financialSettlementReversal FinancialSettlementReversal? @relation(fields: [financialSettlementReversalId, barbershopId], references: [id, barbershopId], onDelete: Restrict, map: "financial_entries_financial_settlement_reversal_id_barbers_fkey")
+  allocations                 FinancialEntryAllocation[]
+
+  @@unique([id, barbershopId])
+  @@unique([financialSettlementId, barbershopId])
+  @@unique([financialSettlementReversalId, barbershopId], map: "financial_entries_financial_settlement_reversal_id_barbershop_i")
   @@index([barbershopId, entryDate])
   @@index([barbershopId, type])
   @@index([settlementId])
+  @@index([barbershopId, financialSettlementId])
+  @@index([barbershopId, financialSettlementReversalId], map: "financial_entries_barbershop_id_financial_settlement_reversal_i")
   @@map("financial_entries")
 }
 
@@ -1466,7 +1492,7 @@ model CommissionExecutorCorrectionAudit {
   newMember   BarbershopMember @relation("CorrectionNewMember", fields: [newMemberId], references: [id], onDelete: Restrict)
   correctedBy User             @relation("CorrectionCorrectedBy", fields: [correctedById], references: [id], onDelete: Restrict)
 
-  @@unique([barbershopId, idempotencyKey])
+  @@unique([barbershopId, idempotencyKey], map: "commission_executor_correction_audits_barbershop_id_idempotency")
   @@index([comandaItemId])
   @@map("commission_executor_correction_audits")
 }
@@ -2164,7 +2190,7 @@ model CustomerMarketingConsent {
   customer   User                           @relation("CustomerMarketingConsents", fields: [customerId], references: [id], onDelete: Cascade)
   lastEvent  CustomerMarketingConsentEvent? @relation("ConsentLastEvent", fields: [lastEventId], references: [id], onDelete: SetNull)
 
-  @@unique([barbershopId, customerId, channel, purpose])
+  @@unique([barbershopId, customerId, channel, purpose], map: "customer_marketing_consents_barbershop_id_customer_id_channel_p")
   @@index([barbershopId, status])
   @@map("customer_marketing_consents")
 }
@@ -2192,7 +2218,7 @@ model CustomerMarketingConsentEvent {
   consents    CustomerMarketingConsent[] @relation("ConsentLastEvent")
 
   @@unique([barbershopId, eventKey])
-  @@index([barbershopId, customerId, occurredAt])
+  @@index([barbershopId, customerId, occurredAt], map: "customer_marketing_consent_events_barbershop_id_customer_id_occ")
   @@map("customer_marketing_consent_events")
 }
 
@@ -2268,18 +2294,18 @@ model ReactivationCampaignRecipient {
   campaign              ReactivationCampaign @relation(fields: [campaignId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
   barbershop            Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   customer              User                 @relation("ReactivationCampaignCustomer", fields: [customerId], references: [id], onDelete: Restrict)
-  lastSuggestedMember   BarbershopMember?    @relation("ReactivationRecipientSuggestedMember", fields: [preferredMemberIdSnapshot], references: [id], onDelete: SetNull)
-  lastSuggestedService  Service?             @relation("ReactivationRecipientSuggestedService", fields: [preferredServiceIdSnapshot], references: [id], onDelete: SetNull)
+  lastSuggestedMember   BarbershopMember?    @relation("ReactivationRecipientSuggestedMember", fields: [preferredMemberIdSnapshot], references: [id], onDelete: SetNull, map: "reactivation_campaign_recipients_preferred_member_id_snapshot_f")
+  lastSuggestedService  Service?             @relation("ReactivationRecipientSuggestedService", fields: [preferredServiceIdSnapshot], references: [id], onDelete: SetNull, map: "reactivation_campaign_recipients_preferred_service_id_snapshot_")
   attributedAppointment Appointment?         @relation("ReactivationRecipientAttributedAppointment", fields: [attributedAppointmentId], references: [id], onDelete: SetNull)
   attributedComanda     Comanda?             @relation("ReactivationRecipientAttributedComanda", fields: [attributedComandaId], references: [id], onDelete: SetNull)
   customerContactLog    CustomerContactLog?
 
   @@unique([campaignId, customerId])
-  @@unique([barbershopId, customerId, canonicalReturnDate])
-  @@index([barbershopId, customerId, sentConfirmedAt])
-  @@index([barbershopId, conversionStatus])
-  @@index([barbershopId, sentConfirmedAt])
-  @@index([campaignId, dispatchStatus])
+  @@unique([barbershopId, customerId, canonicalReturnDate], map: "reactivation_campaign_recipients_barbershop_id_customer_id_cano")
+  @@index([barbershopId, customerId, sentConfirmedAt], map: "reactivation_campaign_recipients_barbershop_id_customer_id_sent")
+  @@index([barbershopId, conversionStatus], map: "reactivation_campaign_recipients_barbershop_id_conversion_statu")
+  @@index([barbershopId, sentConfirmedAt], map: "reactivation_campaign_recipients_barbershop_id_sent_confirmed_a")
+  @@index([campaignId, dispatchStatus], map: "reactivation_campaign_recipients_campaign_id_dispatch_status_id")
   @@map("reactivation_campaign_recipients")
 }
 
@@ -2445,4 +2471,241 @@ model WebhookInbox {
   @@index([barbershopId, receivedAt])
   @@index([phoneNumberId, receivedAt])
   @@map("webhook_inbox")
+}
+
+// ----------------------------------------------------
+// 24. FASE 1 — FUNDAÇÃO FINANCEIRA DO TEM BARBER
+// ----------------------------------------------------
+
+enum FinancialCategoryClassification {
+  REVENUE
+  VARIABLE_COST
+  FIXED_EXPENSE
+  INVESTMENT
+  NON_OPERATING_IN
+  NON_OPERATING_OUT
+  TRANSFER
+  ADJUSTMENT
+}
+
+enum FinancialTitleKind {
+  PAYABLE
+  RECEIVABLE
+}
+
+enum FinancialRoutineAmountMode {
+  FIXED
+  VARIABLE
+}
+
+enum FinancialRoutineFrequency {
+  MONTHLY
+}
+
+enum FinancialSettlementMethod {
+  CASH
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_TRANSFER
+  BOLETO
+  OTHER
+}
+
+enum FinancialTitleEventType {
+  CREATED
+  UPDATED
+  CANCELLED
+  SETTLEMENT_CREATED
+  SETTLEMENT_REVERSED
+}
+
+model FinancialCategory {
+  id               String                          @id @default(uuid())
+  barbershopId     String                          @map("barbershop_id")
+  code             String
+  name             String
+  classification   FinancialCategoryClassification
+  parentCategoryId String?                         @map("parent_category_id")
+  isActive         Boolean                         @default(true) @map("is_active")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+
+  barbershop     Barbershop                       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  parentCategory FinancialCategory?               @relation("CategoryHierarchy", fields: [parentCategoryId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  subCategories  FinancialCategory[]              @relation("CategoryHierarchy")
+  systemMappings FinancialCategorySystemMapping[]
+  routines       FinancialRoutine[]
+  titles         FinancialTitle[]
+  allocations    FinancialEntryAllocation[]
+
+  @@unique([barbershopId, code])
+  @@unique([id, barbershopId])
+  @@index([barbershopId, classification, isActive])
+  @@index([barbershopId, parentCategoryId])
+  @@map("financial_categories")
+}
+
+model FinancialCategorySystemMapping {
+  id           String   @id @default(uuid())
+  barbershopId String   @map("barbershop_id")
+  systemKey    String   @map("system_key")
+  categoryId   String   @map("category_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  category   FinancialCategory @relation(fields: [categoryId, barbershopId], references: [id, barbershopId], onDelete: Restrict, map: "financial_category_system_mappings_category_id_barbershop_id_fk")
+
+  @@unique([barbershopId, systemKey])
+  @@index([barbershopId, categoryId], map: "financial_category_system_mappings_barbershop_id_category_id_id")
+  @@map("financial_category_system_mappings")
+}
+
+model FinancialRoutine {
+  id           String                     @id @default(uuid())
+  barbershopId String                     @map("barbershop_id")
+  categoryId   String                     @map("category_id")
+  title        String
+  kind         FinancialTitleKind
+  amountMode   FinancialRoutineAmountMode @map("amount_mode")
+  baseAmount   Decimal?                   @map("base_amount") @db.Decimal(10, 2)
+  frequency    FinancialRoutineFrequency  @default(MONTHLY)
+  dueDay       Int                        @map("due_day")
+  startDate    DateTime                   @map("start_date") @db.Date
+  endDate      DateTime?                  @map("end_date") @db.Date
+  isActive     Boolean                    @default(true) @map("is_active")
+  notes        String?
+  createdById  String                     @map("created_by_id")
+  createdAt    DateTime                   @default(now()) @map("created_at")
+  updatedAt    DateTime                   @updatedAt @map("updated_at")
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  category   FinancialCategory @relation(fields: [categoryId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  createdBy  User              @relation("FinancialRoutineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  titles     FinancialTitle[]
+
+  @@unique([id, barbershopId])
+  @@index([barbershopId, isActive])
+  @@index([barbershopId, categoryId])
+  @@map("financial_routines")
+}
+
+model FinancialTitle {
+  id             String             @id @default(uuid())
+  barbershopId   String             @map("barbershop_id")
+  routineId      String?            @map("routine_id")
+  categoryId     String             @map("category_id")
+  kind           FinancialTitleKind
+  title          String
+  description    String?
+  originalAmount Decimal            @map("original_amount") @db.Decimal(10, 2)
+  issuedOn       DateTime           @map("issued_on") @db.Date
+  dueOn          DateTime           @map("due_on") @db.Date
+  referenceMonth String?            @map("reference_month")
+  cancelledAt    DateTime?          @map("cancelled_at")
+  cancelledById  String?            @map("cancelled_by_id")
+  cancelReason   String?            @map("cancel_reason")
+  createdById    String             @map("created_by_id")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  barbershop  Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  routine     FinancialRoutine?     @relation(fields: [routineId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  category    FinancialCategory     @relation(fields: [categoryId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  createdBy   User                  @relation("FinancialTitleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy User?                 @relation("FinancialTitleCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  settlements FinancialSettlement[]
+  events      FinancialTitleEvent[]
+
+  @@unique([id, barbershopId])
+  @@index([barbershopId, kind, dueOn])
+  @@index([barbershopId, dueOn])
+  @@index([barbershopId, categoryId])
+  @@index([barbershopId, routineId])
+  @@map("financial_titles")
+}
+
+model FinancialSettlement {
+  id              String                     @id @default(uuid())
+  barbershopId    String                     @map("barbershop_id")
+  titleId         String                     @map("title_id")
+  principalAmount Decimal                    @map("principal_amount") @db.Decimal(10, 2)
+  discountAmount  Decimal                    @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  interestAmount  Decimal                    @default(0) @map("interest_amount") @db.Decimal(10, 2)
+  fineAmount      Decimal                    @default(0) @map("fine_amount") @db.Decimal(10, 2)
+  method          FinancialSettlementMethod?
+  settledAt       DateTime                   @default(now()) @map("settled_at")
+  notes           String?
+  idempotencyKey  String                     @map("idempotency_key")
+  createdById     String                     @map("created_by_id")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+
+  barbershop     Barbershop                    @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  title          FinancialTitle                @relation(fields: [titleId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  createdBy      User                          @relation("FinancialSettlementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reversals      FinancialSettlementReversal[]
+  financialEntry FinancialEntry?
+
+  @@unique([barbershopId, idempotencyKey])
+  @@unique([id, barbershopId])
+  @@index([barbershopId, titleId])
+  @@index([barbershopId, settledAt])
+  @@map("financial_settlements")
+}
+
+model FinancialSettlementReversal {
+  id             String   @id @default(uuid())
+  barbershopId   String   @map("barbershop_id")
+  settlementId   String   @map("settlement_id")
+  reason         String
+  reversedAt     DateTime @default(now()) @map("reversed_at")
+  idempotencyKey String   @map("idempotency_key")
+  createdById    String   @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  barbershop     Barbershop          @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  settlement     FinancialSettlement @relation(fields: [settlementId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  createdBy      User                @relation("FinancialSettlementReversalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  financialEntry FinancialEntry?
+
+  @@unique([barbershopId, settlementId])
+  @@unique([barbershopId, idempotencyKey], map: "financial_settlement_reversals_barbershop_id_idempotency_key_ke")
+  @@unique([id, barbershopId])
+  @@map("financial_settlement_reversals")
+}
+
+model FinancialTitleEvent {
+  id           String                  @id @default(uuid())
+  barbershopId String                  @map("barbershop_id")
+  titleId      String                  @map("title_id")
+  type         FinancialTitleEventType
+  payload      Json?
+  actorUserId  String?                 @map("actor_user_id")
+  createdAt    DateTime                @default(now()) @map("created_at")
+
+  barbershop Barbershop     @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  title      FinancialTitle @relation(fields: [titleId, barbershopId], references: [id, barbershopId], onDelete: Restrict)
+  actorUser  User?          @relation("FinancialTitleEventActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, titleId, createdAt])
+  @@map("financial_title_events")
+}
+
+model FinancialEntryAllocation {
+  id                  String   @id @default(uuid())
+  barbershopId        String   @map("barbershop_id")
+  financialEntryId    String   @map("financial_entry_id")
+  financialCategoryId String   @map("financial_category_id")
+  allocatedAmount     Decimal  @map("allocated_amount") @db.Decimal(10, 2)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  barbershop        Barbershop        @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  financialEntry    FinancialEntry    @relation(fields: [financialEntryId, barbershopId], references: [id, barbershopId], onDelete: Restrict, map: "financial_entry_allocations_financial_entry_id_barbershop_id_fk")
+  financialCategory FinancialCategory @relation(fields: [financialCategoryId, barbershopId], references: [id, barbershopId], onDelete: Restrict, map: "financial_entry_allocations_financial_category_id_barbershop_id")
+
+  @@unique([barbershopId, financialEntryId, financialCategoryId], map: "financial_entry_allocations_barbershop_id_financial_entry_id_fi")
+  @@index([barbershopId, financialEntryId], map: "financial_entry_allocations_barbershop_id_financial_entry_id_id")
+  @@index([barbershopId, financialCategoryId], map: "financial_entry_allocations_barbershop_id_financial_category_id")
+  @@map("financial_entry_allocations")
 }

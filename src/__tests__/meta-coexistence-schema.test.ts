@@ -47,12 +47,13 @@ describe("Meta Coexistence Schema & Migration Tests", () => {
       .readdirSync(migrationsDir)
       .filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory());
 
-    expect(migrationDirs.length).toBe(44); // 43 previous + 1 R6.1B
-
-    const r61bMigration = migrationDirs.find((d) =>
+    const r61bMigrations = migrationDirs.filter((d) =>
       d.includes("add_meta_coexistence_foundation")
     );
-    expect(r61bMigration).toBeDefined();
+
+    expect(r61bMigrations).toHaveLength(1);
+
+    const [r61bMigration] = r61bMigrations;
 
     const sqlContent = fs.readFileSync(
       path.join(migrationsDir, r61bMigration!, "migration.sql"),

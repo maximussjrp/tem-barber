@@ -1,0 +1,2 @@
+-- RenameForeignKey
+ALTER TABLE "financial_entries" RENAME CONSTRAINT "financial_entries_financial_settlement_reversal_id_barbershop_i" TO "financial_entries_financial_settlement_reversal_id_barbers_fkey";
