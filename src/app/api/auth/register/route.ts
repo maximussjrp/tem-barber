@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { consumeRateLimit, resolveClientIp } from "@/lib/public-rate-limit";
 import { normalizeBrazilianMobilePhone, validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import { createTrialSubscriptionInTransaction } from "@/lib/subscription-utils";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 // Helper para gerar o slug do estabelecimento
 function slugify(text: string) {
@@ -240,6 +241,7 @@ export async function POST(request: Request) {
       }
 
       await createTrialSubscriptionInTransaction(tx, barbershop.id);
+      await bootstrapFinancialPlan(tx, barbershop.id);
 
       return { user, barbershop };
     });
@@ -253,7 +255,7 @@ export async function POST(request: Request) {
       },
       { status: 201 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Erro no cadastro de barbearia:", error);
     return NextResponse.json(
       { error: "Erro interno no servidor ao realizar o cadastro." },

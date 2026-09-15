@@ -13,7 +13,10 @@ const { prismaMock } = vi.hoisted(() => ({
     workingHour: { create: vi.fn() },
     plan: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     tenantSubscription: { upsert: vi.fn() },
+    financialCategory: { findMany: vi.fn(), create: vi.fn() },
+    financialCategorySystemMapping: { findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn(),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(1),
   },
 }));
 
@@ -60,7 +63,7 @@ describe("cadastro publico de barbearia", () => {
       isActive: true,
     }]);
     prismaMock.tenantSubscription.upsert.mockResolvedValue({ id: "subscription-1", status: "TRIAL" });
-    prismaMock.$transaction.mockImplementation((callback: any) =>
+    prismaMock.$transaction.mockImplementation((callback: (tx: typeof prismaMock) => unknown) =>
       callback(prismaMock)
     );
     prismaMock.user.create.mockResolvedValue({ id: "user-1", name: "Proprietário" });
@@ -70,6 +73,12 @@ describe("cadastro publico de barbearia", () => {
     prismaMock.service.create.mockResolvedValue({ id: "service-1" });
     prismaMock.barberService.create.mockResolvedValue({ id: "barber-service-1" });
     prismaMock.workingHour.create.mockResolvedValue({ id: "working-hour-1" });
+    prismaMock.financialCategory.findMany.mockResolvedValue([]);
+    prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: `fin-cat-${Math.random()}`, ...args.data })
+    );
+    prismaMock.financialCategorySystemMapping.findMany.mockResolvedValue([]);
+    prismaMock.financialCategorySystemMapping.create.mockResolvedValue({ id: "mapping-1" });
   });
 
   it("exige todos os campos obrigatorios", async () => {
