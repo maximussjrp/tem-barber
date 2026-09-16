@@ -1,0 +1,18 @@
+[Unit]
+Description=Tem Barber Financial Routines Generation
+Wants=network-online.target
+After=network-online.target docker.service
+StartLimitIntervalSec=1800
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+LoadCredential=d2b-job-secret.env:/etc/tem-barber/d2b-job-secret.env
+ExecStart=/usr/local/libexec/tem-barber-financial-routines-trigger
+TimeoutStartSec=620
+Restart=on-failure
+RestartSec=300
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

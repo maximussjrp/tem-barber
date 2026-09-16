@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Tem Barber Financial Routines Generation daily
+
+[Timer]
+OnCalendar=*-*-* 06,10,14,18,22:00:00 America/Sao_Paulo
+RandomizedDelaySec=60
+Persistent=true
+AccuracySec=1s
+Unit=tem-barber-financial-routines.service
+
+[Install]
+WantedBy=timers.target
