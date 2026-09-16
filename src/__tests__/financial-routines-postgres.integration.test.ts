@@ -1,12 +1,51 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
-import {
-  createFinancialRoutine,
-  generateRoutineOccurrencesForMonth,
-} from "@/lib/financial/routines";
 
-const canRunPostgres = Boolean(process.env.DATABASE_URL || process.env.TEST_DATABASE_URL);
+type PrismaInstance = typeof import("@/lib/prisma").default;
+type RoutinesModule = typeof import("@/lib/financial/routines");
+
+let prisma: PrismaInstance;
+let createFinancialRoutine: RoutinesModule["createFinancialRoutine"];
+let generateRoutineOccurrencesForMonth: RoutinesModule["generateRoutineOccurrencesForMonth"];
+
+export function assertSafeTestDatabaseUrl(urlStr: string): { host: string; port: string; dbName: string } {
+  if (!urlStr) {
+    throw new Error("[POSTGRES_SAFETY_GUARD] TEST_DATABASE_URL is missing.");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    throw new Error("[POSTGRES_SAFETY_GUARD] TEST_DATABASE_URL is not a valid URL.");
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const dbName = parsed.pathname.replace(/^\//, "").toLowerCase();
+
+  const forbiddenSubstrings = ["prod", "production", "app.tembarber.com.br", "49.13.217.235"];
+  for (const forbidden of forbiddenSubstrings) {
+    if (urlStr.toLowerCase().includes(forbidden)) {
+      throw new Error(`[POSTGRES_SAFETY_GUARD] TEST_DATABASE_URL contains forbidden string "${forbidden}". Rejecting execution.`);
+    }
+  }
+
+  if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+    throw new Error(`[POSTGRES_SAFETY_GUARD] Hostname "${hostname}" is not localhost or 127.0.0.1. Rejecting execution.`);
+  }
+
+  if (!dbName.includes("test")) {
+    throw new Error(`[POSTGRES_SAFETY_GUARD] Database name "${dbName}" does not contain "test". Rejecting execution.`);
+  }
+
+  return {
+    host: hostname,
+    port: parsed.port || "5432",
+    dbName,
+  };
+}
+
+const canRunPostgres = Boolean(process.env.TEST_DATABASE_URL);
 const describeIf = canRunPostgres ? describe : describe.skip;
 
 describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", () => {
@@ -16,99 +55,167 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   let userB: string;
   let categoryPayableA: string;
   let categoryPayableB: string;
+  let originalDatabaseUrl: string | undefined;
+  let hadOriginalPrismaGlobal = false;
+  let originalPrismaGlobal: unknown;
 
   beforeAll(async () => {
-    try {
-      const uA = await prisma.user.create({
-        data: {
-          name: "Owner Tenant A",
-          phone: `+55119${Math.floor(10000000 + Math.random() * 90000000)}`,
-          email: `owner.a.${Date.now()}@test.com`,
-          role: "USER",
-        },
-      });
-      userA = uA.id;
+    originalDatabaseUrl = process.env.DATABASE_URL;
+    hadOriginalPrismaGlobal = Object.prototype.hasOwnProperty.call(globalThis, "prismaGlobal");
+    originalPrismaGlobal = (globalThis as typeof globalThis & { prismaGlobal?: unknown }).prismaGlobal;
 
-      const uB = await prisma.user.create({
-        data: {
-          name: "Owner Tenant B",
-          phone: `+55119${Math.floor(10000000 + Math.random() * 90000000)}`,
-          email: `owner.b.${Date.now()}@test.com`,
-          role: "USER",
-        },
-      });
-      userB = uB.id;
+    const rawUrl = process.env.TEST_DATABASE_URL;
+    if (!rawUrl) {
+      throw new Error("[POSTGRES_HARNESS] TEST_DATABASE_URL is missing in beforeAll.");
+    }
 
-      const sA = await prisma.barbershop.create({
-        data: {
-          name: "Barbearia A",
-          slug: `barbearia-a-${Date.now()}`,
-          phone: "11999990001",
-          zipCode: "01000-000",
-          street: "Rua A",
-          number: "10",
-          neighborhood: "Centro",
-          city: "São Paulo",
-          state: "SP",
-        },
-      });
-      shopA = sA.id;
+    const { dbName: expectedDbName } = assertSafeTestDatabaseUrl(rawUrl);
 
-      const sB = await prisma.barbershop.create({
-        data: {
-          name: "Barbearia B",
-          slug: `barbearia-b-${Date.now()}`,
-          phone: "11999990002",
-          zipCode: "02000-000",
-          street: "Rua B",
-          number: "20",
-          neighborhood: "Centro",
-          city: "São Paulo",
-          state: "SP",
-        },
-      });
-      shopB = sB.id;
+    process.env.DATABASE_URL = rawUrl;
 
-      const catA = await prisma.financialCategory.create({
-        data: {
-          barbershopId: shopA,
-          code: "2.1.01",
-          name: "Aluguel A",
-          classification: "FIXED_EXPENSE",
-          isActive: true,
-        },
-      });
-      categoryPayableA = catA.id;
+    delete (globalThis as typeof globalThis & { prismaGlobal?: unknown }).prismaGlobal;
+    vi.resetModules();
 
-      const catB = await prisma.financialCategory.create({
-        data: {
-          barbershopId: shopB,
-          code: "2.1.01",
-          name: "Aluguel B",
-          classification: "FIXED_EXPENSE",
-          isActive: true,
-        },
-      });
-      categoryPayableB = catB.id;
+    const prismaModule = await import("@/lib/prisma");
+    prisma = prismaModule.default;
 
-      try {
-        await prisma.$executeRaw`ALTER TABLE "financial_titles" ADD CONSTRAINT "chk_financial_titles_original_amount" CHECK ("original_amount" > 0);`;
-      } catch {}
-    } catch {}
+    const routinesModule = await import("@/lib/financial/routines");
+    createFinancialRoutine = routinesModule.createFinancialRoutine;
+    generateRoutineOccurrencesForMonth = routinesModule.generateRoutineOccurrencesForMonth;
+
+    const identityResult = await prisma.$queryRaw<Array<{ current_database: string; server_addr: string | null; server_port: number | null }>>`
+      SELECT current_database(), inet_server_addr()::text as server_addr, inet_server_port() as server_port;
+    `;
+    const connectedDb = identityResult[0]?.current_database;
+    if (!connectedDb || connectedDb.toLowerCase() !== expectedDbName.toLowerCase()) {
+      throw new Error(`[POSTGRES_HARNESS] Connected database "${connectedDb}" does not match expected database "${expectedDbName}". FAILED.`);
+    }
+
+    const serverAddr = identityResult[0]?.server_addr;
+    if (serverAddr) {
+      const cleanAddr = serverAddr.split("/")[0].trim().toLowerCase();
+      const isLocalOrDocker =
+        ["127.0.0.1", "::1", "localhost"].includes(cleanAddr) ||
+        cleanAddr.startsWith("172.") ||
+        cleanAddr.startsWith("10.") ||
+        cleanAddr.startsWith("192.168.") ||
+        cleanAddr.startsWith("127.");
+      if (!isLocalOrDocker) {
+        throw new Error(`[POSTGRES_HARNESS] Server address "${serverAddr}" is non-local public IP. FAILED.`);
+      }
+    }
+
+    const constraintCheck = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int as count FROM pg_constraint WHERE conname = 'chk_financial_titles_original_amount';
+    `;
+    if (Number(constraintCheck[0]?.count ?? 0) === 0) {
+      throw new Error("[POSTGRES_HARNESS] Constraint chk_financial_titles_original_amount is missing in test database. FAILED.");
+    }
+
+    const indexCheck = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int as count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'financial_titles_barbershop_routine_reference_month_uidx';
+    `;
+    if (Number(indexCheck[0]?.count ?? 0) === 0) {
+      throw new Error("[POSTGRES_HARNESS] Index financial_titles_barbershop_routine_reference_month_uidx is missing in test database. FAILED.");
+    }
+
+    const uA = await prisma.user.create({
+      data: {
+        name: "Owner Tenant A",
+        phone: `+55119${Math.floor(10000000 + Math.random() * 90000000)}`,
+        email: `owner.a.${Date.now()}@test.com`,
+        role: "USER",
+      },
+    });
+    userA = uA.id;
+
+    const uB = await prisma.user.create({
+      data: {
+        name: "Owner Tenant B",
+        phone: `+55119${Math.floor(10000000 + Math.random() * 90000000)}`,
+        email: `owner.b.${Date.now()}@test.com`,
+        role: "USER",
+      },
+    });
+    userB = uB.id;
+
+    const sA = await prisma.barbershop.create({
+      data: {
+        name: "Barbearia A",
+        slug: `barbearia-a-${Date.now()}`,
+        phone: "11999990001",
+        zipCode: "01000-000",
+        street: "Rua A",
+        number: "10",
+        neighborhood: "Centro",
+        city: "São Paulo",
+        state: "SP",
+      },
+    });
+    shopA = sA.id;
+
+    const sB = await prisma.barbershop.create({
+      data: {
+        name: "Barbearia B",
+        slug: `barbearia-b-${Date.now()}`,
+        phone: "11999990002",
+        zipCode: "02000-000",
+        street: "Rua B",
+        number: "20",
+        neighborhood: "Centro",
+        city: "São Paulo",
+        state: "SP",
+      },
+    });
+    shopB = sB.id;
+
+    const catA = await prisma.financialCategory.create({
+      data: {
+        barbershopId: shopA,
+        code: "2.1.01",
+        name: "Aluguel A",
+        classification: "FIXED_EXPENSE",
+        isActive: true,
+      },
+    });
+    categoryPayableA = catA.id;
+
+    const catB = await prisma.financialCategory.create({
+      data: {
+        barbershopId: shopB,
+        code: "2.1.01",
+        name: "Aluguel B",
+        classification: "FIXED_EXPENSE",
+        isActive: true,
+      },
+    });
+    categoryPayableB = catB.id;
   });
 
   afterAll(async () => {
     try {
-      if (shopA) await prisma.barbershop.delete({ where: { id: shopA } }).catch(() => {});
-      if (shopB) await prisma.barbershop.delete({ where: { id: shopB } }).catch(() => {});
-      if (userA) await prisma.user.delete({ where: { id: userA } }).catch(() => {});
-      if (userB) await prisma.user.delete({ where: { id: userB } }).catch(() => {});
-    } catch {}
+      if (process.env.TEST_DATABASE_URL && prisma) {
+        if (shopA) await prisma.barbershop.delete({ where: { id: shopA } });
+        if (shopB) await prisma.barbershop.delete({ where: { id: shopB } });
+        if (userA) await prisma.user.delete({ where: { id: userA } });
+        if (userB) await prisma.user.delete({ where: { id: userB } });
+        await prisma.$disconnect();
+      }
+    } finally {
+      delete (globalThis as typeof globalThis & { prismaGlobal?: unknown }).prismaGlobal;
+      if (hadOriginalPrismaGlobal) {
+        (globalThis as typeof globalThis & { prismaGlobal?: unknown }).prismaGlobal = originalPrismaGlobal;
+      }
+      if (originalDatabaseUrl !== undefined) {
+        process.env.DATABASE_URL = originalDatabaseUrl;
+      } else {
+        delete process.env.DATABASE_URL;
+      }
+      vi.resetModules();
+    }
   });
 
   it("1. Partial unique index prevents duplicate titles for same routine + referenceMonth in DB", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -133,7 +240,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
     expect(out1.results[0].status).toBe("GENERATED");
     const titleId1 = out1.results[0].titleId!;
 
-    // Second call for same month
     const out2 = await generateRoutineOccurrencesForMonth({
       barbershopId: shopA,
       referenceMonth: "2026-10",
@@ -146,7 +252,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
     expect(out2.results[0].status).toBe("REPLAYED");
     expect(out2.results[0].titleId).toBe(titleId1);
 
-    // Verify only ONE title and ONE event exist in DB
     const titlesCount = await prisma.financialTitle.count({
       where: { barbershopId: shopA, routineId: routine.id, referenceMonth: "2026-10" },
     });
@@ -159,8 +264,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("2. Real concurrent executions for same routine produce only 1 title (P2002 / lock handling)", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -210,8 +313,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("3. Cancelled title continues to block new generation (returns REPLAYED)", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -232,13 +333,11 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
     });
     const titleId = out1.results[0].titleId!;
 
-    // Cancel the title
     await prisma.financialTitle.update({
       where: { id_barbershopId: { id: titleId, barbershopId: shopA } },
       data: { cancelledAt: new Date(), cancelReason: "Cancelado para teste" },
     });
 
-    // Run generation again for same month
     const out2 = await generateRoutineOccurrencesForMonth({
       barbershopId: shopA,
       referenceMonth: "2026-10",
@@ -251,8 +350,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("4. Tenant A generation does not interfere with Tenant B", async () => {
-    if (!shopA || !shopB) return;
-
     const routineA = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -299,8 +396,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("5. Routine domain creation enforces dueDay validation", async () => {
-    if (!shopA) return;
-
     await expect(
       createFinancialRoutine({
         barbershopId: shopA,
@@ -317,8 +412,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("6. Real PATCH x GENERATE concurrency: GENERATE waits for PATCH row lock release and sees updated baseAmount", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -334,12 +427,10 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
     let patchLockAcquired = false;
     let patchCommitted = false;
 
-    // Concurrently start PATCH tx holding row lock
     const patchTxPromise = prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT 1 FROM financial_routines WHERE id = ${routine.id} AND barbershop_id = ${shopA} FOR UPDATE;`;
       patchLockAcquired = true;
 
-      // Simulate work under lock before updating
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       await tx.financialRoutine.update({
@@ -349,12 +440,10 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
       patchCommitted = true;
     });
 
-    // Wait until PATCH transaction has acquired the lock
     while (!patchLockAcquired) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
-    // Now trigger GENERATE concurrently while PATCH tx still holds the lock
     const generatePromise = generateRoutineOccurrencesForMonth({
       barbershopId: shopA,
       referenceMonth: "2026-12",
@@ -377,8 +466,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("7. Atomic rollback: FinancialTitleEvent creation failure causes transaction rollback of created title", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -391,7 +478,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
       startDate: "2026-01-01",
     });
 
-    // Attempt a transaction where title create succeeds, but event create fails due to DB FK constraint (invalid titleId)
     await expect(
       prisma.$transaction(async (tx) => {
         const title = await tx.financialTitle.create({
@@ -411,7 +497,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
 
         expect(title.id).toBeDefined();
 
-        // Attempting to create event with a non-existent titleId (violates FK constraint)
         await tx.financialTitleEvent.create({
           data: {
             barbershopId: shopA,
@@ -424,7 +509,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
       })
     ).rejects.toThrow();
 
-    // Confirm that BOTH title and event DO NOT exist outside transaction
     const titlesCount = await prisma.financialTitle.count({
       where: { barbershopId: shopA, routineId: routine.id, referenceMonth: "2026-11" },
     });
@@ -437,8 +521,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("8. PostgreSQL originalAmount CHECK constraint rejects originalAmount <= 0", async () => {
-    if (!shopA) return;
-
     const routine = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
@@ -475,8 +557,6 @@ describeIf("Phase 4 — Financial Routines Real PostgreSQL Integration Tests", (
   });
 
   it("9. Cross-tenant isolation: Tenant B cannot access or modify Tenant A routine", async () => {
-    if (!shopA || !shopB) return;
-
     const routineA = await createFinancialRoutine({
       barbershopId: shopA,
       createdById: userA,
