@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOperationalSession } from "@/lib/api-auth";
+import { requireFinancialSession } from "@/lib/financial/permissions";
 import { toCents } from "@/lib/operations/money";
 import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
@@ -20,7 +20,7 @@ function isValidDateString(str: string): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  const { error, data } = await requireOperationalSession();
+  const { error, data } = await requireFinancialSession();
   if (error) return error;
 
   const barbershopId = data!.barbershopId;
@@ -120,17 +120,36 @@ export async function GET(request: NextRequest) {
         },
       }),
 
-      // Manual and club entries in period (advances/payouts excluded)
+      // Manual, club and title entries in period
       prisma.financialEntry.findMany({
         where: {
           barbershopId,
           entryDate: { gte: start, lt: endExclusive },
           type: { in: ["MANUAL_IN", "MANUAL_OUT", "CLUB_REVENUE"] },
         },
+        include: {
+          financialSettlement: {
+            select: {
+              title: {
+                select: { kind: true },
+              },
+            },
+          },
+          financialSettlementReversal: {
+            select: {
+              settlement: {
+                select: {
+                  title: {
+                    select: { kind: true },
+                  },
+                },
+              },
+            },
+          },
+        },
       }),
 
-      // Commission accrued labor delta in period:
-      // SUM(RELEASE) - SUM(REVERSAL where !isHistoricalCorrection)
+      // Commission accrued labor delta in period
       prisma.commissionPayableItem
         ? prisma.commissionPayableItem.findMany({
             where: {
@@ -147,7 +166,7 @@ export async function GET(request: NextRequest) {
           })
         : Promise.resolve([]),
 
-      // True manual remuneration cycle adjustments (excluding routing companion adjustments)
+      // True manual remuneration cycle adjustments
       prisma.commissionCycleAdjustment
         ? prisma.commissionCycleAdjustment.findMany({
             where: {
@@ -307,18 +326,45 @@ export async function GET(request: NextRequest) {
       count: data.count,
     }));
 
-    // 4. Manual and club entries
-    const manualIncomeCents = financialEntries
-      .filter((entry) => entry.type === "MANUAL_IN")
-      .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
-    const manualExpenseCents = financialEntries
-      .filter((entry) => entry.type === "MANUAL_OUT")
-      .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
-    const clubRevenueCents = financialEntries
-      .filter((entry) => entry.type === "CLUB_REVENUE")
-      .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
-    const totalExpensesCents = manualExpenseCents;
-    const totalReceivedCents = commandReceivedCents + manualIncomeCents + clubRevenueCents;
+    // 4. Manual, club and title entries classification
+    let manualIncomeCents = 0;
+    let manualExpenseCents = 0;
+    let clubRevenueCents = 0;
+    let titleReceivableCashNetCents = 0;
+    let titlePayableExpenseNetCents = 0;
+
+    for (const entry of financialEntries) {
+      const isTitleSettlement = entry.financialSettlementId !== null;
+      const isTitleReversal = entry.financialSettlementReversalId !== null;
+      const amtCents = toCents(entry.amount);
+
+      if (!isTitleSettlement && !isTitleReversal) {
+        if (entry.type === "MANUAL_IN") {
+          manualIncomeCents += Math.max(0, amtCents);
+        } else if (entry.type === "MANUAL_OUT") {
+          manualExpenseCents += Math.abs(amtCents);
+        } else if (entry.type === "CLUB_REVENUE") {
+          clubRevenueCents += Math.max(0, amtCents);
+        }
+      } else {
+        let titleKind: "RECEIVABLE" | "PAYABLE" | null = null;
+        if (isTitleSettlement && entry.financialSettlement) {
+          titleKind = entry.financialSettlement.title.kind;
+        } else if (isTitleReversal && entry.financialSettlementReversal) {
+          titleKind = entry.financialSettlementReversal.settlement.title.kind;
+        }
+
+        if (titleKind === "RECEIVABLE") {
+          titleReceivableCashNetCents += amtCents;
+        } else if (titleKind === "PAYABLE") {
+          titlePayableExpenseNetCents += -amtCents;
+        }
+      }
+    }
+
+    const totalExpensesCents = manualExpenseCents + titlePayableExpenseNetCents;
+    const totalReceivedCents =
+      commandReceivedCents + manualIncomeCents + clubRevenueCents + titleReceivableCashNetCents;
 
     // 5. Commissions (Accrued Labor Delta: RELEASE - REVERSAL + manual CREDIT - manual DEBIT)
     let releasedCommissionsCents = 0;
@@ -397,6 +443,8 @@ export async function GET(request: NextRequest) {
         manualIncome: money(manualIncomeCents),
         manualExpenses: money(manualExpenseCents),
         clubRevenue: money(clubRevenueCents),
+        titleReceivableCashNet: money(titleReceivableCashNetCents),
+        titlePayableExpenseNet: money(titlePayableExpenseNetCents),
         totalReceived: money(totalReceivedCents),
         totalReceivable: money(totalReceivableCents),
         totalExpenses: money(totalExpensesCents),

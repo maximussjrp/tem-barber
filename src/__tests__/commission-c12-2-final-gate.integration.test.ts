@@ -13,6 +13,7 @@ import {
 import { NextRequest } from "next/server";
 import prismaDefault from "@/lib/prisma";
 import { requireOperationalSession } from "@/lib/api-auth";
+import { requireFinancialSession } from "@/lib/financial/permissions";
 import { GET as getFinancialSummary } from "@/app/api/admin/financial/summary/route";
 import { addServiceItem, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { closeComanda, refundPayment, registerPayment } from "@/lib/operations/payments";
@@ -36,6 +37,14 @@ vi.mock("@/lib/api-auth", async () => {
   };
 });
 
+vi.mock("@/lib/financial/permissions", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/financial/permissions")>("@/lib/financial/permissions");
+  return {
+    ...actual,
+    requireFinancialSession: vi.fn(),
+  };
+});
+
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const canRunIntegration = (() => {
   if (!testDatabaseUrl) return false;
@@ -51,6 +60,7 @@ const describeIf = canRunIntegration ? describe : describe.skip;
 
 let prisma: PrismaClient;
 const mockedRequireOperationalSession = vi.mocked(requireOperationalSession);
+const mockedRequireFinancialSession = vi.mocked(requireFinancialSession);
 
 async function truncateDatabase() {
   await prisma.$executeRawUnsafe(`
@@ -186,6 +196,10 @@ function summaryRequest(date: string) {
 
 async function readCommissionExpense(barbershopId: string, userId: string) {
   mockedRequireOperationalSession.mockResolvedValue({
+    error: null,
+    data: { userId, role: "OWNER", memberId: "owner-member", barbershopId },
+  } as any);
+  mockedRequireFinancialSession.mockResolvedValue({
     error: null,
     data: { userId, role: "OWNER", memberId: "owner-member", barbershopId },
   } as any);

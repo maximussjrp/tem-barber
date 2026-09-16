@@ -2,9 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOperationalSession } from "@/lib/operations/permissions";
 import { toCents } from "@/lib/operations/money";
+import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
 function money(value: number) {
   return Number((value / 100).toFixed(2));
+}
+
+function isValidDateString(str: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [y, m, d] = str.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -19,19 +31,24 @@ export async function GET(request: NextRequest) {
       { status: 403 }
     );
   }
-  const date = request.nextUrl.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
-  const [y, m, d] = date.split("-").map(Number);
-  const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
-  const end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+
+  const dateParam = request.nextUrl.searchParams.get("date");
+  const dateStr =
+    dateParam && isValidDateString(dateParam)
+      ? dateParam
+      : new Date().toISOString().slice(0, 10);
+
+  const start = localDateToUTCBoundary(dateStr);
+  const endExclusive = localDateToUTCBoundary(shiftDateISO(dateStr, 1));
 
   const [payments, entries, commandCounts, receivables] = await Promise.all([
     prisma.payment.findMany({
-      where: { barbershopId: data!.barbershopId, paidAt: { gte: start, lte: end } },
+      where: { barbershopId: data!.barbershopId, paidAt: { gte: start, lt: endExclusive } },
     }),
     prisma.financialEntry.findMany({
       where: {
         barbershopId: data!.barbershopId,
-        entryDate: { gte: start, lte: end },
+        entryDate: { gte: start, lt: endExclusive },
         type: {
           in: [
             "MANUAL_IN",
@@ -42,11 +59,31 @@ export async function GET(request: NextRequest) {
           ],
         },
       },
+      include: {
+        financialSettlement: {
+          select: {
+            title: {
+              select: { kind: true },
+            },
+          },
+        },
+        financialSettlementReversal: {
+          select: {
+            settlement: {
+              select: {
+                title: {
+                  select: { kind: true },
+                },
+              },
+            },
+          },
+        },
+      },
       orderBy: { entryDate: "desc" },
     }),
     prisma.comanda.groupBy({
       by: ["status"],
-      where: { barbershopId: data!.barbershopId, openedAt: { gte: start, lte: end } },
+      where: { barbershopId: data!.barbershopId, openedAt: { gte: start, lt: endExclusive } },
       _count: { _all: true },
     }),
     prisma.comanda.aggregate({
@@ -65,22 +102,46 @@ export async function GET(request: NextRequest) {
     else byMethod[payment.method] += toCents(payment.amount);
   }
 
-  const manualIn = entries
-    .filter((entry) => entry.type === "MANUAL_IN")
-    .reduce((sum, entry) => sum + toCents(entry.amount), 0);
-  const manualOut = entries
-    .filter((entry) => entry.type === "MANUAL_OUT")
-    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
+  let manualIn = 0;
+  let manualOut = 0;
+  let commissionAdvanceOut = 0;
+  let commissionPayoutOut = 0;
+  let commissionAdvanceReversalIn = 0;
+  let titleReceivableCashNetCents = 0;
+  let titlePayableExpenseNetCents = 0;
 
-  const commissionAdvanceOut = entries
-    .filter((entry) => entry.type === "COMMISSION_ADVANCE")
-    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
-  const commissionPayoutOut = entries
-    .filter((entry) => entry.type === "COMMISSION_PAYOUT")
-    .reduce((sum, entry) => sum + Math.abs(toCents(entry.amount)), 0);
-  const commissionAdvanceReversalIn = entries
-    .filter((entry) => entry.type === "COMMISSION_ADVANCE_REVERSAL")
-    .reduce((sum, entry) => sum + Math.max(0, toCents(entry.amount)), 0);
+  for (const entry of entries) {
+    const isTitleSettlement = entry.financialSettlementId !== null;
+    const isTitleReversal = entry.financialSettlementReversalId !== null;
+    const amtCents = toCents(entry.amount);
+
+    if (!isTitleSettlement && !isTitleReversal) {
+      if (entry.type === "MANUAL_IN") {
+        manualIn += Math.max(0, amtCents);
+      } else if (entry.type === "MANUAL_OUT") {
+        manualOut += Math.abs(amtCents);
+      } else if (entry.type === "COMMISSION_ADVANCE") {
+        commissionAdvanceOut += Math.abs(amtCents);
+      } else if (entry.type === "COMMISSION_PAYOUT") {
+        commissionPayoutOut += Math.abs(amtCents);
+      } else if (entry.type === "COMMISSION_ADVANCE_REVERSAL") {
+        commissionAdvanceReversalIn += Math.max(0, amtCents);
+      }
+    } else {
+      let titleKind: "RECEIVABLE" | "PAYABLE" | null = null;
+      if (isTitleSettlement && entry.financialSettlement) {
+        titleKind = entry.financialSettlement.title.kind;
+      } else if (isTitleReversal && entry.financialSettlementReversal) {
+        titleKind = entry.financialSettlementReversal.settlement.title.kind;
+      }
+
+      if (titleKind === "RECEIVABLE") {
+        titleReceivableCashNetCents += amtCents;
+      } else if (titleKind === "PAYABLE") {
+        titlePayableExpenseNetCents += -amtCents;
+      }
+    }
+  }
 
   const totalReceived = Object.values(byMethod).reduce((sum, value) => sum + value, 0);
   const counts = Object.fromEntries(commandCounts.map((row) => [row.status, row._count._all]));
@@ -88,8 +149,10 @@ export async function GET(request: NextRequest) {
   const netCents =
     totalReceived +
     manualIn +
+    titleReceivableCashNetCents +
     commissionAdvanceReversalIn -
     manualOut -
+    titlePayableExpenseNetCents -
     commissionAdvanceOut -
     commissionPayoutOut -
     refunds;
@@ -104,19 +167,37 @@ export async function GET(request: NextRequest) {
       amount: money(Math.abs(toCents(p.amount))),
       status: p.status,
     })),
-    ...entries.map((e) => ({
-      id: e.id,
-      time: e.entryDate,
-      description: e.description,
-      type: e.type,
-      method: "FINANCIAL",
-      amount: money(Math.abs(toCents(e.amount))),
-      status: "CONFIRMED",
-    })),
+    ...entries.map((e) => {
+      let movementType: string = e.type;
+      const isSettlement = e.financialSettlementId !== null;
+      const isReversal = e.financialSettlementReversalId !== null;
+
+      if (isSettlement && e.financialSettlement) {
+        movementType =
+          e.financialSettlement.title.kind === "RECEIVABLE"
+            ? "TITLE_RECEIVABLE_SETTLEMENT"
+            : "TITLE_PAYABLE_SETTLEMENT";
+      } else if (isReversal && e.financialSettlementReversal) {
+        movementType =
+          e.financialSettlementReversal.settlement.title.kind === "RECEIVABLE"
+            ? "TITLE_RECEIVABLE_REVERSAL"
+            : "TITLE_PAYABLE_REVERSAL";
+      }
+
+      return {
+        id: e.id,
+        time: e.entryDate,
+        description: e.description,
+        type: movementType,
+        method: "FINANCIAL",
+        amount: money(Math.abs(toCents(e.amount))),
+        status: "CONFIRMED",
+      };
+    }),
   ].sort((a, b) => b.time.getTime() - a.time.getTime());
 
   return NextResponse.json({
-    date,
+    date: dateStr,
     totalReceived: money(totalReceived),
     cash: money(byMethod.CASH),
     pix: money(byMethod.PIX),
@@ -126,6 +207,8 @@ export async function GET(request: NextRequest) {
     refunds: money(refunds),
     manualIn: money(manualIn),
     manualOut: money(manualOut),
+    titleReceivableCashNet: money(titleReceivableCashNetCents),
+    titlePayableExpenseNet: money(titlePayableExpenseNetCents),
     commissionAdvanceOut: money(commissionAdvanceOut),
     commissionPayoutOut: money(commissionPayoutOut),
     commissionAdvanceReversalIn: money(commissionAdvanceReversalIn),

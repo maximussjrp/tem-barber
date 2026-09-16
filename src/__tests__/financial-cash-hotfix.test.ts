@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 const { prismaMock, sessionMock, getCurrentCashSessionMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -88,5 +90,57 @@ describe("financial and cash data minimization", () => {
       expectedAmount: "250.00",
       movements: expect.any(Array),
     });
+  });
+
+  it("separates title cash movements from manual entries in daily summary", async () => {
+    sessionMock.mockResolvedValue(session("OWNER"));
+
+    prismaMock.financialEntry.findMany.mockResolvedValue([
+      {
+        id: "e1",
+        entryDate: new Date("2026-08-25T10:00:00Z"),
+        description: "Lançamento Manual",
+        type: "MANUAL_IN",
+        amount: new Prisma.Decimal("50.00"),
+        financialSettlementId: null,
+        financialSettlementReversalId: null,
+      },
+      {
+        id: "e2",
+        entryDate: new Date("2026-08-25T11:00:00Z"),
+        description: "Liquidação de RECEIVABLE",
+        type: "MANUAL_IN",
+        amount: new Prisma.Decimal("100.00"),
+        financialSettlementId: "set-1",
+        financialSettlementReversalId: null,
+        financialSettlement: { title: { kind: "RECEIVABLE" } },
+      },
+      {
+        id: "e3",
+        entryDate: new Date("2026-08-25T12:00:00Z"),
+        description: "Estorno de RECEIVABLE",
+        type: "MANUAL_OUT",
+        amount: new Prisma.Decimal("-100.00"),
+        financialSettlementId: null,
+        financialSettlementReversalId: "rev-1",
+        financialSettlementReversal: { settlement: { title: { kind: "RECEIVABLE" } } },
+      },
+    ]);
+
+    const response = await dailySummary(
+      new NextRequest("http://localhost/api/admin/financial/daily-summary?date=2026-08-25")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.manualIn).toBe(50);
+    expect(body.titleReceivableCashNet).toBe(0);
+    expect(body.titlePayableExpenseNet).toBe(0);
+
+    const m2 = body.movements.find((m: any) => m.id === "e2");
+    expect(m2.type).toBe("TITLE_RECEIVABLE_SETTLEMENT");
+
+    const m3 = body.movements.find((m: any) => m.id === "e3");
+    expect(m3.type).toBe("TITLE_RECEIVABLE_REVERSAL");
   });
 });
