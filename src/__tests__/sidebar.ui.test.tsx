@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { AdminSidebar } from "../components/admin/Sidebar";
 import { MemberNav } from "../components/member/MemberNav";
@@ -137,6 +137,122 @@ describe("Sidebar Logo Fallback", () => {
     );
 
     expect(screen.queryByText("Marketing")).toBeNull();
+  });
+
+  it("exibe Financeiro com subitens (Visão Geral, Contas a Pagar / Receber, Configurações) para OWNER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Admin"
+        userRole="OWNER"
+      />
+    );
+
+    const financeiroButtons = screen.getAllByText("Financeiro");
+    expect(financeiroButtons.length).toBeGreaterThan(0);
+    fireEvent.click(financeiroButtons[0]);
+
+    expect(screen.getAllByText("Visão Geral").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Contas a Pagar / Receber").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Configurações").length).toBeGreaterThan(0);
+
+    const overviewLink = screen.getByRole("link", { name: "Visão Geral" });
+    expect(overviewLink).toHaveAttribute("href", "/admin/financeiro");
+
+    const contasLink = screen.getByRole("link", { name: "Contas a Pagar / Receber" });
+    expect(contasLink).toHaveAttribute("href", "/admin/financeiro/contas");
+
+    const configLink = screen.getByRole("link", { name: "Configurações" });
+    expect(configLink).toHaveAttribute("href", "/admin/financeiro/configuracoes");
+  });
+
+  it("exibe Financeiro com subitens para MANAGER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Gerente"
+        userRole="MANAGER"
+      />
+    );
+
+    const financeiroButtons = screen.getAllByText("Financeiro");
+    expect(financeiroButtons.length).toBeGreaterThan(0);
+    fireEvent.click(financeiroButtons[0]);
+
+    expect(screen.getAllByText("Visão Geral").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Contas a Pagar / Receber").length).toBeGreaterThan(0);
+  });
+
+  it("exibe Financeiro com subitens (Visão Geral, Contas a Pagar / Receber, Configurações) para SUPER_ADMIN", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Super Admin"
+        userRole="SUPER_ADMIN"
+      />
+    );
+
+    const financeiroButtons = screen.getAllByText("Financeiro");
+    expect(financeiroButtons.length).toBeGreaterThan(0);
+    fireEvent.click(financeiroButtons[0]);
+
+    expect(screen.getAllByText("Visão Geral").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Contas a Pagar / Receber").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Configurações").length).toBeGreaterThan(0);
+
+    const overviewLink = screen.getByRole("link", { name: "Visão Geral" });
+    expect(overviewLink).toHaveAttribute("href", "/admin/financeiro");
+  });
+
+  it("exibe Financeiro e seus subitens no menu mobile (Sheet)", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Admin"
+        userRole="OWNER"
+      />
+    );
+
+    const openMenuBtn = screen.getByRole("button", { name: "Abrir menu" });
+    fireEvent.click(openMenuBtn);
+
+    const dialog = screen.getByRole("dialog");
+    const drawer = within(dialog);
+
+    const financeiroButtons = drawer.getAllByText("Financeiro");
+    expect(financeiroButtons.length).toBeGreaterThan(0);
+    fireEvent.click(financeiroButtons[0]);
+
+    const overviewLink = drawer.getByRole("link", { name: "Visão Geral" });
+    expect(overviewLink).toHaveAttribute("href", "/admin/financeiro");
+
+    const contasLink = drawer.getByRole("link", { name: "Contas a Pagar / Receber" });
+    expect(contasLink).toHaveAttribute("href", "/admin/financeiro/contas");
+
+    const configLink = drawer.getByRole("link", { name: "Configurações" });
+    expect(configLink).toHaveAttribute("href", "/admin/financeiro/configuracoes");
+  });
+
+  it("oculta Financeiro no sidebar para BARBER", () => {
+    render(
+      <AdminSidebar
+        barbershopName="Don Brio"
+        barbershopLogo=""
+        subtitle="Painel"
+        userName="Barbeiro"
+        userRole="BARBER"
+      />
+    );
+
+    expect(screen.queryByText("Financeiro")).toBeNull();
   });
 });
 

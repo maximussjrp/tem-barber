@@ -102,7 +102,29 @@ const navItems = [
   },
   { label: "Produtos",      href: "/admin/produtos",     icon: Icons.scissors,  children: [], ownerOnly: false },
   { label: "Caixa",         href: "/admin/caixa",        icon: Icons.dashboard, children: [], ownerOnly: false },
-  { label: "Financeiro",    href: "/admin/financeiro",   icon: Icons.dashboard, children: [], ownerOnly: false },
+  {
+    label: "Financeiro",
+    href: "/admin/financeiro",
+    icon: Icons.dashboard,
+    ownerOnly: true,
+    children: [
+      {
+        label: "Visão Geral",
+        href: "/admin/financeiro",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Contas a Pagar / Receber",
+        href: "/admin/financeiro/contas",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Configurações",
+        href: "/admin/financeiro/configuracoes",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+    ],
+  },
   {
     label: "Comissões",
     href: "/admin/comissoes",
