@@ -7,6 +7,8 @@ type Props = {
   busy: boolean;
   canManageDebt?: boolean;
   isClosedWithDebt?: boolean;
+  customerCreditBalance?: number;
+  canConsumeCredit?: boolean;
   onPay: (
     payments: { method: string; amount: string }[],
     options?: { closeWithDebt?: boolean; confirmOutstandingBalance?: boolean }
@@ -25,6 +27,8 @@ export function PaymentModal({
   busy,
   canManageDebt = false,
   isClosedWithDebt = false,
+  customerCreditBalance = 0,
+  canConsumeCredit = true,
   onPay,
   onClose,
 }: Props) {
@@ -47,6 +51,10 @@ export function PaymentModal({
 
   // Calculos para pagamento misto/único
   const mixedTotal = mixedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const mixedCreditTotal = mixedPayments
+    .filter((p) => p.method === "CUSTOMER_CREDIT")
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
   const appliedTotal = isMixed ? mixedTotal : amountNum;
   const outstanding = Math.max(0, remainingTotal - appliedTotal);
   const isPartialOrZero = outstanding > 0.009;
@@ -88,10 +96,18 @@ export function PaymentModal({
           alert("Valor recebido em dinheiro é menor que o valor a pagar.");
           return;
         }
+        if (singleMethod === "CUSTOMER_CREDIT" && amountNum > customerCreditBalance + 0.009) {
+          alert(`O valor (R$ ${amountNum.toFixed(2)}) excede o saldo de crédito disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
+          return;
+        }
         payload = [{ method: singleMethod, amount: amountNum.toFixed(2) }];
       } else {
         if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
           alert("Cada parcela deve ter um valor maior que zero.");
+          return;
+        }
+        if (mixedCreditTotal > customerCreditBalance + 0.009) {
+          alert(`O total pago em crédito do cliente (R$ ${mixedCreditTotal.toFixed(2)}) excede o saldo disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
           return;
         }
         payload = mixedPayments.map((p) => ({
@@ -117,6 +133,10 @@ export function PaymentModal({
         alert("Valor recebido em dinheiro é menor que o valor a pagar.");
         return;
       }
+      if (singleMethod === "CUSTOMER_CREDIT" && amountNum > customerCreditBalance + 0.009) {
+        alert(`O valor (R$ ${amountNum.toFixed(2)}) excede o saldo de crédito disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
+        return;
+      }
       if (isPartialOrZero && !canManageDebt) {
         alert("Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.");
         return;
@@ -135,6 +155,10 @@ export function PaymentModal({
       }
       if (appliedTotal > remainingTotal + 0.009) {
         alert(`A soma das parcelas (R$ ${mixedTotal.toFixed(2)}) excede o total restante (R$ ${remainingTotal.toFixed(2)}).`);
+        return;
+      }
+      if (mixedCreditTotal > customerCreditBalance + 0.009) {
+        alert(`O total pago em crédito do cliente (R$ ${mixedCreditTotal.toFixed(2)}) excede o saldo disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
         return;
       }
       if (isPartialOrZero && !canManageDebt) {
@@ -162,8 +186,13 @@ export function PaymentModal({
     return `Finalizar com R$ ${outstanding.toFixed(2)} em aberto`;
   }
 
+  const isCreditInvalid =
+    (!isMixed && singleMethod === "CUSTOMER_CREDIT" && (amountNum > customerCreditBalance + 0.009 || !canConsumeCredit)) ||
+    (isMixed && mixedCreditTotal > customerCreditBalance + 0.009);
+
   const isSubmitDisabled =
     busy ||
+    isCreditInvalid ||
     (!isClosedWithDebt && isPartialOrZero && (!canManageDebt || !confirmDebt)) ||
     (!isMixed && amountNum < 0) ||
     (!isMixed && amountNum > remainingTotal + 0.009) ||
@@ -244,10 +273,19 @@ export function PaymentModal({
                 >
                   <option value="PIX">Pix</option>
                   <option value="CREDIT">Cartão de Crédito</option>
+                  <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
                   <option value="DEBIT">Cartão de Débito</option>
                   <option value="CASH">Dinheiro</option>
                   <option value="OTHER">Outros</option>
                 </select>
+                {singleMethod === "CUSTOMER_CREDIT" && (
+                  <div className="text-xs mt-1 text.amber-400 font-medium">
+                    Saldo de crédito disponível: R$ {customerCreditBalance.toFixed(2)}
+                    {!canConsumeCredit && (
+                      <span className="text-[var(--danger)] block">Sem permissão para consumir crédito.</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -305,8 +343,9 @@ export function PaymentModal({
                       className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-[var(--text-primary)] focus:outline-none text-sm w-1/2"
                     >
                       <option value="PIX">Pix</option>
-                      <option value="CREDIT">Crédito</option>
-                      <option value="DEBIT">Débito</option>
+                      <option value="CREDIT">Cartão de Crédito</option>
+                      <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
+                      <option value="DEBIT">Cartão de Débito</option>
                       <option value="CASH">Dinheiro</option>
                       <option value="OTHER">Outros</option>
                     </select>

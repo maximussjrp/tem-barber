@@ -96,11 +96,21 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
-  const byMethod: Record<string, number> = { CASH: 0, PIX: 0, DEBIT: 0, CREDIT: 0, OTHER: 0 };
+  const byMethod: Record<string, number> = {
+    CASH: 0,
+    PIX: 0,
+    DEBIT: 0,
+    CREDIT: 0,
+    CUSTOMER_CREDIT: 0,
+    OTHER: 0,
+  };
   let refunds = 0;
   for (const payment of payments) {
     if (payment.status === "REFUNDED") refunds += Math.abs(toCents(payment.amount));
-    else byMethod[payment.method] += toCents(payment.amount);
+    else {
+      const m = byMethod[payment.method] !== undefined ? payment.method : "OTHER";
+      byMethod[m] += toCents(payment.amount);
+    }
   }
 
   let manualIn = 0;
@@ -144,7 +154,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const totalReceived = Object.values(byMethod).reduce((sum, value) => sum + value, 0);
+  const totalReceived =
+    byMethod.CASH + byMethod.PIX + byMethod.DEBIT + byMethod.CREDIT + byMethod.OTHER;
   const counts = Object.fromEntries(commandCounts.map((row) => [row.status, row._count._all]));
 
   const netCents =
@@ -204,6 +215,7 @@ export async function GET(request: NextRequest) {
     pix: money(byMethod.PIX),
     debit: money(byMethod.DEBIT),
     credit: money(byMethod.CREDIT),
+    customerCredit: money(byMethod.CUSTOMER_CREDIT),
     other: money(byMethod.OTHER),
     refunds: money(refunds),
     manualIn: money(manualIn),

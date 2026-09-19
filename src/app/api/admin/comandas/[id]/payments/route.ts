@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
-import { registerPayment } from "@/lib/operations/payments";
+import { registerPayment, payComandaWithCustomerCredit } from "@/lib/operations/payments";
 import { OperationalError } from "@/lib/operations/comandas";
 import {
   canManageComandas,
@@ -57,6 +57,17 @@ export async function POST(
       }
 
       const allowClosedDebtPayment = data!.role !== "BARBER";
+
+      if (body.method === "CUSTOMER_CREDIT") {
+        return payComandaWithCustomerCredit(tx, {
+          barbershopId: data!.barbershopId,
+          comandaId: id,
+          amount: body.amount!,
+          userId: data!.userId,
+          idempotencyKey,
+          allowClosedDebtPayment,
+        });
+      }
 
       return registerPayment(tx, {
         barbershopId: data!.barbershopId,

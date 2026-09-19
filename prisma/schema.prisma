@@ -71,6 +71,8 @@ model User {
   createdFinancialSettlements         FinancialSettlement[]               @relation("FinancialSettlementCreatedBy")
   createdFinancialSettlementReversals FinancialSettlementReversal[]       @relation("FinancialSettlementReversalCreatedBy")
   financialTitleEventsAsActor         FinancialTitleEvent[]               @relation("FinancialTitleEventActorUser")
+  customerCreditAccounts              CustomerCreditAccount[]
+  createdCustomerCreditEntries        CustomerCreditEntry[]               @relation("CustomerCreditEntryCreatedByUser")
 
   @@map("users")
 }
@@ -166,6 +168,8 @@ model Barbershop {
   financialSettlementReversals       FinancialSettlementReversal[]
   financialTitleEvents               FinancialTitleEvent[]
   financialEntryAllocations          FinancialEntryAllocation[]
+  customerCreditAccounts             CustomerCreditAccount[]
+  customerCreditEntries              CustomerCreditEntry[]
 
   @@map("barbershops")
 }
@@ -448,7 +452,8 @@ model CustomerBarbershopLink {
 
   barbershop         Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   customer           User       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  whatsappVerifiedBy User?      @relation("WhatsappVerifiedBy", fields: [whatsappVerifiedById], references: [id], onDelete: SetNull)
+  whatsappVerifiedBy User?                  @relation("WhatsappVerifiedBy", fields: [whatsappVerifiedById], references: [id], onDelete: SetNull)
+  creditAccount      CustomerCreditAccount?
 
   @@unique([barbershopId, customerId])
   @@index([barbershopId, customerId])
@@ -781,6 +786,7 @@ enum PaymentMethod {
   PIX
   DEBIT
   CREDIT
+  CUSTOMER_CREDIT
   OTHER
 }
 
@@ -2708,4 +2714,64 @@ model FinancialEntryAllocation {
   @@index([barbershopId, financialEntryId], map: "financial_entry_allocations_barbershop_id_financial_entry_id_id")
   @@index([barbershopId, financialCategoryId], map: "financial_entry_allocations_barbershop_id_financial_category_id")
   @@map("financial_entry_allocations")
+}
+
+// ----------------------------------------------------
+// 21. CRÉDITO DO CLIENTE (FASE 5B)
+// ----------------------------------------------------
+
+enum CreditEntryType {
+  CREDIT
+  DEBIT
+}
+
+enum CreditSourceKind {
+  OVERPAYMENT
+  MANUAL_GRANT
+  ADJUSTMENT
+  REFUND_TO_CREDIT
+  COMANDA_PAYMENT
+}
+
+model CustomerCreditAccount {
+  id           String   @id @default(uuid())
+  barbershopId String   @map("barbershop_id")
+  customerId   String   @map("customer_id")
+  balance      Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  customer   User                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  link       CustomerBarbershopLink @relation(fields: [barbershopId, customerId], references: [barbershopId, customerId], onDelete: Cascade)
+  entries    CustomerCreditEntry[]
+
+  @@unique([barbershopId, customerId])
+  @@index([barbershopId, customerId])
+  @@map("customer_credit_accounts")
+}
+
+model CustomerCreditEntry {
+  id              String           @id @default(uuid())
+  accountId       String           @map("account_id")
+  barbershopId    String           @map("barbershop_id")
+  type            CreditEntryType
+  sourceKind      CreditSourceKind @map("source_kind")
+  amount          Decimal          @db.Decimal(10, 2)
+  balanceAfter    Decimal          @map("balance_after") @db.Decimal(10, 2)
+  description     String
+  comandaId       String?          @map("comanda_id")
+  paymentId       String?          @map("payment_id")
+  createdByUserId String?          @map("created_by_user_id")
+  idempotencyKey  String?          @map("idempotency_key")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  account       CustomerCreditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  barbershop    Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdByUser User?                 @relation("CustomerCreditEntryCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@index([barbershopId, createdAt])
+  @@index([barbershopId, idempotencyKey])
+  @@map("customer_credit_entries")
 }

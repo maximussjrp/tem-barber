@@ -82,6 +82,26 @@ export function canCancelComandas(role: string) {
   return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
 }
 
+export function canViewCustomerCredit(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "BARBER";
+}
+
+export function canConsumeCustomerCredit(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "BARBER";
+}
+
+export function canGrantCustomerCredit(role: string) {
+  return role === "OWNER" || role === "MANAGER";
+}
+
+export function canAdjustCustomerCredit(role: string) {
+  return role === "OWNER" || role === "MANAGER";
+}
+
+export function canReverseCustomerCredit(role: string) {
+  return role === "OWNER" || role === "MANAGER";
+}
+
 export function forbidden() {
   return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
 }

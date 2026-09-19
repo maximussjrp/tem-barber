@@ -301,6 +301,25 @@ function toDatetimeLocalValue(date = new Date()) {
   return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 16);
 }
 
+interface CreditEntry {
+  id: string;
+  type: "CREDIT" | "DEBIT";
+  sourceKind: string;
+  amount: number;
+  balanceAfter: number;
+  description: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+interface CreditData {
+  account: {
+    id: string;
+    balance: number;
+  } | null;
+  entries: CreditEntry[];
+}
+
 export default function Cliente360Page() {
   const params = useParams();
   const id = params.id as string;
@@ -329,6 +348,34 @@ export default function Cliente360Page() {
   const [profileNotice, setProfileNotice] = useState("");
   const [submittingProfile, setSubmittingProfile] = useState(false);
 
+  // Crédito do cliente
+  const [creditData, setCreditData] = useState<CreditData | null>(null);
+  const [loadingCredit, setLoadingCredit] = useState(false);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [creditAction, setCreditAction] = useState<"GRANT" | "ADJUST">("GRANT");
+  const [creditAdjustType, setCreditAdjustType] = useState<"CREDIT" | "DEBIT">("CREDIT");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditDescription, setCreditDescription] = useState("");
+  const [submittingCredit, setSubmittingCredit] = useState(false);
+  const [creditError, setCreditError] = useState("");
+
+  const loadCreditData = useCallback(async () => {
+    setLoadingCredit(true);
+    try {
+      const res = await fetch(`/api/admin/clients/${id}/credit`);
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? "Erro ao carregar saldo de crédito.");
+      setCreditData({
+        account: payload.account,
+        entries: payload.entries || [],
+      });
+    } catch {
+      setCreditData(null);
+    } finally {
+      setLoadingCredit(false);
+    }
+  }, [id]);
+
   const loadContactLogs = useCallback(async () => {
     setLoadingContactLogs(true);
     try {
@@ -344,7 +391,6 @@ export default function Cliente360Page() {
   }, [id]);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
     setError("");
     try {
       const res = await fetch(`/api/admin/clients/${id}`);
@@ -354,16 +400,38 @@ export default function Cliente360Page() {
       setProfileBirthDate(payload.birthDate ?? "");
       setProfileNotes(payload.notes ?? "");
       await loadContactLogs();
+      await loadCreditData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
     } finally {
       setLoading(false);
     }
-  }, [id, loadContactLogs]);
+  }, [id, loadContactLogs, loadCreditData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let ignore = false;
+    const init = async () => {
+      setError("");
+      try {
+        const res = await fetch(`/api/admin/clients/${id}`);
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error ?? "Erro ao carregar dados do cliente.");
+        if (!ignore) {
+          setData(payload);
+          setProfileBirthDate(payload.birthDate ?? "");
+          setProfileNotes(payload.notes ?? "");
+          await loadContactLogs();
+          await loadCreditData();
+        }
+      } catch (err) {
+        if (!ignore) setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    };
+    init();
+    return () => { ignore = true; };
+  }, [id, loadContactLogs, loadCreditData]);
 
   const submitProfile = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -389,6 +457,54 @@ export default function Cliente360Page() {
       setProfileError(err instanceof Error ? err.message : "Erro ao salvar perfil.");
     } finally {
       setSubmittingProfile(false);
+    }
+  };
+
+  const submitCreditOperation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmittingCredit(true);
+    setCreditError("");
+
+    const numAmount = parseFloat(creditAmount.replace(",", "."));
+    if (isNaN(numAmount) || numAmount <= 0) {
+      setCreditError("Informe um valor maior que zero.");
+      setSubmittingCredit(false);
+      return;
+    }
+    if (!creditDescription || creditDescription.trim().length < 3) {
+      setCreditError("Informe uma descrição com no mínimo 3 caracteres.");
+      setSubmittingCredit(false);
+      return;
+    }
+
+    try {
+      const body =
+        creditAction === "GRANT"
+          ? { action: "GRANT", amount: numAmount, description: creditDescription }
+          : {
+              action: "ADJUST",
+              type: creditAdjustType,
+              amount: numAmount,
+              description: creditDescription,
+            };
+
+      const res = await fetch(`/api/admin/clients/${id}/credit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? payload.message ?? "Erro ao movimentar crédito.");
+
+      setShowCreditModal(false);
+      setCreditAmount("");
+      setCreditDescription("");
+      await loadCreditData();
+    } catch (err) {
+      setCreditError(err instanceof Error ? err.message : "Erro ao movimentar crédito.");
+    } finally {
+      setSubmittingCredit(false);
     }
   };
 
@@ -637,7 +753,7 @@ export default function Cliente360Page() {
         <MetricCard label="Última visita" value={formatDate(data.metrics.lastCompletedVisitAt)} tone="text-stone-200" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <MetricCard label="Próximo agendamento" value={formatDate(data.metrics.nextAppointmentAt)} tone="text-blue-400" />
         <MetricCard label="Comandas abertas" value={String(data.comandaSummary.open)} tone="text-emerald-400" />
         <MetricCard
@@ -645,6 +761,28 @@ export default function Cliente360Page() {
           value={data.clubSubscription ? `${data.clubSubscription.planName} (${data.clubSubscription.status})` : "Sem assinatura ativa"}
           tone="text-blue-400"
         />
+        <div className="bg-stone-900 border border-stone-800 rounded-lg p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-stone-500 font-semibold mb-1">Crédito do cliente</p>
+            <p className="text-base font-bold text-amber-400">
+              {loadingCredit ? "Carregando..." : formatCurrency(creditData?.account?.balance ?? 0)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCreditAction("GRANT");
+              setCreditAdjustType("CREDIT");
+              setCreditAmount("");
+              setCreditDescription("");
+              setCreditError("");
+              setShowCreditModal(true);
+            }}
+            className="mt-2 text-xs font-bold text-amber-400 hover:text-amber-300 transition-colors text-left"
+          >
+            + Movimentar crédito
+          </button>
+        </div>
       </div>
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg p-6 space-y-4">
@@ -669,13 +807,20 @@ export default function Cliente360Page() {
         <p className="rounded-lg bg-stone-950/60 border border-stone-800 p-3 text-sm text-stone-300 whitespace-pre-wrap">
           {data.whatsapp.messages[selectedTemplate]}
         </p>
-        <div className="flex justify-start">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleSendWhatsapp}
             className="px-4 py-2 rounded-lg bg-[#25D366] text-stone-950 text-sm font-bold hover:bg-[#20ba5a] transition-colors"
           >
             Enviar mensagem
+          </button>
+          <button
+            type="button"
+            onClick={copyWhatsappMessage}
+            className="px-4 py-2 rounded-lg bg-stone-800 text-stone-200 text-sm font-semibold hover:bg-stone-700 transition-colors border border-stone-700"
+          >
+            Copiar mensagem
           </button>
         </div>
         <p className="text-xs text-stone-500">
@@ -720,6 +865,80 @@ export default function Cliente360Page() {
                 </p>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-stone-900 border border-stone-800 rounded-lg p-6">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <div>
+            <h2 className="text-base font-bold text-stone-200">Extrato de crédito</h2>
+            <p className="text-xs text-stone-500">Saldo atual: {formatCurrency(creditData?.account?.balance ?? 0)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCreditAction("GRANT");
+              setCreditAdjustType("CREDIT");
+              setCreditAmount("");
+              setCreditDescription("");
+              setCreditError("");
+              setShowCreditModal(true);
+            }}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
+          >
+            Movimentar crédito
+          </button>
+        </div>
+
+        {loadingCredit ? (
+          <p className="text-sm text-stone-500">Carregando extrato de crédito...</p>
+        ) : !creditData?.entries || creditData.entries.length === 0 ? (
+          <p className="text-sm text-stone-500">Nenhuma movimentação de crédito registrada.</p>
+        ) : (
+          <div className="divide-y divide-stone-800/60 overflow-x-auto">
+            <table className="w-full text-left text-xs text-stone-300">
+              <thead className="text-[10px] uppercase text-stone-500 bg-stone-950/40">
+                <tr>
+                  <th className="py-2 px-3 font-semibold">Data / Hora</th>
+                  <th className="py-2 px-3 font-semibold">Tipo</th>
+                  <th className="py-2 px-3 font-semibold">Origem</th>
+                  <th className="py-2 px-3 font-semibold">Descrição</th>
+                  <th className="py-2 px-3 font-semibold text-right">Valor</th>
+                  <th className="py-2 px-3 font-semibold text-right">Saldo após</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-800/40">
+                {creditData.entries.map((entry) => (
+                  <tr key={entry.id} className="hover:bg-stone-800/20">
+                    <td className="py-2.5 px-3 font-mono text-stone-400 whitespace-nowrap">
+                      {formatDateTime(entry.createdAt)}
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          entry.type === "CREDIT"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : "bg-red-500/10 text-red-400 border border-red-500/20"
+                        }`}
+                      >
+                        {entry.type === "CREDIT" ? "CRÉDITO" : "DÉBITO"}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-stone-400 whitespace-nowrap text-[11px]">
+                      {entry.sourceKind}
+                    </td>
+                    <td className="py-2.5 px-3">{entry.description}</td>
+                    <td className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${entry.type === "CREDIT" ? "text-emerald-400" : "text-red-400"}`}>
+                      {entry.type === "CREDIT" ? "+" : "-"}{formatCurrency(entry.amount)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-semibold text-stone-200 whitespace-nowrap">
+                      {formatCurrency(entry.balanceAfter)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -883,6 +1102,129 @@ export default function Cliente360Page() {
                   className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 disabled:opacity-50"
                 >
                   {submittingContact ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCreditModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-lg p-6 max-w-md w-full space-y-4">
+            <h3 className="text-lg font-bold text-stone-100">Movimentar Crédito do Cliente</h3>
+            <form onSubmit={submitCreditOperation} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-400 mb-1">Operação</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreditAction("GRANT");
+                      setCreditAdjustType("CREDIT");
+                    }}
+                    className={`py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
+                      creditAction === "GRANT"
+                        ? "bg-amber-500 text-stone-950 border-amber-500"
+                        : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
+                    }`}
+                  >
+                    Conceder (Bonificação)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreditAction("ADJUST")}
+                    className={`py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
+                      creditAction === "ADJUST"
+                        ? "bg-amber-500 text-stone-950 border-amber-500"
+                        : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
+                    }`}
+                  >
+                    Ajuste Manual
+                  </button>
+                </div>
+              </div>
+
+              {creditAction === "ADJUST" && (
+                <div>
+                  <label className="block text-xs font-semibold text-stone-400 mb-1">Tipo de Ajuste</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCreditAdjustType("CREDIT")}
+                      className={`py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
+                        creditAdjustType === "CREDIT"
+                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                          : "bg-stone-950 text-stone-400 border-stone-800"
+                      }`}
+                    >
+                      + Crédito (Adicionar)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreditAdjustType("DEBIT")}
+                      className={`py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
+                        creditAdjustType === "DEBIT"
+                          ? "bg-red-500/20 text-red-300 border-red-500/40"
+                          : "bg-stone-950 text-stone-400 border-stone-800"
+                      }`}
+                    >
+                      - Débito (Remover)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="credit-amount" className="block text-xs font-semibold text-stone-400 mb-1">
+                  Valor (R$)
+                </label>
+                <input
+                  id="credit-amount"
+                  type="text"
+                  placeholder="0,00"
+                  value={creditAmount}
+                  onChange={(e) => setCreditAmount(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="credit-description" className="block text-xs font-semibold text-stone-400 mb-1">
+                  Motivo / Descrição
+                </label>
+                <textarea
+                  id="credit-description"
+                  value={creditDescription}
+                  onChange={(e) => setCreditDescription(e.target.value)}
+                  placeholder="Informe a justificativa da movimentação..."
+                  rows={3}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-3 text-stone-100 text-sm focus:border-amber-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              {creditError && (
+                <p className="text-xs text-red-400 bg-red-950/30 p-2.5 rounded-lg border border-red-900/50">
+                  {creditError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreditModal(false)}
+                  className="px-4 py-2 rounded-lg bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingCredit}
+                  className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 disabled:opacity-50"
+                >
+                  {submittingCredit ? "Processando..." : "Confirmar Movimentação"}
                 </button>
               </div>
             </form>

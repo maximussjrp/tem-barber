@@ -297,12 +297,12 @@ export async function GET(request: NextRequest) {
       totalReceivableCents += toCents(openC.remainingTotal);
     }
 
-    // 3. Payments & Methods
     const byMethod: Record<string, { cents: number; count: number }> = {
       CASH: { cents: 0, count: 0 },
       PIX: { cents: 0, count: 0 },
       DEBIT: { cents: 0, count: 0 },
       CREDIT: { cents: 0, count: 0 },
+      CUSTOMER_CREDIT: { cents: 0, count: 0 },
       OTHER: { cents: 0, count: 0 },
     };
 
@@ -318,8 +318,13 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const totalPaymentCents = Object.values(byMethod).reduce((acc, curr) => acc + curr.cents, 0);
-    const commandReceivedCents = totalPaymentCents - refundCents;
+    const newCashPaymentCents =
+      byMethod.CASH.cents +
+      byMethod.PIX.cents +
+      byMethod.DEBIT.cents +
+      byMethod.CREDIT.cents +
+      byMethod.OTHER.cents;
+    const commandReceivedCents = newCashPaymentCents - refundCents;
 
     const paymentMethodsList = Object.entries(byMethod).map(([method, data]) => ({
       method,

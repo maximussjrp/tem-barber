@@ -9,12 +9,14 @@ import {
   canRefundPayments,
   canCancelComandas,
   canManageDebt,
+  canConsumeCustomerCredit,
   comandaScopeForbidden,
   forbidden,
   isLegacyOwnComanda,
   requireOperationalSession,
 } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
+import { getCustomerCreditAccount } from "@/lib/operations/customer-credit";
 
 const ALLOWED: Record<ComandaStatus, ComandaStatus[]> = {
   OPEN: ["IN_SERVICE", "PENDING_PAYMENT", "CLOSED", "CANCELLED"],
@@ -40,13 +42,22 @@ export async function GET(
   if (data!.role === "BARBER" && !isLegacyOwnComanda(comanda, data!.memberId)) {
     return comandaScopeForbidden();
   }
+
+  let customerCreditBalance = 0;
+  if (comanda.customerId) {
+    const account = await getCustomerCreditAccount(data!.barbershopId, comanda.customerId);
+    customerCreditBalance = Number(account.balance);
+  }
+
   return NextResponse.json({
     ...comanda,
+    customerCreditBalance,
     permissions: {
       canReopen: comanda.status === "CLOSED" && canReopenComandas(data!.role),
       canRefund: canRefundPayments(data!.role),
       canCancel: canCancelComandas(data!.role),
       canManageDebt: canManageDebt(data!.role),
+      canConsumeCredit: canConsumeCustomerCredit(data!.role),
     },
   });
 }

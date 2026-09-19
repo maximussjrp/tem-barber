@@ -4,7 +4,7 @@ import { PaymentMethod } from "@prisma/client";
 import { canManageDebt, isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
 import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
-import { registerPayment, closeComanda } from "@/lib/operations/payments";
+import { registerPayment, payComandaWithCustomerCredit, closeComanda } from "@/lib/operations/payments";
 import { toCents } from "@/lib/operations/money";
 
 interface PaymentItem {
@@ -109,15 +109,26 @@ export async function POST(
         for (let i = 0; i < body.payments.length; i++) {
           const p = body.payments[i];
           const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
-          await registerPayment(tx, {
-            barbershopId: data!.barbershopId,
-            comandaId: id,
-            method: p.method,
-            amount: p.amount,
-            userId: data!.userId,
-            idempotencyKey: paymentIdempotencyKey,
-            allowClosedDebtPayment: true,
-          });
+          if (p.method === "CUSTOMER_CREDIT") {
+            await payComandaWithCustomerCredit(tx, {
+              barbershopId: data!.barbershopId,
+              comandaId: id,
+              amount: p.amount,
+              userId: data!.userId,
+              idempotencyKey: paymentIdempotencyKey,
+              allowClosedDebtPayment: true,
+            });
+          } else {
+            await registerPayment(tx, {
+              barbershopId: data!.barbershopId,
+              comandaId: id,
+              method: p.method,
+              amount: p.amount,
+              userId: data!.userId,
+              idempotencyKey: paymentIdempotencyKey,
+              allowClosedDebtPayment: true,
+            });
+          }
         }
 
         return recalculateComandaTotals(tx, id);
@@ -171,14 +182,24 @@ export async function POST(
         const p = body.payments[i];
         const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
         
-        await registerPayment(tx, {
-          barbershopId: data!.barbershopId,
-          comandaId: id,
-          method: p.method,
-          amount: p.amount,
-          userId: data!.userId,
-          idempotencyKey: paymentIdempotencyKey,
-        });
+        if (p.method === "CUSTOMER_CREDIT") {
+          await payComandaWithCustomerCredit(tx, {
+            barbershopId: data!.barbershopId,
+            comandaId: id,
+            amount: p.amount,
+            userId: data!.userId,
+            idempotencyKey: paymentIdempotencyKey,
+          });
+        } else {
+          await registerPayment(tx, {
+            barbershopId: data!.barbershopId,
+            comandaId: id,
+            method: p.method,
+            amount: p.amount,
+            userId: data!.userId,
+            idempotencyKey: paymentIdempotencyKey,
+          });
+        }
       }
 
       // Chamar o fechamento da comanda

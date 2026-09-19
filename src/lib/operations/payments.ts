@@ -74,6 +74,14 @@ export async function registerPayment(
     throw new OperationalError("PAYMENT_EXCEEDS_REMAINING", "O valor do pagamento excede o saldo restante da comanda.", 422);
   }
 
+  if (input.method === "CUSTOMER_CREDIT") {
+    throw new OperationalError(
+      "CUSTOMER_CREDIT_REQUIRES_DEDICATED_FLOW",
+      "O crédito do cliente deve ser processado via fluxo dedicado de consumo.",
+      422
+    );
+  }
+
   let cashSessionId: string | null = null;
   if (input.method === "CASH") {
     const cashSession = await tx.cashSession.findFirst({
@@ -121,6 +129,126 @@ export async function registerPayment(
     });
     await syncCashSessionExpectedAmount(tx, cashSessionId);
   }
+
+  const updated = await recalculateComandaTotals(tx, input.comandaId);
+  await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId, "Liberacao proporcional por pagamento", {
+    sourceKind: CommissionPayableSourceKind.PAYMENT,
+    sourcePaymentId: payment.id,
+  });
+  return updated;
+}
+
+export async function payComandaWithCustomerCredit(
+  tx: Prisma.TransactionClient,
+  input: {
+    barbershopId: string;
+    comandaId: string;
+    amount: string | number;
+    userId: string;
+    idempotencyKey?: string | null;
+    allowClosedDebtPayment?: boolean;
+  }
+) {
+  await lockComandaRow(tx, input.barbershopId, input.comandaId);
+  const amount = positiveCents(input.amount, "Pagamento com crédito");
+
+  const comanda = await tx.comanda.findFirst({
+    where: { id: input.comandaId, barbershopId: input.barbershopId },
+  });
+  if (!comanda) throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+
+  if (!comanda.customerId) {
+    throw new OperationalError(
+      "CUSTOMER_REQUIRED_FOR_CREDIT",
+      "Comanda sem cliente vinculado não pode utilizar saldo de crédito.",
+      422
+    );
+  }
+
+  if (input.idempotencyKey) {
+    const existing = await tx.payment.findUnique({
+      where: {
+        barbershopId_idempotencyKey: {
+          barbershopId: input.barbershopId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      if (
+        existing.comandaId !== input.comandaId ||
+        existing.method !== "CUSTOMER_CREDIT" ||
+        toCents(existing.amount) !== amount
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada para outro pagamento.",
+          409
+        );
+      }
+
+      const updated = await recalculateComandaTotals(tx, existing.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Liberacao proporcional por pagamento", {
+        sourceKind: CommissionPayableSourceKind.PAYMENT,
+        sourcePaymentId: existing.id,
+      });
+      return updated;
+    }
+  }
+
+  if (comanda.status === "CANCELLED") {
+    throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda cancelada nao aceita pagamento.", 422);
+  }
+
+  if (comanda.status === "CLOSED") {
+    const remainingCents = toCents(comanda.remainingTotal);
+    if (remainingCents === 0) {
+      throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga.", 422);
+    }
+    if (!input.allowClosedDebtPayment) {
+      throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda fechada com dívida exige autorização para receber saldo.", 422);
+    }
+  }
+
+  const remainingCents = toCents(comanda.remainingTotal);
+  if (amount > remainingCents) {
+    throw new OperationalError("PAYMENT_EXCEEDS_REMAINING", "O valor do pagamento excede o saldo restante da comanda.", 422);
+  }
+
+  const payment = await tx.payment.create({
+    data: {
+      barbershopId: input.barbershopId,
+      comandaId: input.comandaId,
+      method: "CUSTOMER_CREDIT",
+      amount: fromCents(amount),
+      idempotencyKey: input.idempotencyKey || null,
+      receivedById: input.userId,
+    },
+  });
+
+  const { consumeCustomerCredit } = await import("./customer-credit");
+  await consumeCustomerCredit(tx, {
+    barbershopId: input.barbershopId,
+    customerId: comanda.customerId,
+    amount: (amount / 100).toFixed(2),
+    comandaId: input.comandaId,
+    paymentId: payment.id,
+    createdByUserId: input.userId,
+    idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}-credit` : null,
+  });
+
+  await tx.financialEntry.create({
+    data: {
+      barbershopId: input.barbershopId,
+      type: "COMMAND_REVENUE",
+      category: "CUSTOMER_CREDIT",
+      amount: fromCents(amount),
+      description: `Recebimento da comanda ${input.comandaId} via Crédito do Cliente`,
+      userId: input.userId,
+      comandaId: input.comandaId,
+      paymentId: payment.id,
+    },
+  });
 
   const updated = await recalculateComandaTotals(tx, input.comandaId);
   await syncCommissionReleaseForComanda(tx, input.barbershopId, input.comandaId, "Liberacao proporcional por pagamento", {
@@ -305,7 +433,28 @@ export async function refundPayment(
     },
   });
 
-  if (original.method === "CASH") {
+  if (original.method === "CUSTOMER_CREDIT") {
+    const comanda = await tx.comanda.findFirst({
+      where: { id: original.comandaId, barbershopId: input.barbershopId },
+    });
+    if (!comanda?.customerId) {
+      throw new OperationalError(
+        "CUSTOMER_REQUIRED_FOR_CREDIT",
+        "Estorno para crédito exige cliente vinculado à comanda.",
+        422
+      );
+    }
+    const { refundToCustomerCredit } = await import("./customer-credit");
+    await refundToCustomerCredit(tx, {
+      barbershopId: input.barbershopId,
+      customerId: comanda.customerId,
+      amount: (amount / 100).toFixed(2),
+      comandaId: original.comandaId,
+      paymentId: refund.id,
+      createdByUserId: input.userId,
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}-credit` : null,
+    });
+  } else if (original.method === "CASH") {
     const cashSession = await tx.cashSession.findFirst({
       where: { barbershopId: input.barbershopId, status: "OPEN" },
     });
