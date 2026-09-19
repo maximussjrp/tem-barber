@@ -556,10 +556,10 @@ export default function FinanceiroPage() {
 
           {/* Section: Resumo de Comandas & Formas de Pagamento */}
           <div className="grid lg:grid-cols-2 gap-6">
-            {/* Recebimentos por Forma de Pagamento */}
+            {/* Formas de quitação das comandas */}
             <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-4">
               <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-widest border-b border-[var(--border-subtle)] pb-3">
-                Recebimentos por Forma de Pagamento
+                Formas de quitação das comandas
               </h2>
               {data.paymentMethods.every((pm) => pm.amount === 0) ? (
                 <p className="text-sm text-[var(--text-muted)] py-4 text-center">
@@ -567,32 +567,43 @@ export default function FinanceiroPage() {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {data.paymentMethods.map((item) => {
-                    const label = METHOD_LABELS[item.method] || item.method;
-                    const pct =
-                      data.totals.totalReceived > 0
-                        ? ((item.amount / data.totals.totalReceived) * 100).toFixed(1)
-                        : "0.0";
-
-                    return (
-                      <div key={item.method} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[var(--text-primary)] font-medium">{label}</span>
-                          <span className="text-[10px] bg-[var(--surface-raised)] text-[var(--text-muted)] border border-[var(--border-subtle)] px-1.5 py-0.5 rounded-full">
-                            {item.count}x
-                          </span>
-                          {data.totals.totalReceived > 0 && (
-                            <span className="text-[10px] bg-emerald-950/40 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-full font-bold">
-                              {pct}%
-                            </span>
-                          )}
-                        </div>
-                        <span className="font-bold text-[var(--text-primary)]">
-                          {formatBRL(item.amount)}
-                        </span>
-                      </div>
+                  {(() => {
+                    const settlementTotal = data.paymentMethods.reduce(
+                      (sum, item) => sum + item.amount,
+                      0
                     );
-                  })}
+                    return data.paymentMethods.map((item) => {
+                      const label = METHOD_LABELS[item.method] || item.method;
+                      const pct =
+                        settlementTotal > 0
+                          ? ((item.amount / settlementTotal) * 100).toFixed(1)
+                          : "0.0";
+
+                      return (
+                        <div key={item.method} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[var(--text-primary)] font-medium">{label}</span>
+                            <span className="text-[10px] bg-[var(--surface-raised)] text-[var(--text-muted)] border border-[var(--border-subtle)] px-1.5 py-0.5 rounded-full">
+                              {item.count}x
+                            </span>
+                            {settlementTotal > 0 && (
+                              <span className="text-[10px] bg-emerald-950/40 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-full font-bold">
+                                {pct}%
+                              </span>
+                            )}
+                            {item.method === "CUSTOMER_CREDIT" && (
+                              <span className="text-[10px] bg-amber-950/40 text-amber-300 border border-amber-500/20 px-1.5 py-0.5 rounded-full font-normal">
+                                Saldo interno — não entra no caixa
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-bold text-[var(--text-primary)]">
+                            {formatBRL(item.amount)}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               )}
             </section>

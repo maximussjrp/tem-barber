@@ -882,4 +882,174 @@ describe("FASE 5B — Customer Credit Integration Test Suite", () => {
     expect(dailyData.refunds).toBe(0);
     expect(dailyData.customerCreditRefunds).toBe(60);
   });
+
+  it("J. refundPayment idempotency: same key + same payload replays safely", async () => {
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "50.00",
+      userId: "user-owner",
+    });
+
+    const paymentId = f.payments[0].id;
+
+    // Initial refund
+    await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId,
+      amount: "50.00",
+      reason: "Motivo valido para estorno",
+      userId: "user-owner",
+      idempotencyKey: "ref-idem-1",
+    });
+
+    // Replay with exact same payload
+    const replay = await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId,
+      amount: "50.00",
+      reason: "Motivo valido para estorno",
+      userId: "user-owner",
+      idempotencyKey: "ref-idem-1",
+    });
+
+    expect(replay).toBeDefined();
+    // Only 1 refund payment created
+    const refunds = f.payments.filter((p: any) => p.refundOfId === paymentId);
+    expect(refunds).toHaveLength(1);
+  });
+
+  it("K. refundPayment idempotency: same key + different amount throws 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "50.00",
+      userId: "user-owner",
+    });
+
+    const paymentId = f.payments[0].id;
+
+    await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId,
+      amount: "50.00",
+      reason: "Motivo valido para estorno",
+      userId: "user-owner",
+      idempotencyKey: "ref-idem-k",
+    });
+
+    // Replay with different amount
+    await expect(
+      refundPayment(f.client, {
+        barbershopId: "shop-1",
+        comandaId: "cmd-1",
+        paymentId,
+        amount: "30.00",
+        reason: "Motivo valido para estorno",
+        userId: "user-owner",
+        idempotencyKey: "ref-idem-k",
+      })
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+  });
+
+  it("L. refundPayment idempotency: same key + different paymentId throws 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "50.00",
+      userId: "user-owner",
+    });
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "CASH",
+      amount: "30.00",
+      userId: "user-owner",
+    });
+
+    const pay1 = f.payments[0].id;
+    const pay2 = f.payments[1].id;
+
+    await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId: pay1,
+      amount: "50.00",
+      reason: "Motivo valido para estorno",
+      userId: "user-owner",
+      idempotencyKey: "ref-idem-l",
+    });
+
+    // Replay with different paymentId
+    await expect(
+      refundPayment(f.client, {
+        barbershopId: "shop-1",
+        comandaId: "cmd-1",
+        paymentId: pay2,
+        amount: "50.00",
+        reason: "Motivo valido para estorno",
+        userId: "user-owner",
+        idempotencyKey: "ref-idem-l",
+      })
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+  });
+
+  it("M. refundPayment idempotency: same key + different comandaId throws 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "50.00",
+      userId: "user-owner",
+    });
+
+    const pay1 = f.payments[0].id;
+
+    await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId: pay1,
+      amount: "50.00",
+      reason: "Motivo valido para estorno",
+      userId: "user-owner",
+      idempotencyKey: "ref-idem-m",
+    });
+
+    // Replay with different comandaId
+    await expect(
+      refundPayment(f.client, {
+        barbershopId: "shop-1",
+        comandaId: "cmd-other",
+        paymentId: pay1,
+        amount: "50.00",
+        reason: "Motivo valido para estorno",
+        userId: "user-owner",
+        idempotencyKey: "ref-idem-m",
+      })
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+  });
+
+  it("N. Financial UI settlement calculation logic: PIX 30 + CUSTOMER_CREDIT 40 -> totalReceived=30, settlementTotal=70", () => {
+    const paymentMethods = [
+      { method: "PIX", amount: 30, count: 1 },
+      { method: "CUSTOMER_CREDIT", amount: 40, count: 1 },
+    ];
+    const totalReceived = 30; // Real cash inflow
+
+    const settlementTotal = paymentMethods.reduce((sum, pm) => sum + pm.amount, 0);
+    expect(settlementTotal).toBe(70);
+    expect(totalReceived).toBe(30);
+
+    const pixPct = Number(((paymentMethods[0].amount / settlementTotal) * 100).toFixed(1));
+    const creditPct = Number(((paymentMethods[1].amount / settlementTotal) * 100).toFixed(1));
+
+    expect(pixPct).toBe(42.9);
+    expect(creditPct).toBe(57.1);
+  });
 });

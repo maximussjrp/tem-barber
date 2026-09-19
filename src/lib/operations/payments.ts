@@ -270,24 +270,6 @@ export async function refundPayment(
     idempotencyKey?: string | null;
   }
 ) {
-  // Idempotency check
-  if (input.idempotencyKey) {
-    const existing = await tx.payment.findFirst({
-      where: {
-        barbershopId: input.barbershopId,
-        idempotencyKey: input.idempotencyKey,
-      },
-    });
-    if (existing) {
-      const updated = await recalculateComandaTotals(tx, existing.comandaId);
-      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Recalculo por estorno", {
-        sourceKind: CommissionPayableSourceKind.REFUND,
-        sourcePaymentId: existing.id,
-      });
-      return updated;
-    }
-  }
-
   // Reason check
   if (!input.reason || input.reason.trim().length < 5) {
     throw new OperationalError("REFUND_REASON_REQUIRED", "O motivo do estorno deve ter pelo menos 5 caracteres.", 400);
