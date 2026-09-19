@@ -104,10 +104,16 @@ export async function GET(request: NextRequest) {
     CUSTOMER_CREDIT: 0,
     OTHER: 0,
   };
-  let refunds = 0;
+  let cashRefunds = 0;
+  let customerCreditRefunds = 0;
   for (const payment of payments) {
-    if (payment.status === "REFUNDED") refunds += Math.abs(toCents(payment.amount));
-    else {
+    if (payment.status === "REFUNDED") {
+      if (payment.method === "CUSTOMER_CREDIT") {
+        customerCreditRefunds += Math.abs(toCents(payment.amount));
+      } else {
+        cashRefunds += Math.abs(toCents(payment.amount));
+      }
+    } else {
       const m = byMethod[payment.method] !== undefined ? payment.method : "OTHER";
       byMethod[m] += toCents(payment.amount);
     }
@@ -167,7 +173,7 @@ export async function GET(request: NextRequest) {
     titlePayableExpenseNetCents -
     commissionAdvanceOut -
     commissionPayoutOut -
-    refunds;
+    cashRefunds;
 
   const movements = [
     ...payments.map((p) => ({
@@ -217,7 +223,8 @@ export async function GET(request: NextRequest) {
     credit: money(byMethod.CREDIT),
     customerCredit: money(byMethod.CUSTOMER_CREDIT),
     other: money(byMethod.OTHER),
-    refunds: money(refunds),
+    refunds: money(cashRefunds),
+    customerCreditRefunds: money(customerCreditRefunds),
     manualIn: money(manualIn),
     manualOut: money(manualOut),
     titleReceivableCashNet: money(titleReceivableCashNetCents),

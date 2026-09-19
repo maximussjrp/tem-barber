@@ -273,13 +273,15 @@ export function PaymentModal({
                 >
                   <option value="PIX">Pix</option>
                   <option value="CREDIT">Cartão de Crédito</option>
-                  <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
+                  {canConsumeCredit && customerCreditBalance > 0 && (
+                    <option value="CUSTOMER_CREDIT">Crédito do Cliente (R$ {customerCreditBalance.toFixed(2)})</option>
+                  )}
                   <option value="DEBIT">Cartão de Débito</option>
                   <option value="CASH">Dinheiro</option>
                   <option value="OTHER">Outros</option>
                 </select>
                 {singleMethod === "CUSTOMER_CREDIT" && (
-                  <div className="text-xs mt-1 text.amber-400 font-medium">
+                  <div className="text-xs mt-1 text-amber-400 font-medium">
                     Saldo de crédito disponível: R$ {customerCreditBalance.toFixed(2)}
                     {!canConsumeCredit && (
                       <span className="text-[var(--danger)] block">Sem permissão para consumir crédito.</span>
@@ -344,7 +346,9 @@ export function PaymentModal({
                     >
                       <option value="PIX">Pix</option>
                       <option value="CREDIT">Cartão de Crédito</option>
-                      <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
+                      {canConsumeCredit && customerCreditBalance > 0 && (
+                        <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
+                      )}
                       <option value="DEBIT">Cartão de Débito</option>
                       <option value="CASH">Dinheiro</option>
                       <option value="OTHER">Outros</option>

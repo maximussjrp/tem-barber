@@ -40,6 +40,7 @@ type Comanda = {
   total: string;
   paidTotal: string;
   remainingTotal: string;
+  customerCreditBalance?: number;
   items: Item[];
   payments: Payment[];
   createdAt: string;
@@ -50,6 +51,7 @@ type Comanda = {
     canRefund?: boolean;
     canCancel?: boolean;
     canManageDebt?: boolean;
+    canConsumeCredit?: boolean;
   };
 };
 type Service = { id: string; name: string; price: string };
@@ -714,6 +716,8 @@ export default function ComandaDetailPage() {
       {showPaymentModal && (
         <PaymentModal 
           remainingTotal={Number(comanda.remainingTotal)} 
+          customerCreditBalance={Number(comanda.customerCreditBalance ?? 0)}
+          canConsumeCredit={Boolean(comanda.permissions?.canConsumeCredit)}
           busy={busy} 
           canManageDebt={Boolean(comanda.permissions?.canManageDebt)}
           isClosedWithDebt={comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0}

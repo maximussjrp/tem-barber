@@ -67,6 +67,7 @@ const METHOD_LABELS: Record<string, string> = {
   PIX: "Pix",
   DEBIT: "Cartão de Débito",
   CREDIT: "Cartão de Crédito",
+  CUSTOMER_CREDIT: "Crédito do Cliente",
   OTHER: "Outros",
 };
 

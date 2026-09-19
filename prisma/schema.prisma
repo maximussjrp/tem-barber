@@ -2731,6 +2731,7 @@ enum CreditSourceKind {
   ADJUSTMENT
   REFUND_TO_CREDIT
   COMANDA_PAYMENT
+  COMANDA_REFUND
 }
 
 model CustomerCreditAccount {
@@ -2742,8 +2743,8 @@ model CustomerCreditAccount {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   barbershop Barbershop             @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  customer   User                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  link       CustomerBarbershopLink @relation(fields: [barbershopId, customerId], references: [barbershopId, customerId], onDelete: Cascade)
+  customer   User                   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  link       CustomerBarbershopLink @relation(fields: [barbershopId, customerId], references: [barbershopId, customerId], onDelete: Restrict)
   entries    CustomerCreditEntry[]
 
   @@unique([barbershopId, customerId])
@@ -2766,12 +2767,12 @@ model CustomerCreditEntry {
   idempotencyKey  String?          @map("idempotency_key")
   createdAt       DateTime         @default(now()) @map("created_at")
 
-  account       CustomerCreditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account       CustomerCreditAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   barbershop    Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   createdByUser User?                 @relation("CustomerCreditEntryCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
+  @@unique([barbershopId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([barbershopId, createdAt])
-  @@index([barbershopId, idempotencyKey])
   @@map("customer_credit_entries")
 }

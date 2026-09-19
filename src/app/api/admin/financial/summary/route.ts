@@ -306,11 +306,16 @@ export async function GET(request: NextRequest) {
       OTHER: { cents: 0, count: 0 },
     };
 
-    let refundCents = 0;
+    let cashRefundCents = 0;
+    let customerCreditRefundCents = 0;
     for (const p of payments) {
       const amtCents = toCents(p.amount);
       if (p.status === "REFUNDED") {
-        refundCents += Math.abs(amtCents);
+        if (p.method === "CUSTOMER_CREDIT") {
+          customerCreditRefundCents += Math.abs(amtCents);
+        } else {
+          cashRefundCents += Math.abs(amtCents);
+        }
       } else {
         const methodKey = byMethod[p.method] ? p.method : "OTHER";
         byMethod[methodKey].cents += amtCents;
@@ -324,7 +329,7 @@ export async function GET(request: NextRequest) {
       byMethod.DEBIT.cents +
       byMethod.CREDIT.cents +
       byMethod.OTHER.cents;
-    const commandReceivedCents = newCashPaymentCents - refundCents;
+    const commandReceivedCents = newCashPaymentCents - cashRefundCents;
 
     const paymentMethodsList = Object.entries(byMethod).map(([method, data]) => ({
       method,

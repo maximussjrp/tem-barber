@@ -452,6 +452,13 @@ async function main() {
     },
   });
 
+  await prisma.customerBarbershopLink.create({
+    data: {
+      barbershopId: barbershop.id,
+      customerId: newCustomer.id,
+    },
+  });
+
   const createAccResults = await Promise.all([
     getCustomerCreditAccount(barbershop.id, newCustomer.id),
     getCustomerCreditAccount(barbershop.id, newCustomer.id),
@@ -495,6 +502,21 @@ async function main() {
     throw new Error("Expected INSUFFICIENT_CREDIT_BALANCE error on excessive debit!");
   }
   console.log("[PASS] Test 8: Negative balance protection confirmed.");
+
+  // TEST 9: FK Delete Restrict Protection
+  console.log("\n[TEST 9] FK Delete Restrict Protection...");
+  let restrictCaught = false;
+  try {
+    await prisma.user.delete({ where: { id: customerUser.id } });
+  } catch (err: any) {
+    if (err?.code === "P2003" || err?.message?.includes("Foreign key constraint")) {
+      restrictCaught = true;
+    }
+  }
+  if (!restrictCaught) {
+    throw new Error("Expected P2003 Foreign Key Restrict error when attempting to delete user with active credit account/entries!");
+  }
+  console.log("[PASS] Test 9: FK Delete Restrict Protection confirmed.");
 
   console.log("\n=========================================");
   console.log("FASE 5B REAL PG CONCURRENCY SUITE PASSED SUCCESSFULLY!");

@@ -342,9 +342,9 @@ describe("FASE 5B — Customer Credit Integration Test Suite", () => {
     expect(acc.customerId).toBe("cust-1");
     expect(toCents(acc.balance)).toBe(0);
 
-    // Creates link if not existing
-    const acc2 = await getCustomerCreditAccount("shop-1", "cust-2", f.client);
-    expect(acc2.barbershopId).toBe("shop-1");
+    // Existing link in shop-2
+    const acc2 = await getCustomerCreditAccount("shop-2", "cust-2", f.client);
+    expect(acc2.barbershopId).toBe("shop-2");
     expect(acc2.customerId).toBe("cust-2");
   });
 
@@ -681,5 +681,205 @@ describe("FASE 5B — Customer Credit Integration Test Suite", () => {
     const creditMethod = summaryData.paymentMethods.find((m: any) => m.method === "CUSTOMER_CREDIT");
     expect(creditMethod).toBeDefined();
     expect(creditMethod.amount).toBe(60);
+  });
+
+  // 12. Post-release Code Review Hardening Tests (A-L)
+  it("A. Cross-tenant user without link or evidence returns 404 and creates no link or credit account", async () => {
+    // User global 'cust-2' has link only with shop-2. Calling shop-1 with cust-2 should fail with 404
+    await expect(getCustomerCreditAccount("shop-1", "cust-2", f.client)).rejects.toThrow("Cliente não encontrado");
+    expect(f.links.find((l: any) => l.barbershopId === "shop-1" && l.customerId === "cust-2")).toBeUndefined();
+    expect(f.creditAccounts.find((a: any) => a.barbershopId === "shop-1" && a.customerId === "cust-2")).toBeUndefined();
+  });
+
+  it("D. Grant idempotency: same key same payload replays, same key different payload throws 409", async () => {
+    await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "50.00",
+      description: "Grant 1",
+      createdByUserId: "user-owner",
+      idempotencyKey: "key-grant-1",
+    });
+
+    // Same key, same payload -> replay successfully
+    const replayed = await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "50.00",
+      description: "Grant 1",
+      createdByUserId: "user-owner",
+      idempotencyKey: "key-grant-1",
+    });
+    expect(toCents(replayed!.balance)).toBe(5000);
+
+    // Same key, different amount -> 409 IDEMPOTENCY_KEY_CONFLICT
+    await expect(
+      grantCustomerCredit(f.client, {
+        barbershopId: "shop-1",
+        customerId: "cust-1",
+        amount: "100.00",
+        description: "Grant 1",
+        createdByUserId: "user-owner",
+        idempotencyKey: "key-grant-1",
+      })
+    ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+  });
+
+  it("E. Adjust idempotency: same key different type/amount throws 409", async () => {
+    await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "100.00",
+      description: "Initial",
+      createdByUserId: "user-owner",
+    });
+
+    await adjustCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      type: "DEBIT",
+      amount: "20.00",
+      description: "Adjust 1",
+      createdByUserId: "user-owner",
+      idempotencyKey: "key-adjust-1",
+    });
+
+    // Same key, different type (CREDIT vs DEBIT) -> 409
+    await expect(
+      adjustCustomerCredit(f.client, {
+        barbershopId: "shop-1",
+        customerId: "cust-1",
+        type: "CREDIT",
+        amount: "20.00",
+        description: "Adjust 1",
+        createdByUserId: "user-owner",
+        idempotencyKey: "key-adjust-1",
+      })
+    ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+  });
+
+  it("F. Consume idempotency: same key different comanda/amount throws 409", async () => {
+    await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "100.00",
+      description: "Initial",
+      createdByUserId: "user-owner",
+    });
+
+    await consumeCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "30.00",
+      comandaId: "cmd-1",
+      paymentId: "pay-1",
+      createdByUserId: "user-owner",
+      idempotencyKey: "key-consume-1",
+    });
+
+    // Same key, different comanda -> 409
+    await expect(
+      consumeCustomerCredit(f.client, {
+        barbershopId: "shop-1",
+        customerId: "cust-1",
+        amount: "30.00",
+        comandaId: "cmd-other",
+        paymentId: "pay-1",
+        createdByUserId: "user-owner",
+        idempotencyKey: "key-consume-1",
+      })
+    ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+  });
+
+  it("H. CUSTOMER_CREDIT settlement 40.00 + PIX 30.00 -> new cash = 30.00", async () => {
+    const { default: prisma } = await import("@/lib/prisma");
+    Object.assign(prisma, f.prismaMock);
+
+    await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "40.00",
+      description: "Saldo prévio",
+      createdByUserId: "user-owner",
+    });
+
+    await payComandaWithCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      amount: "40.00",
+      userId: "user-owner",
+    });
+
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "30.00",
+      userId: "user-owner",
+    });
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dailyReq = new NextRequest(`http://localhost/api/admin/financial/daily-summary?date=${todayStr}`);
+    const dailyRes = await dailySummaryGet(dailyReq);
+    const dailyData = await dailyRes.json();
+
+    expect(dailyData.totalReceived).toBe(30);
+    expect(dailyData.customerCredit).toBe(40);
+  });
+
+  it("I. CUSTOMER_CREDIT refund does NOT reduce new cash received or create cash financial entry", async () => {
+    const { default: prisma } = await import("@/lib/prisma");
+    Object.assign(prisma, f.prismaMock);
+
+    await grantCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      customerId: "cust-1",
+      amount: "60.00",
+      description: "Crédito inicial",
+      createdByUserId: "user-owner",
+    });
+
+    await payComandaWithCustomerCredit(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      amount: "60.00",
+      userId: "user-owner",
+    });
+
+    await registerPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      method: "PIX",
+      amount: "30.00",
+      userId: "user-owner",
+    });
+
+    const creditPayment = f.payments.find((p: any) => p.method === "CUSTOMER_CREDIT");
+    expect(creditPayment).toBeDefined();
+
+    // Financial entries count before refund
+    const initialEntryCount = f.entries.length;
+
+    await refundPayment(f.client, {
+      barbershopId: "shop-1",
+      comandaId: "cmd-1",
+      paymentId: creditPayment.id,
+      amount: "60.00",
+      reason: "Estorno de crédito",
+      userId: "user-owner",
+    });
+
+    // No cash REFUND FinancialEntry created for CUSTOMER_CREDIT!
+    expect(f.entries.length).toBe(initialEntryCount);
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dailyReq = new NextRequest(`http://localhost/api/admin/financial/daily-summary?date=${todayStr}`);
+    const dailyRes = await dailySummaryGet(dailyReq);
+    const dailyData = await dailyRes.json();
+
+    // PIX totalReceived remains 30.00, refunds = 0, customerCreditRefunds = 60.00
+    expect(dailyData.totalReceived).toBe(30);
+    expect(dailyData.refunds).toBe(0);
+    expect(dailyData.customerCreditRefunds).toBe(60);
   });
 });

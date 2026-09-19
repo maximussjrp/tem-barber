@@ -420,18 +420,20 @@ export async function refundPayment(
     data: { refundedAmount: fromCents(toCents(original.refundedAmount) + amount) },
   });
 
-  await tx.financialEntry.create({
-    data: {
-      barbershopId: input.barbershopId,
-      type: "REFUND",
-      category: original.method,
-      amount: fromCents(-amount),
-      description: input.reason || `Estorno do pagamento ${original.id}`,
-      userId: input.userId,
-      comandaId: original.comandaId,
-      paymentId: refund.id,
-    },
-  });
+  if (original.method !== "CUSTOMER_CREDIT") {
+    await tx.financialEntry.create({
+      data: {
+        barbershopId: input.barbershopId,
+        type: "REFUND",
+        category: original.method,
+        amount: fromCents(-amount),
+        description: input.reason || `Estorno do pagamento ${original.id}`,
+        userId: input.userId,
+        comandaId: original.comandaId,
+        paymentId: refund.id,
+      },
+    });
+  }
 
   if (original.method === "CUSTOMER_CREDIT") {
     const comanda = await tx.comanda.findFirst({

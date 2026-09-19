@@ -15,10 +15,16 @@ export async function getCustomerCreditAccount(
   });
 
   if (!link) {
-    const user = await client.user.findUnique({ where: { id: customerId } });
-    if (!user) {
-      throw new OperationalError("CUSTOMER_NOT_FOUND", "Cliente não encontrado.", 404);
+    const [hasAppointment, hasComanda, hasSubscription] = await Promise.all([
+      client.appointment?.findFirst ? client.appointment.findFirst({ where: { barbershopId, customerId }, select: { id: true } }) : Promise.resolve(null),
+      client.comanda?.findFirst ? client.comanda.findFirst({ where: { barbershopId, customerId }, select: { id: true } }) : Promise.resolve(null),
+      client.customerClubSubscription?.findFirst ? client.customerClubSubscription.findFirst({ where: { barbershopId, customerId }, select: { id: true } }) : Promise.resolve(null),
+    ]);
+
+    if (!hasAppointment && !hasComanda && !hasSubscription) {
+      throw new OperationalError("CUSTOMER_NOT_FOUND", "Cliente não encontrado nesta barbearia.", 404);
     }
+
     try {
       link = await client.customerBarbershopLink.create({
         data: { barbershopId, customerId },
@@ -103,12 +109,20 @@ export async function grantCustomerCredit(
   const amountCents = positiveCents(input.amount, "Concessão de crédito");
   const sourceKind = input.sourceKind || "MANUAL_GRANT";
 
-  if (input.idempotencyKey) {
+  const checkExistingEntry = async () => {
+    if (!input.idempotencyKey) return null;
     const existing = await tx.customerCreditEntry.findFirst({
       where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+      include: { account: true },
     });
     if (existing) {
-      if (toCents(existing.amount) !== amountCents) {
+      const acc = existing.account || (await tx.customerCreditAccount.findUnique({ where: { id: existing.accountId } }));
+      if (
+        toCents(existing.amount) !== amountCents ||
+        existing.type !== "CREDIT" ||
+        existing.sourceKind !== sourceKind ||
+        acc?.customerId !== input.customerId
+      ) {
         throw new OperationalError(
           "IDEMPOTENCY_KEY_CONFLICT",
           "A chave de idempotência já foi utilizada com parâmetros diferentes.",
@@ -119,27 +133,16 @@ export async function grantCustomerCredit(
         where: { id: existing.accountId },
       });
     }
-  }
+    return null;
+  };
+
+  const replayed = await checkExistingEntry();
+  if (replayed) return replayed;
 
   await lockCustomerCreditAccount(tx, input.barbershopId, input.customerId);
 
-  if (input.idempotencyKey) {
-    const existingUnderLock = await tx.customerCreditEntry.findFirst({
-      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
-    });
-    if (existingUnderLock) {
-      if (toCents(existingUnderLock.amount) !== amountCents) {
-        throw new OperationalError(
-          "IDEMPOTENCY_KEY_CONFLICT",
-          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
-          409
-        );
-      }
-      return tx.customerCreditAccount.findUnique({
-        where: { id: existingUnderLock.accountId },
-      });
-    }
-  }
+  const replayedUnderLock = await checkExistingEntry();
+  if (replayedUnderLock) return replayedUnderLock;
 
   const account = await tx.customerCreditAccount.findUnique({
     where: { barbershopId_customerId: { barbershopId: input.barbershopId, customerId: input.customerId } },
@@ -184,12 +187,20 @@ export async function adjustCustomerCredit(
 ) {
   const amountCents = positiveCents(input.amount, "Ajuste de crédito");
 
-  if (input.idempotencyKey) {
+  const checkExistingEntry = async () => {
+    if (!input.idempotencyKey) return null;
     const existing = await tx.customerCreditEntry.findFirst({
       where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+      include: { account: true },
     });
     if (existing) {
-      if (toCents(existing.amount) !== amountCents || existing.type !== input.type) {
+      const acc = existing.account || (await tx.customerCreditAccount.findUnique({ where: { id: existing.accountId } }));
+      if (
+        toCents(existing.amount) !== amountCents ||
+        existing.type !== input.type ||
+        existing.sourceKind !== "ADJUSTMENT" ||
+        acc?.customerId !== input.customerId
+      ) {
         throw new OperationalError(
           "IDEMPOTENCY_KEY_CONFLICT",
           "A chave de idempotência já foi utilizada com parâmetros diferentes.",
@@ -200,27 +211,16 @@ export async function adjustCustomerCredit(
         where: { id: existing.accountId },
       });
     }
-  }
+    return null;
+  };
+
+  const replayed = await checkExistingEntry();
+  if (replayed) return replayed;
 
   await lockCustomerCreditAccount(tx, input.barbershopId, input.customerId);
 
-  if (input.idempotencyKey) {
-    const existingUnderLock = await tx.customerCreditEntry.findFirst({
-      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
-    });
-    if (existingUnderLock) {
-      if (toCents(existingUnderLock.amount) !== amountCents || existingUnderLock.type !== input.type) {
-        throw new OperationalError(
-          "IDEMPOTENCY_KEY_CONFLICT",
-          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
-          409
-        );
-      }
-      return tx.customerCreditAccount.findUnique({
-        where: { id: existingUnderLock.accountId },
-      });
-    }
-  }
+  const replayedUnderLock = await checkExistingEntry();
+  if (replayedUnderLock) return replayedUnderLock;
 
   const account = await tx.customerCreditAccount.findUnique({
     where: { barbershopId_customerId: { barbershopId: input.barbershopId, customerId: input.customerId } },
@@ -279,29 +279,42 @@ export async function consumeCustomerCredit(
 ) {
   const amountCents = positiveCents(input.amount, "Consumo de crédito");
 
-  if (input.idempotencyKey) {
+  const checkExistingEntry = async () => {
+    if (!input.idempotencyKey) return null;
     const existing = await tx.customerCreditEntry.findFirst({
       where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+      include: { account: true },
     });
     if (existing) {
+      const acc = existing.account || (await tx.customerCreditAccount.findUnique({ where: { id: existing.accountId } }));
+      if (
+        toCents(existing.amount) !== amountCents ||
+        existing.type !== "DEBIT" ||
+        existing.sourceKind !== "COMANDA_PAYMENT" ||
+        existing.comandaId !== input.comandaId ||
+        existing.paymentId !== input.paymentId ||
+        acc?.customerId !== input.customerId
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+          409
+        );
+      }
       return tx.customerCreditAccount.findUnique({
         where: { id: existing.accountId },
       });
     }
-  }
+    return null;
+  };
+
+  const replayed = await checkExistingEntry();
+  if (replayed) return replayed;
 
   await lockCustomerCreditAccount(tx, input.barbershopId, input.customerId);
 
-  if (input.idempotencyKey) {
-    const existingUnderLock = await tx.customerCreditEntry.findFirst({
-      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
-    });
-    if (existingUnderLock) {
-      return tx.customerCreditAccount.findUnique({
-        where: { id: existingUnderLock.accountId },
-      });
-    }
-  }
+  const replayedUnderLock = await checkExistingEntry();
+  if (replayedUnderLock) return replayedUnderLock;
 
   const account = await tx.customerCreditAccount.findUnique({
     where: { barbershopId_customerId: { barbershopId: input.barbershopId, customerId: input.customerId } },
@@ -357,29 +370,42 @@ export async function refundToCustomerCredit(
 ) {
   const amountCents = positiveCents(input.amount, "Estorno para crédito");
 
-  if (input.idempotencyKey) {
+  const checkExistingEntry = async () => {
+    if (!input.idempotencyKey) return null;
     const existing = await tx.customerCreditEntry.findFirst({
       where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+      include: { account: true },
     });
     if (existing) {
+      const acc = existing.account || (await tx.customerCreditAccount.findUnique({ where: { id: existing.accountId } }));
+      if (
+        toCents(existing.amount) !== amountCents ||
+        existing.type !== "CREDIT" ||
+        existing.sourceKind !== "COMANDA_REFUND" ||
+        existing.paymentId !== input.paymentId ||
+        (input.comandaId && existing.comandaId !== input.comandaId) ||
+        acc?.customerId !== input.customerId
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+          409
+        );
+      }
       return tx.customerCreditAccount.findUnique({
         where: { id: existing.accountId },
       });
     }
-  }
+    return null;
+  };
+
+  const replayed = await checkExistingEntry();
+  if (replayed) return replayed;
 
   await lockCustomerCreditAccount(tx, input.barbershopId, input.customerId);
 
-  if (input.idempotencyKey) {
-    const existingUnderLock = await tx.customerCreditEntry.findFirst({
-      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
-    });
-    if (existingUnderLock) {
-      return tx.customerCreditAccount.findUnique({
-        where: { id: existingUnderLock.accountId },
-      });
-    }
-  }
+  const replayedUnderLock = await checkExistingEntry();
+  if (replayedUnderLock) return replayedUnderLock;
 
   const account = await tx.customerCreditAccount.findUnique({
     where: { barbershopId_customerId: { barbershopId: input.barbershopId, customerId: input.customerId } },
@@ -398,10 +424,10 @@ export async function refundToCustomerCredit(
       accountId: account.id,
       barbershopId: input.barbershopId,
       type: "CREDIT",
-      sourceKind: "REFUND_TO_CREDIT",
+      sourceKind: "COMANDA_REFUND",
       amount: fromCents(amountCents),
       balanceAfter: fromCents(newBalanceCents),
-      description: `Estorno convertido em crédito (Pagamento ${input.paymentId.split("-")[0]})`,
+      description: `Estorno de pagamento com crédito da comanda (Pagamento ${input.paymentId.split("-")[0]})`,
       comandaId: input.comandaId || null,
       paymentId: input.paymentId,
       createdByUserId: input.createdByUserId,
