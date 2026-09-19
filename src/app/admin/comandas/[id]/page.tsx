@@ -49,6 +49,7 @@ type Comanda = {
     canReopen?: boolean;
     canRefund?: boolean;
     canCancel?: boolean;
+    canManageDebt?: boolean;
   };
 };
 type Service = { id: string; name: string; price: string };
@@ -280,8 +281,11 @@ export default function ComandaDetailPage() {
     }
   }
 
-  async function handlePay(payments: { method: string; amount: string }[]) {
-    const ok = await mutate(`/api/admin/comandas/${id}/finalize`, { payments });
+  async function handlePay(
+    payments: { method: string; amount: string }[],
+    options?: { closeWithDebt?: boolean; confirmOutstandingBalance?: boolean }
+  ) {
+    const ok = await mutate(`/api/admin/comandas/${id}/finalize`, { payments, ...options });
     if (ok) setShowPaymentModal(false);
   }
 
@@ -443,6 +447,15 @@ export default function ComandaDetailPage() {
               className="px-4 py-2 rounded-lg border border-[var(--gold-border)] bg-[var(--surface)] hover:bg-[var(--surface-hover)] text-[var(--gold)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
             >
               Reabrir comanda
+            </button>
+          )}
+          {comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0 && comanda.permissions?.canManageDebt && (
+            <button
+              disabled={busy}
+              onClick={() => setShowPaymentModal(true)}
+              className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Receber saldo
             </button>
           )}
           {!comandaClosed && (
@@ -676,6 +689,15 @@ export default function ComandaDetailPage() {
               Reabrir comanda
             </button>
           )}
+          {comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0 && comanda.permissions?.canManageDebt && (
+            <button
+              disabled={busy}
+              onClick={() => setShowPaymentModal(true)}
+              className="w-full py-3 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              Receber saldo
+            </button>
+          )}
           {!comandaClosed && (
             <button
               disabled={busy}
@@ -693,6 +715,8 @@ export default function ComandaDetailPage() {
         <PaymentModal 
           remainingTotal={Number(comanda.remainingTotal)} 
           busy={busy} 
+          canManageDebt={Boolean(comanda.permissions?.canManageDebt)}
+          isClosedWithDebt={comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0}
           onPay={handlePay} 
           onClose={() => setShowPaymentModal(false)} 
         />

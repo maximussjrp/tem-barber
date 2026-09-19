@@ -30,6 +30,12 @@ function fixture() {
     return row;
   });
   const tx = {
+    $queryRaw: vi.fn(async ([query]: any, ...args: any[]) => {
+      const comandaId = args[0];
+      const barbershopId = args[1];
+      const found = comandas.find((c) => c.id === comandaId && c.barbershopId === barbershopId);
+      return found ? [{ id: found.id }] : [];
+    }),
     comanda: {
       findFirst: vi.fn(async ({ where }: any) => { const c = comandas.find(c => matches(c, where)); return c ? { ...c, items: items.filter(i => i.comandaId === c.id) } : null; }),
       findUnique: vi.fn(async ({ where }: any) => comandas.find(c => c.id === where.id) ?? null),
@@ -128,8 +134,9 @@ describe("Phase 0: current payment, refund and physical cash contracts", () => {
     expect(db.payments[1]).toMatchObject({ refundOfId: originalId, status: "REFUNDED", amount: fromCents(-1010), method });
     expect(db.entries).toHaveLength(2);
     expect(db.entries[1]).toMatchObject({ type: "REFUND", amount: fromCents(-1010), paymentId: db.payments[1].id, barbershopId: "shop-a" });
-    expect(db.comandas[0]).toMatchObject({ status: "PENDING_PAYMENT", closedAt: null, paidTotal: fromCents(9090), remainingTotal: fromCents(1010) });
-    // Current behavior: refund reopens the command, but not its appointment.
+    expect(db.comandas[0]).toMatchObject({ status: "CLOSED", paidTotal: fromCents(9090), remainingTotal: fromCents(1010) });
+    expect(db.comandas[0].closedAt).toBeInstanceOf(Date);
+    // Phase 5A behavior: refund preserves CLOSED status and closedAt, and appointment remains completed.
     expect(db.appointment.status).toBe("COMPLETED");
     expect(db.movements).toHaveLength(method === "CASH" ? 2 : 0);
     expect(toCents(db.sessions[0].expectedAmount)).toBe(method === "CASH" ? 10090 : 1000);

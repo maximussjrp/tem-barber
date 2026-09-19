@@ -56,6 +56,8 @@ export async function POST(
         }
       }
 
+      const allowClosedDebtPayment = data!.role !== "BARBER";
+
       return registerPayment(tx, {
         barbershopId: data!.barbershopId,
         comandaId: id,
@@ -63,6 +65,7 @@ export async function POST(
         amount: body.amount!,
         userId: data!.userId,
         idempotencyKey,
+        allowClosedDebtPayment,
       });
     });
     return NextResponse.json(result, { status: 201 });

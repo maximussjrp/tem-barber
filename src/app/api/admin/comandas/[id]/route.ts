@@ -8,6 +8,7 @@ import {
   canReopenComandas,
   canRefundPayments,
   canCancelComandas,
+  canManageDebt,
   comandaScopeForbidden,
   forbidden,
   isLegacyOwnComanda,
@@ -45,6 +46,7 @@ export async function GET(
       canReopen: comanda.status === "CLOSED" && canReopenComandas(data!.role),
       canRefund: canRefundPayments(data!.role),
       canCancel: canCancelComandas(data!.role),
+      canManageDebt: canManageDebt(data!.role),
     },
   });
 }
@@ -134,4 +136,3 @@ export async function PATCH(
     return operationErrorResponse(err);
   }
 }
-

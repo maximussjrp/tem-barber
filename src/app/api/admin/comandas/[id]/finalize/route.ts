@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
-import { isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
+import { canManageDebt, isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
-import { comandaInclude, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
+import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { registerPayment, closeComanda } from "@/lib/operations/payments";
 import { toCents } from "@/lib/operations/money";
 
@@ -14,6 +14,8 @@ interface PaymentItem {
 
 interface FinalizeBody {
   payments: PaymentItem[];
+  closeWithDebt?: boolean;
+  confirmOutstandingBalance?: boolean;
   idempotencyKey?: string;
 }
 
@@ -42,6 +44,8 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await lockComandaRow(tx, data!.barbershopId, id);
+
       // 2. Buscar a comanda e validar permissões do barbeiro
       const comanda = await tx.comanda.findFirst({
         where: { id, barbershopId: data!.barbershopId },
@@ -50,15 +54,6 @@ export async function POST(
 
       if (!comanda) {
         throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
-      }
-
-      // Se a comanda já estiver CLOSED, retorna ela imediatamente (idempotência amigável)
-      if (comanda.status === "CLOSED") {
-        const fullComanda = await tx.comanda.findUnique({
-          where: { id },
-          include: comandaInclude,
-        });
-        return fullComanda;
       }
 
       if (comanda.status === "CANCELLED") {
@@ -76,6 +71,59 @@ export async function POST(
         }
       }
 
+      // 9B: COMANDA JÁ CLOSED
+      if (comanda.status === "CLOSED") {
+        const remainingCents = toCents(comanda.remainingTotal);
+        if (remainingCents === 0) {
+          if (body.payments.length > 0) {
+            throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga e encerrada.", 422);
+          }
+          const fullComanda = await tx.comanda.findUnique({
+            where: { id },
+            include: comandaInclude,
+          });
+          return fullComanda;
+        }
+
+        // CLOSED com dívida
+        if (!canManageDebt(data!.role)) {
+          throw new OperationalError("DEBT_PERMISSION_REQUIRED", "Apenas gerentes e proprietários podem receber saldo de comanda fechada.", 403);
+        }
+
+        const totalPaymentsCents = body.payments.reduce((sum, p) => {
+          const cents = Math.round(Number(p.amount) * 100);
+          if (cents <= 0) {
+            throw new OperationalError("INVALID_PAYMENT_AMOUNT", "Cada pagamento deve ser maior que zero.", 400);
+          }
+          return sum + cents;
+        }, 0);
+
+        if (totalPaymentsCents === 0) {
+          throw new OperationalError("PAYMENT_REQUIRED", "Informe o pagamento para receber o saldo em aberto.", 422);
+        }
+
+        if (totalPaymentsCents > remainingCents) {
+          throw new OperationalError("PAYMENT_EXCEEDS_REMAINING", `A soma dos pagamentos (R$ ${(totalPaymentsCents / 100).toFixed(2)}) excede o saldo restante da comanda (R$ ${(remainingCents / 100).toFixed(2)}).`, 422);
+        }
+
+        for (let i = 0; i < body.payments.length; i++) {
+          const p = body.payments[i];
+          const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
+          await registerPayment(tx, {
+            barbershopId: data!.barbershopId,
+            comandaId: id,
+            method: p.method,
+            amount: p.amount,
+            userId: data!.userId,
+            idempotencyKey: paymentIdempotencyKey,
+            allowClosedDebtPayment: true,
+          });
+        }
+
+        return recalculateComandaTotals(tx, id);
+      }
+
+      // 9A: COMANDA AINDA ABERTA
       const hasPendingService = comanda.items.some(
         (item) => item.type === "SERVICE" && item.status === "PENDING"
       );
@@ -89,8 +137,8 @@ export async function POST(
 
       // Recalcular totais para garantir dados atualizados
       const currentComanda = await recalculateComandaTotals(tx, id);
+      const remainingCents = toCents(currentComanda.remainingTotal);
 
-      // 3. Validar se a soma dos pagamentos cobre exatamente o remainingTotal
       const totalPaymentsCents = body.payments.reduce((sum, p) => {
         const cents = Math.round(Number(p.amount) * 100);
         if (cents <= 0) {
@@ -99,32 +147,26 @@ export async function POST(
         return sum + cents;
       }, 0);
 
-      const remainingCents = toCents(currentComanda.remainingTotal);
+      if (totalPaymentsCents > remainingCents) {
+        throw new OperationalError("OVERPAYMENT", "A soma dos pagamentos excede o saldo da comanda.", 422);
+      }
 
-      if (body.payments.length === 0) {
-        if (remainingCents > 0) {
+      const isPartialOrZero = totalPaymentsCents < remainingCents;
+
+      if (isPartialOrZero) {
+        if (!canManageDebt(data!.role)) {
+          throw new OperationalError("DEBT_PERMISSION_REQUIRED", "Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.", 403);
+        }
+        if (!body.closeWithDebt || !body.confirmOutstandingBalance) {
           throw new OperationalError(
-            "PAYMENT_REQUIRED",
-            "Informe o pagamento para finalizar a comanda.",
+            "DEBT_CONFIRMATION_REQUIRED",
+            "É necessário confirmar o encerramento com saldo em aberto.",
             422
           );
         }
-        return closeComanda(tx, data!.barbershopId, id);
       }
 
-      if (remainingCents === 0 && totalPaymentsCents > 0) {
-        throw new OperationalError("OVERPAYMENT", "A comanda já está totalmente paga.", 422);
-      }
-
-      if (remainingCents > 0 && totalPaymentsCents !== remainingCents) {
-        throw new OperationalError(
-          "PAYMENT_TOTAL_MISMATCH",
-          `A soma dos pagamentos (R$ ${(totalPaymentsCents / 100).toFixed(2)}) não corresponde ao saldo restante da comanda (R$ ${(remainingCents / 100).toFixed(2)}).`,
-          422
-        );
-      }
-
-      // 4. Registrar cada pagamento sequencialmente
+      // Registrar cada pagamento sequencialmente
       for (let i = 0; i < body.payments.length; i++) {
         const p = body.payments[i];
         const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
@@ -139,12 +181,11 @@ export async function POST(
         });
       }
 
-      // 5. Chamar o fechamento da comanda (que valida estoque, atualiza agendamento e comissão)
-      const closedComanda = await closeComanda(tx, data!.barbershopId, id);
+      // Chamar o fechamento da comanda
+      const closedComanda = await closeComanda(tx, data!.barbershopId, id, { allowOutstanding: isPartialOrZero });
       return closedComanda;
     });
 
-    // Se o resultado for uma comanda ou um erro operacional
     return NextResponse.json(result);
   } catch (err) {
     return operationErrorResponse(err);

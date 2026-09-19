@@ -1,7 +1,7 @@
-import { ComandaStatus, CommissionPayableSourceKind, PaymentMethod, Prisma } from "@prisma/client";
+import { CommissionPayableSourceKind, PaymentMethod, Prisma } from "@prisma/client";
 import { syncCashSessionExpectedAmount } from "./cash";
 import { syncCommissionReleaseForComanda } from "./commissions";
-import { comandaInclude, OperationalError, recalculateComandaTotals } from "./comandas";
+import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "./comandas";
 import { fromCents, positiveCents, toCents } from "./money";
 
 export async function registerPayment(
@@ -13,8 +13,10 @@ export async function registerPayment(
     amount: string | number;
     userId: string;
     idempotencyKey?: string | null;
+    allowClosedDebtPayment?: boolean;
   }
 ) {
+  await lockComandaRow(tx, input.barbershopId, input.comandaId);
   const amount = positiveCents(input.amount, "Pagamento");
 
   const comanda = await tx.comanda.findFirst({
@@ -53,8 +55,23 @@ export async function registerPayment(
     }
   }
 
-  if (comanda.status === "CLOSED" || comanda.status === "CANCELLED") {
-    throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda nao aceita pagamento.", 422);
+  if (comanda.status === "CANCELLED") {
+    throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda cancelada nao aceita pagamento.", 422);
+  }
+
+  if (comanda.status === "CLOSED") {
+    const remainingCents = toCents(comanda.remainingTotal);
+    if (remainingCents === 0) {
+      throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga.", 422);
+    }
+    if (!input.allowClosedDebtPayment) {
+      throw new OperationalError("COMANDA_NOT_PAYABLE", "Comanda fechada com dívida exige autorização para receber saldo.", 422);
+    }
+  }
+
+  const remainingCents = toCents(comanda.remainingTotal);
+  if (amount > remainingCents) {
+    throw new OperationalError("PAYMENT_EXCEEDS_REMAINING", "O valor do pagamento excede o saldo restante da comanda.", 422);
   }
 
   let cashSessionId: string | null = null;
@@ -160,7 +177,80 @@ export async function refundPayment(
     throw new OperationalError("REFUND_AMOUNT_REQUIRED", "O valor do estorno deve ser maior que zero.", 400);
   }
 
-  // Find original payment
+  // Idempotency pre-check before locking
+  if (input.idempotencyKey) {
+    const preCheck = await tx.payment.findUnique({
+      where: {
+        barbershopId_idempotencyKey: {
+          barbershopId: input.barbershopId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+    });
+    if (preCheck) {
+      if (
+        preCheck.refundOfId !== input.paymentId ||
+        (input.comandaId && preCheck.comandaId !== input.comandaId) ||
+        toCents(preCheck.amount) !== -amount
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada para outro estorno.",
+          409
+        );
+      }
+      const updated = await recalculateComandaTotals(tx, preCheck.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, preCheck.comandaId, "Recalculo por estorno", {
+        sourceKind: CommissionPayableSourceKind.REFUND,
+        sourcePaymentId: preCheck.id,
+      });
+      return updated;
+    }
+  }
+
+  // Find initial payment to resolve comandaId for locking
+  const initial = await tx.payment.findFirst({
+    where: { id: input.paymentId, barbershopId: input.barbershopId },
+  });
+
+  if (!initial) {
+    throw new OperationalError("PAYMENT_NOT_FOUND", "Pagamento não encontrado.", 404);
+  }
+
+  await lockComandaRow(tx, input.barbershopId, initial.comandaId);
+
+  // Idempotency re-check under the lock to prevent concurrent duplicate refunds
+  if (input.idempotencyKey) {
+    const existing = await tx.payment.findUnique({
+      where: {
+        barbershopId_idempotencyKey: {
+          barbershopId: input.barbershopId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      if (
+        existing.refundOfId !== input.paymentId ||
+        (input.comandaId && existing.comandaId !== input.comandaId) ||
+        toCents(existing.amount) !== -amount
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada para outro estorno.",
+          409
+        );
+      }
+      const updated = await recalculateComandaTotals(tx, existing.comandaId);
+      await syncCommissionReleaseForComanda(tx, input.barbershopId, existing.comandaId, "Recalculo por estorno", {
+        sourceKind: CommissionPayableSourceKind.REFUND,
+        sourcePaymentId: existing.id,
+      });
+      return updated;
+    }
+  }
+
+  // Re-read original payment state under the comanda lock to guarantee fresh DB values (refundedAmount, status)
   const original = await tx.payment.findFirst({
     where: { id: input.paymentId, barbershopId: input.barbershopId },
   });
@@ -238,17 +328,17 @@ export async function refundPayment(
     sourceKind: CommissionPayableSourceKind.REFUND,
     sourcePaymentId: refund.id,
   });
-  if (toCents(updated.remainingTotal) > 0 && updated.status === "CLOSED") {
-    return tx.comanda.update({
-      where: { id: updated.id },
-      data: { status: ComandaStatus.PENDING_PAYMENT, closedAt: null },
-      include: comandaInclude,
-    });
-  }
   return updated;
 }
 
-export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: string, comandaId: string) {
+export async function closeComanda(
+  tx: Prisma.TransactionClient,
+  barbershopId: string,
+  comandaId: string,
+  options?: { allowOutstanding?: boolean }
+) {
+  await lockComandaRow(tx, barbershopId, comandaId);
+
   // 1. Obter comanda com itens para inspecionar os benefícios solicitados
   let comanda = await tx.comanda.findFirst({
     where: { id: comandaId, barbershopId },
@@ -357,9 +447,10 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
     }
   }
 
-  // 3. Recalcular totais e validar se está totalmente paga
+  // 3. Recalcular totais e validar se está totalmente paga (ou se dívida foi permitida)
   comanda = await recalculateComandaTotals(tx, comandaId);
-  if (toCents(comanda.remainingTotal) > 0) {
+  const remainingCents = toCents(comanda.remainingTotal);
+  if (remainingCents > 0 && !options?.allowOutstanding) {
     throw new OperationalError("COMANDA_NOT_PAID", "Comanda ainda possui valor em aberto.", 422);
   }
 
@@ -368,7 +459,7 @@ export async function closeComanda(tx: Prisma.TransactionClient, barbershopId: s
 
   const closed = await tx.comanda.update({
     where: { id: comandaId },
-    data: { status: "CLOSED", closedAt: new Date(), remainingTotal: 0 },
+    data: { status: "CLOSED", closedAt: new Date() },
     include: comandaInclude,
   });
 

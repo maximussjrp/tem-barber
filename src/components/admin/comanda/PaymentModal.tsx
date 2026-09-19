@@ -5,7 +5,12 @@ import { useState } from "react";
 type Props = {
   remainingTotal: number;
   busy: boolean;
-  onPay: (payments: { method: string; amount: string }[]) => Promise<void>;
+  canManageDebt?: boolean;
+  isClosedWithDebt?: boolean;
+  onPay: (
+    payments: { method: string; amount: string }[],
+    options?: { closeWithDebt?: boolean; confirmOutstandingBalance?: boolean }
+  ) => Promise<void>;
   onClose: () => void;
 };
 
@@ -15,26 +20,36 @@ interface MixedPaymentItem {
   amount: string;
 }
 
-export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
+export function PaymentModal({
+  remainingTotal,
+  busy,
+  canManageDebt = false,
+  isClosedWithDebt = false,
+  onPay,
+  onClose,
+}: Props) {
   const [isMixed, setIsMixed] = useState(false);
   const [singleMethod, setSingleMethod] = useState("PIX");
   const [singleAmount, setSingleAmount] = useState(remainingTotal.toFixed(2));
-  
+
   // Para pagamento misto
   const [mixedPayments, setMixedPayments] = useState<MixedPaymentItem[]>([
     { id: "1", method: "PIX", amount: "" },
   ]);
 
   const [cashReceived, setCashReceived] = useState("");
+  const [confirmDebt, setConfirmDebt] = useState(false);
 
   const amountNum = Number(singleAmount) || 0;
   const cashReceivedNum = Number(cashReceived) || 0;
   const showChange = !isMixed && singleMethod === "CASH" && cashReceivedNum > amountNum && amountNum > 0;
   const change = showChange ? cashReceivedNum - amountNum : 0;
 
-  // Calculos para pagamento misto
+  // Calculos para pagamento misto/único
   const mixedTotal = mixedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const mixedDiff = remainingTotal - mixedTotal;
+  const appliedTotal = isMixed ? mixedTotal : amountNum;
+  const outstanding = Math.max(0, remainingTotal - appliedTotal);
+  const isPartialOrZero = outstanding > 0.009;
 
   function addMixedRow() {
     setMixedPayments([
@@ -57,12 +72,44 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!isMixed) {
-      if (amountNum <= 0) {
-        alert("Valor deve ser maior que zero.");
+    if (isClosedWithDebt) {
+      // Receber dívida de comanda já fechada
+      if (appliedTotal <= 0) {
+        alert("Informe um valor maior que zero para pagamento de dívida.");
         return;
       }
-      if (amountNum > remainingTotal) {
+      if (appliedTotal > remainingTotal + 0.009) {
+        alert("O pagamento excede o saldo restante em aberto.");
+        return;
+      }
+      let payload: { method: string; amount: string }[];
+      if (!isMixed) {
+        if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < amountNum) {
+          alert("Valor recebido em dinheiro é menor que o valor a pagar.");
+          return;
+        }
+        payload = [{ method: singleMethod, amount: amountNum.toFixed(2) }];
+      } else {
+        if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
+          alert("Cada parcela deve ter um valor maior que zero.");
+          return;
+        }
+        payload = mixedPayments.map((p) => ({
+          method: p.method,
+          amount: (Number(p.amount) || 0).toFixed(2),
+        }));
+      }
+      await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true });
+      return;
+    }
+
+    // Finalizar comanda aberta
+    if (!isMixed) {
+      if (amountNum < 0) {
+        alert("Valor não pode ser negativo.");
+        return;
+      }
+      if (amountNum > remainingTotal + 0.009) {
         alert("Valor não pode ser maior que o saldo restante.");
         return;
       }
@@ -70,43 +117,89 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
         alert("Valor recebido em dinheiro é menor que o valor a pagar.");
         return;
       }
-      
-      await onPay([{ method: singleMethod, amount: amountNum.toFixed(2) }]);
+      if (isPartialOrZero && !canManageDebt) {
+        alert("Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.");
+        return;
+      }
+      if (isPartialOrZero && !confirmDebt) {
+        alert(`É necessário confirmar que o cliente ficará com R$ ${outstanding.toFixed(2)} em aberto.`);
+        return;
+      }
+
+      const payload = amountNum > 0 ? [{ method: singleMethod, amount: amountNum.toFixed(2) }] : [];
+      await onPay(payload, isPartialOrZero ? { closeWithDebt: true, confirmOutstandingBalance: true } : undefined);
     } else {
-      // Validar pagamento misto
       if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
         alert("Cada parcela deve ter um valor maior que zero.");
         return;
       }
-      if (Math.abs(mixedDiff) >= 0.01) {
+      if (appliedTotal > remainingTotal + 0.009) {
+        alert(`A soma das parcelas (R$ ${mixedTotal.toFixed(2)}) excede o total restante (R$ ${remainingTotal.toFixed(2)}).`);
+        return;
+      }
+      if (isPartialOrZero && !canManageDebt) {
         alert(`A soma das parcelas (R$ ${mixedTotal.toFixed(2)}) deve ser exatamente igual ao total restante (R$ ${remainingTotal.toFixed(2)}).`);
         return;
       }
-      
+      if (isPartialOrZero && !confirmDebt) {
+        alert(`É necessário confirmar que o cliente ficará com R$ ${outstanding.toFixed(2)} em aberto.`);
+        return;
+      }
+
       const payload = mixedPayments.map((p) => ({
         method: p.method,
         amount: (Number(p.amount) || 0).toFixed(2),
       }));
-      await onPay(payload);
+      await onPay(payload, isPartialOrZero ? { closeWithDebt: true, confirmOutstandingBalance: true } : undefined);
     }
   }
+
+  function getButtonText() {
+    if (busy) return "Processando...";
+    if (isClosedWithDebt) return "Confirmar Recebimento";
+    if (!isPartialOrZero) return "Confirmar e Finalizar";
+    if (appliedTotal === 0) return "Finalizar sem receber agora";
+    return `Finalizar com R$ ${outstanding.toFixed(2)} em aberto`;
+  }
+
+  const isSubmitDisabled =
+    busy ||
+    (!isClosedWithDebt && isPartialOrZero && (!canManageDebt || !confirmDebt)) ||
+    (!isMixed && amountNum < 0) ||
+    (!isMixed && amountNum > remainingTotal + 0.009) ||
+    (isMixed && mixedTotal > remainingTotal + 0.009) ||
+    (isClosedWithDebt && appliedTotal <= 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
       <div className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-lg overflow-hidden shadow-xl">
         <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
-          <h2 className="text-lg font-bold text-[var(--text-primary)]">Finalizar Atendimento - Receber</h2>
-          <button onClick={onClose} disabled={busy} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-2xl leading-none cursor-pointer">&times;</button>
+          <h2 className="text-lg font-bold text-[var(--text-primary)]">
+            {isClosedWithDebt ? "Receber Saldo em Aberto" : "Finalizar Atendimento - Receber"}
+          </h2>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-2xl leading-none cursor-pointer"
+          >
+            &times;
+          </button>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="flex justify-between items-center bg-[var(--surface-raised)] p-3 rounded-lg border border-[var(--border-subtle)]">
-            <span className="text-sm text-[var(--text-secondary)]">Total a Pagar</span>
-            <span className="text-xl font-bold text-[var(--gold)] font-serif">R$ {remainingTotal.toFixed(2)}</span>
+            <span className="text-sm text-[var(--text-secondary)]">
+              {isClosedWithDebt ? "Saldo em Aberto" : "Total a Pagar"}
+            </span>
+            <span className="text-xl font-bold text-[var(--gold)] font-serif">
+              R$ {remainingTotal.toFixed(2)}
+            </span>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Tipo de Pagamento</label>
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+              Tipo de Pagamento
+            </label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -137,7 +230,9 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
             // Formulario Pagamento Único
             <div className="space-y-4 pt-2">
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Forma de Pagamento</label>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                  Forma de Pagamento
+                </label>
                 <select
                   value={singleMethod}
                   onChange={(e) => {
@@ -156,10 +251,13 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor do Pagamento (R$)</label>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                  Valor do Pagamento (R$)
+                </label>
                 <input
                   type="number"
                   step="0.01"
+                  min="0"
                   max={remainingTotal}
                   value={singleAmount}
                   onChange={(e) => setSingleAmount(e.target.value)}
@@ -170,7 +268,9 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
 
               {singleMethod === "CASH" && (
                 <div className="pt-2 border-t border-[var(--border-subtle)]">
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor recebido do cliente (R$)</label>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                    Valor recebido do cliente (R$)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
@@ -181,7 +281,9 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                     className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                   />
                   {showChange && (
-                    <p className="mt-2 text-sm text-[var(--gold)] font-serif font-medium">Troco a devolver: R$ {change.toFixed(2)}</p>
+                    <p className="mt-2 text-sm text-[var(--gold)] font-serif font-medium">
+                      Troco a devolver: R$ {change.toFixed(2)}
+                    </p>
                   )}
                 </div>
               )}
@@ -189,10 +291,12 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
           ) : (
             // Formulario Pagamento Misto
             <div className="space-y-3 pt-2">
-              <label className="block text-sm font-medium text-[var(--text-secondary)]">Parcelas declaradas</label>
-              
+              <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                Parcelas declaradas
+              </label>
+
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                {mixedPayments.map((p, idx) => (
+                {mixedPayments.map((p) => (
                   <div key={p.id} className="flex gap-2 items-center">
                     <select
                       value={p.method}
@@ -206,7 +310,7 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
                       <option value="CASH">Dinheiro</option>
                       <option value="OTHER">Outros</option>
                     </select>
-                    
+
                     <input
                       type="number"
                       step="0.01"
@@ -237,19 +341,45 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
               >
                 + Adicionar Parcela
               </button>
+            </div>
+          )}
 
-              <div className="pt-3 border-t border-[var(--border-subtle)] space-y-1 text-sm">
+          {/* Seção de Saldo em Aberto / Confirmação */}
+          {!isClosedWithDebt && isPartialOrZero && (
+            <div className="pt-3 border-t border-[var(--border-subtle)] space-y-3 bg-[var(--surface-raised)] p-3 rounded-lg">
+              <div className="space-y-1 text-sm">
                 <div className="flex justify-between text-[var(--text-secondary)]">
-                  <span>Total declarado:</span>
-                  <span>R$ {mixedTotal.toFixed(2)}</span>
+                  <span>Total da Comanda:</span>
+                  <span>R$ {remainingTotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between font-medium">
-                  <span>Falta declarar:</span>
-                  <span className={Math.abs(mixedDiff) < 0.01 ? "text-emerald-400" : "text-[var(--gold)] font-serif font-bold"}>
-                    R$ {mixedDiff.toFixed(2)}
-                  </span>
+                <div className="flex justify-between text-[var(--text-secondary)]">
+                  <span>Recebido Agora:</span>
+                  <span>R$ {appliedTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-amber-400">
+                  <span>Ficará em Aberto:</span>
+                  <span>R$ {outstanding.toFixed(2)}</span>
                 </div>
               </div>
+
+              {canManageDebt ? (
+                <label className="flex items-start gap-2 pt-2 border-t border-[var(--border-subtle)] text-xs text-[var(--text-primary)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmDebt}
+                    onChange={(e) => setConfirmDebt(e.target.checked)}
+                    disabled={busy}
+                    className="mt-0.5 rounded border-[var(--border-subtle)] text-[var(--gold)] focus:ring-[var(--gold)]"
+                  />
+                  <span>
+                    Confirmo que o cliente ficará com R$ {outstanding.toFixed(2)} em aberto.
+                  </span>
+                </label>
+              ) : (
+                <p className="text-xs text-[var(--danger)] pt-2 border-t border-[var(--border-subtle)] font-medium">
+                  Apenas gerentes e proprietários podem finalizar comandas com saldo em aberto.
+                </p>
+              )}
             </div>
           )}
 
@@ -264,14 +394,10 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
             </button>
             <button
               type="submit"
-              disabled={
-                busy ||
-                (!isMixed && (amountNum <= 0 || amountNum > remainingTotal)) ||
-                (isMixed && Math.abs(mixedDiff) >= 0.01)
-              }
+              disabled={isSubmitDisabled}
               className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm"
             >
-              {busy ? "Processando..." : "Confirmar e Finalizar"}
+              {getButtonText()}
             </button>
           </div>
         </form>
@@ -279,3 +405,4 @@ export function PaymentModal({ remainingTotal, busy, onPay, onClose }: Props) {
     </div>
   );
 }
+

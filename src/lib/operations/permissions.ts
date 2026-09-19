@@ -74,6 +74,10 @@ export function canRefundPayments(role: string) {
   return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
 }
 
+export function canManageDebt(role: string) {
+  return role === "OWNER" || role === "MANAGER";
+}
+
 export function canCancelComandas(role: string) {
   return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
 }

@@ -89,7 +89,8 @@ export async function GET(request: NextRequest) {
     prisma.comanda.aggregate({
       where: {
         barbershopId: data!.barbershopId,
-        status: { in: ["OPEN", "IN_SERVICE", "PENDING_PAYMENT"] },
+        status: { not: "CANCELLED" },
+        remainingTotal: { gt: 0 },
       },
       _sum: { remainingTotal: true },
     }),

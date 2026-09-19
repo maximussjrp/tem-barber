@@ -42,6 +42,22 @@ export class OperationalError extends Error {
   }
 }
 
+export async function lockComandaRow(
+  tx: Prisma.TransactionClient,
+  barbershopId: string,
+  comandaId: string
+) {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM comandas 
+    WHERE id = ${comandaId} AND barbershop_id = ${barbershopId} 
+    FOR UPDATE
+  `;
+  if (!rows || rows.length === 0) {
+    throw new OperationalError("COMANDA_NOT_FOUND", "Comanda nao encontrada.", 404);
+  }
+  return rows[0];
+}
+
 import { extractServiceQuantities } from "../appointments/notes-metadata";
 
 export async function ensureComandaForAppointment(
