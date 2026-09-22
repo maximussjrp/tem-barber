@@ -6,6 +6,7 @@ import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTot
 import { closeComanda, registerPayment } from "./payments";
 import { consumeCustomerCredit, depositCustomerCreditFromCheckout } from "./customer-credit";
 import { recordTip } from "./tips";
+import { canManageDebt } from "./permissions";
 
 export interface TenderInput {
   method: PaymentMethod;
@@ -24,6 +25,7 @@ export interface ProcessCheckoutInput {
   actorMemberId?: string | null;
   actorRole?: string | null;
   mode?: "FINALIZE" | "DEBT_PAYMENT";
+  allowOutstanding?: boolean;
   idempotencyKey?: string | null;
 }
 
@@ -32,16 +34,17 @@ function computeCheckoutFingerprint(input: {
   comandaId: string;
   tenders: TenderInput[];
   mode?: "FINALIZE" | "DEBT_PAYMENT";
+  allowOutstanding?: boolean;
 }): string {
   const mode = input.mode || "FINALIZE";
-  const sortedTenders = [...input.tenders].sort((a, b) => a.method.localeCompare(b.method));
-  const tenderStr = sortedTenders
+  const allowOutstanding = input.allowOutstanding ? "1" : "0";
+  const tenderStr = input.tenders
     .map(
-      (t) =>
-        `${t.method}:${toCents(t.receivedAmount)}:${toCents(t.tipAmount || 0)}:${t.tipMemberId || ""}:${toCents(t.creditDepositAmount || 0)}`
+      (t, index) =>
+        `${index}:${t.method}:${toCents(t.receivedAmount)}:${toCents(t.tipAmount || 0)}:${t.tipMemberId || ""}:${toCents(t.creditDepositAmount || 0)}`
     )
     .join("|");
-  const raw = `${input.barbershopId}:${mode}:${input.comandaId}:${tenderStr}`;
+  const raw = `${input.barbershopId}:${mode}:${input.comandaId}:${allowOutstanding}:${tenderStr}`;
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
@@ -240,12 +243,30 @@ export async function processCheckoutAllocation(
     };
   });
 
-  if (mode === "FINALIZE" && accumulatedSaleCents !== comandaRemainingCents) {
-    throw new OperationalError(
-      "SALE_ALLOCATION_MISMATCH",
-      `O total alocado para a venda (R$ ${(accumulatedSaleCents / 100).toFixed(2)}) não quita o saldo remanescente da comanda (R$ ${(comandaRemainingCents / 100).toFixed(2)}).`,
-      422
-    );
+  const isPartial = accumulatedSaleCents < comandaRemainingCents;
+  if (mode === "FINALIZE") {
+    if (isPartial) {
+      if (input.actorRole && !canManageDebt(input.actorRole)) {
+        throw new OperationalError(
+          "DEBT_PERMISSION_REQUIRED",
+          "Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.",
+          403
+        );
+      }
+      if (!input.allowOutstanding) {
+        throw new OperationalError(
+          "DEBT_CONFIRMATION_REQUIRED",
+          "É necessário confirmar o encerramento com saldo em aberto.",
+          422
+        );
+      }
+    } else if (accumulatedSaleCents !== comandaRemainingCents) {
+      throw new OperationalError(
+        "SALE_ALLOCATION_MISMATCH",
+        `O total alocado para a venda (R$ ${(accumulatedSaleCents / 100).toFixed(2)}) não quita o saldo remanescente da comanda (R$ ${(comandaRemainingCents / 100).toFixed(2)}).`,
+        422
+      );
+    }
   }
 
   if (mode === "DEBT_PAYMENT" && (accumulatedSaleCents <= 0 || accumulatedSaleCents > comandaRemainingCents)) {
@@ -446,7 +467,9 @@ export async function processCheckoutAllocation(
   if (mode === "DEBT_PAYMENT") {
     finalComanda = await recalculateComandaTotals(tx, input.comandaId);
   } else {
-    finalComanda = await closeComanda(tx, input.barbershopId, input.comandaId);
+    finalComanda = await closeComanda(tx, input.barbershopId, input.comandaId, {
+      allowOutstanding: Boolean(input.allowOutstanding),
+    });
   }
 
   return {

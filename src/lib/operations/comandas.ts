@@ -672,6 +672,20 @@ export async function cancelComanda(
     throw new OperationalError("COMANDA_ALREADY_CANCELLED", "Comanda já está cancelada.", 422);
   }
 
+  // 1a. Validate tips linked to comanda BEFORE any payment refunds
+  const linkedTips = await tx.tipEntry.findMany({
+    where: { comandaId: comanda.id, barbershopId: input.barbershopId },
+  });
+  for (const tip of linkedTips) {
+    if (tip.status === "PAID_OUT" || toCents(tip.paidOutAmount || 0) > 0) {
+      throw new OperationalError(
+        "TIP_PAYOUT_REVERSAL_REQUIRED",
+        "A comanda possui gorjetas já repassadas ao profissional. Reverta o repasse antes de cancelar.",
+        422
+      );
+    }
+  }
+
   const paidTotalCents = toCents(comanda.paidTotal);
   if (paidTotalCents > 0) {
     if (!input.refundAll) {
@@ -695,29 +709,24 @@ export async function cancelComanda(
     }
   }
 
-  // 1b. Revert active tips linked to comanda
-  const activeTips = await tx.tipEntry.findMany({
-    where: { comandaId: comanda.id, barbershopId: input.barbershopId, status: { in: ["ACTIVE", "PARTIALLY_REFUNDED"] } },
-  });
-  if (activeTips.length > 0) {
-    for (const tip of activeTips) {
-      if (toCents(tip.paidOutAmount || 0) > 0) {
-        throw new OperationalError(
-          "TIP_PAYOUT_REVERSAL_REQUIRED",
-          "A comanda possui gorjetas já repassadas ao profissional. Reverta o repasse antes de cancelar.",
-          422
-        );
-      }
-    }
+  // 1b. Revert active or partially refunded tips linked to comanda
+  const tipsToRefund = linkedTips.filter(
+    (tip) => tip.status === "ACTIVE" || tip.status === "PARTIALLY_REFUNDED"
+  );
+  if (tipsToRefund.length > 0) {
     const { refundTip } = await import("./tips");
-    for (const tip of activeTips) {
-      await refundTip(tx, {
-        barbershopId: input.barbershopId,
-        tipEntryId: tip.id,
-        reason: `Estorno automático por cancelamento de comanda: ${input.reason}`,
-        refundedById: input.userId,
-        idempotencyKey: `auto-refund-tip-${comanda.id}-${tip.id}`,
-      });
+    for (const tip of tipsToRefund) {
+      const remainingTipCents = toCents(tip.amount) - toCents(tip.refundedAmount || 0) - toCents(tip.paidOutAmount || 0);
+      if (remainingTipCents > 0) {
+        await refundTip(tx, {
+          barbershopId: input.barbershopId,
+          tipEntryId: tip.id,
+          amountToRefund: remainingTipCents / 100,
+          reason: `Estorno automático por cancelamento de comanda: ${input.reason}`,
+          refundedById: input.userId,
+          idempotencyKey: `auto-refund-tip-${comanda.id}-${tip.id}`,
+        });
+      }
     }
   }
 
@@ -746,6 +755,7 @@ export async function cancelComanda(
         reason: `Estorno de depósito por cancelamento de comanda: ${input.reason}`,
         createdByUserId: input.userId,
         idempotencyKey: `auto-reverse-deposit-${comanda.id}-${deposit.id}`,
+        isPhysicalCashReturned: false,
       });
     }
   }

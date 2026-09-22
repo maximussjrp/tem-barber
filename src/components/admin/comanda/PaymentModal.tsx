@@ -30,7 +30,8 @@ type Props = {
 interface MixedPaymentItem {
   id: string;
   method: string;
-  amount: string;
+  amount: string; // saleAmount
+  receivedAmount?: string; // para CASH
   tipAmount?: string;
   tipMemberId?: string;
   creditDepositAmount?: string;
@@ -77,11 +78,29 @@ export function PaymentModal({
   const showChange = !isMixed && singleMethod === "CASH" && cashReceivedNum > totalAllocatedNoChange && totalAllocatedNoChange >= 0;
   const change = showChange ? cashReceivedNum - totalAllocatedNoChange : 0;
 
-  // Calculos para pagamento misto/único
+  // Calculos para pagamento misto
   const mixedTotal = mixedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const mixedCreditTotal = mixedPayments
     .filter((p) => p.method === "CUSTOMER_CREDIT")
     .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  const mixedTipsTotal = mixedPayments.reduce((sum, p) => {
+    return sum + (p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.tipAmount) || 0));
+  }, 0);
+
+  const mixedCreditDepositTotal = mixedPayments.reduce((sum, p) => {
+    return sum + (p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.creditDepositAmount) || 0));
+  }, 0);
+
+  const mixedChangeTotal = mixedPayments.reduce((sum, p) => {
+    if (p.method !== "CASH") return sum;
+    const sale = Number(p.amount) || 0;
+    const tip = Number(p.tipAmount) || 0;
+    const deposit = Number(p.creditDepositAmount) || 0;
+    const base = sale + tip + deposit;
+    const received = Number(p.receivedAmount) || 0;
+    return sum + (received > base ? received - base : 0);
+  }, 0);
 
   const appliedTotal = isMixed ? mixedTotal : amountNum;
   const outstanding = Math.max(0, remainingTotal - appliedTotal);
@@ -99,9 +118,19 @@ export function PaymentModal({
     setMixedPayments(mixedPayments.filter((p) => p.id !== id));
   }
 
-  function updateMixedRow(id: string, field: "method" | "amount", value: string) {
+  function updateMixedRow(id: string, field: keyof Omit<MixedPaymentItem, "id">, value: string) {
     setMixedPayments(
-      mixedPayments.map((p) => (p.id === id ? { ...p, [field]: value } : p))
+      mixedPayments.map((p) => {
+        if (p.id !== id) return p;
+        const updated = { ...p, [field]: value };
+        if (field === "method" && value === "CUSTOMER_CREDIT") {
+          updated.tipAmount = "";
+          updated.tipMemberId = "";
+          updated.creditDepositAmount = "";
+          updated.receivedAmount = "";
+        }
+        return updated;
+      })
     );
   }
 
@@ -123,7 +152,7 @@ export function PaymentModal({
         alert("O pagamento excede o saldo restante em aberto.");
         return;
       }
-      let payload: { method: string; amount: string }[];
+
       if (!isMixed) {
         if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < totalAllocatedNoChange) {
           alert("Valor recebido em dinheiro é menor que a soma de venda, gorjeta e depósito.");
@@ -133,7 +162,19 @@ export function PaymentModal({
           alert(`O valor (R$ ${amountNum.toFixed(2)}) excede o saldo de crédito disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
           return;
         }
-        payload = [{ method: singleMethod, amount: amountNum.toFixed(2) }];
+        const payload = [{ method: singleMethod, amount: amountNum.toFixed(2) }];
+        const allocations = (tipAmountNum > 0 || creditDepositNum > 0 || (singleMethod === "CASH" && change > 0)) ? [
+          {
+            method: singleMethod,
+            receivedAmount: effectiveReceived,
+            tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
+            tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
+            creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
+          }
+        ] : undefined;
+
+        await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
+        return;
       } else {
         if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
           alert("Cada parcela deve ter um valor maior que zero.");
@@ -143,24 +184,55 @@ export function PaymentModal({
           alert(`O total pago em crédito do cliente (R$ ${mixedCreditTotal.toFixed(2)}) excede o saldo disponível (R$ ${customerCreditBalance.toFixed(2)}).`);
           return;
         }
-        payload = mixedPayments.map((p) => ({
+        for (let i = 0; i < mixedPayments.length; i++) {
+          const p = mixedPayments[i];
+          const tipNum = Number(p.tipAmount) || 0;
+          if (p.method !== "CUSTOMER_CREDIT" && tipNum > 0 && !p.tipMemberId && members.length > 0) {
+            alert(`Selecione o profissional que receberá a gorjeta na parcela #${i + 1}.`);
+            return;
+          }
+          if (p.method === "CASH") {
+            const sale = Number(p.amount) || 0;
+            const tip = Number(p.tipAmount) || 0;
+            const deposit = Number(p.creditDepositAmount) || 0;
+            const base = sale + tip + deposit;
+            const received = Number(p.receivedAmount) || 0;
+            if (received > 0 && received < base) {
+              alert(`Valor recebido em dinheiro na parcela #${i + 1} é menor que a soma de venda, gorjeta e depósito.`);
+              return;
+            }
+          }
+        }
+
+        const payload = mixedPayments.map((p) => ({
           method: p.method,
           amount: (Number(p.amount) || 0).toFixed(2),
         }));
+
+        const allocations = mixedPayments.map((p) => {
+          const sale = Number(p.amount) || 0;
+          const tip = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.tipAmount) || 0);
+          const credit = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.creditDepositAmount) || 0);
+          const base = sale + tip + credit;
+          let received = base;
+          if (p.method === "CASH") {
+            const typedCash = Number(p.receivedAmount) || 0;
+            if (typedCash > base) {
+              received = typedCash;
+            }
+          }
+          return {
+            method: p.method,
+            receivedAmount: received,
+            tipAmount: tip > 0 ? tip : undefined,
+            tipMemberId: tip > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
+            creditDepositAmount: credit > 0 ? credit : undefined,
+          };
+        });
+
+        await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
+        return;
       }
-
-      const allocations = !isMixed && (tipAmountNum > 0 || creditDepositNum > 0) ? [
-        {
-          method: singleMethod,
-          receivedAmount: effectiveReceived,
-          tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
-          tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
-          creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
-        }
-      ] : undefined;
-
-      await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
-      return;
     }
 
     // Finalizar comanda aberta
@@ -191,7 +263,7 @@ export function PaymentModal({
       }
 
       const payload = amountNum > 0 ? [{ method: singleMethod, amount: amountNum.toFixed(2) }] : [];
-      const allocations = (tipAmountNum > 0 || creditDepositNum > 0) ? [
+      const allocations = (tipAmountNum > 0 || creditDepositNum > 0 || (singleMethod === "CASH" && change > 0)) ? [
         {
           method: singleMethod,
           receivedAmount: effectiveReceived,
@@ -208,8 +280,27 @@ export function PaymentModal({
       });
     } else {
       if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
-        alert("Cada parcela deve ter um valor maior que zero.");
+        alert("Cada parcela deve ter um valor de venda maior que zero.");
         return;
+      }
+      for (let i = 0; i < mixedPayments.length; i++) {
+        const p = mixedPayments[i];
+        const tipNum = Number(p.tipAmount) || 0;
+        if (p.method !== "CUSTOMER_CREDIT" && tipNum > 0 && !p.tipMemberId && members.length > 0) {
+          alert(`Selecione o profissional que receberá a gorjeta na parcela #${i + 1}.`);
+          return;
+        }
+        if (p.method === "CASH") {
+          const sale = Number(p.amount) || 0;
+          const tip = Number(p.tipAmount) || 0;
+          const deposit = Number(p.creditDepositAmount) || 0;
+          const base = sale + tip + deposit;
+          const received = Number(p.receivedAmount) || 0;
+          if (received > 0 && received < base) {
+            alert(`Valor recebido em dinheiro na parcela #${i + 1} é menor que a soma de venda, gorjeta e depósito.`);
+            return;
+          }
+        }
       }
       if (appliedTotal > remainingTotal + 0.009) {
         alert(`A soma das parcelas (R$ ${mixedTotal.toFixed(2)}) excede o total restante (R$ ${remainingTotal.toFixed(2)}).`);
@@ -220,7 +311,7 @@ export function PaymentModal({
         return;
       }
       if (isPartialOrZero && !canManageDebt) {
-        alert(`A soma das parcelas (R$ ${mixedTotal.toFixed(2)}) deve ser exatamente igual ao total restante (R$ ${remainingTotal.toFixed(2)}).`);
+        alert("Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.");
         return;
       }
       if (isPartialOrZero && !confirmDebt) {
@@ -233,20 +324,26 @@ export function PaymentModal({
         amount: (Number(p.amount) || 0).toFixed(2),
       }));
 
-      const allocations = mixedPayments.some((p) => (Number(p.tipAmount) || 0) > 0 || (Number(p.creditDepositAmount) || 0) > 0)
-        ? mixedPayments.map((p) => {
-            const r = Number(p.amount) || 0;
-            const t = Number(p.tipAmount) || 0;
-            const c = Number(p.creditDepositAmount) || 0;
-            return {
-              method: p.method,
-              receivedAmount: r + t + c,
-              tipAmount: t > 0 ? t : undefined,
-              tipMemberId: t > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
-              creditDepositAmount: c > 0 ? c : undefined,
-            };
-          })
-        : undefined;
+      const allocations = mixedPayments.map((p) => {
+        const sale = Number(p.amount) || 0;
+        const tip = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.tipAmount) || 0);
+        const credit = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.creditDepositAmount) || 0);
+        const base = sale + tip + credit;
+        let received = base;
+        if (p.method === "CASH") {
+          const typedCash = Number(p.receivedAmount) || 0;
+          if (typedCash > base) {
+            received = typedCash;
+          }
+        }
+        return {
+          method: p.method,
+          receivedAmount: received,
+          tipAmount: tip > 0 ? tip : undefined,
+          tipMemberId: tip > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
+          creditDepositAmount: credit > 0 ? credit : undefined,
+        };
+      });
 
       await onPay(payload, {
         closeWithDebt: isPartialOrZero,
@@ -470,59 +567,171 @@ export function PaymentModal({
           ) : (
             // Formulario Pagamento Misto
             <div className="space-y-3 pt-2">
-              <label className="block text-sm font-medium text-[var(--text-secondary)]">
-                Parcelas declaradas
-              </label>
-
-              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                {mixedPayments.map((p) => (
-                  <div key={p.id} className="flex gap-2 items-center">
-                    <select
-                      value={p.method}
-                      onChange={(e) => updateMixedRow(p.id, "method", e.target.value)}
-                      disabled={busy}
-                      className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-[var(--text-primary)] focus:outline-none text-sm w-1/2"
-                    >
-                      <option value="PIX">Pix</option>
-                      <option value="CREDIT">Cartão de Crédito</option>
-                      {canConsumeCredit && customerCreditBalance > 0 && (
-                        <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
-                      )}
-                      <option value="DEBIT">Cartão de Débito</option>
-                      <option value="CASH">Dinheiro</option>
-                      <option value="OTHER">Outros</option>
-                    </select>
-
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Valor"
-                      value={p.amount}
-                      onChange={(e) => updateMixedRow(p.id, "amount", e.target.value)}
-                      disabled={busy}
-                      className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-[var(--text-primary)] focus:outline-none text-sm w-1/3"
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => removeMixedRow(p.id)}
-                      disabled={busy || mixedPayments.length === 1}
-                      className="p-1.5 text-[var(--danger)] hover:text-red-400 disabled:opacity-30 hover:bg-[var(--surface-hover)] rounded-lg transition-colors cursor-pointer"
-                    >
-                      Remover
-                    </button>
-                  </div>
-                ))}
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                  Parcelas / Meios Declarados
+                </label>
+                <button
+                  type="button"
+                  onClick={addMixedRow}
+                  disabled={busy}
+                  className="text-xs text-[var(--gold)] hover:text-[var(--gold-light)] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  + Adicionar Meio
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={addMixedRow}
-                disabled={busy}
-                className="text-xs text-[var(--gold)] hover:text-[var(--gold-light)] font-semibold flex items-center gap-1 mt-1 cursor-pointer transition-colors"
-              >
-                + Adicionar Parcela
-              </button>
+              <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
+                {mixedPayments.map((p, idx) => {
+                  const sale = Number(p.amount) || 0;
+                  const tip = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.tipAmount) || 0);
+                  const deposit = p.method === "CUSTOMER_CREDIT" ? 0 : (Number(p.creditDepositAmount) || 0);
+                  const baseNeeded = sale + tip + deposit;
+                  const typedCash = p.method === "CASH" ? (Number(p.receivedAmount) || 0) : 0;
+                  const rowChange = p.method === "CASH" && typedCash > baseNeeded ? typedCash - baseNeeded : 0;
+
+                  return (
+                    <div key={p.id} className="p-3 bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg space-y-2">
+                      <div className="flex justify-between items-center pb-1 border-b border-[var(--border-subtle)]">
+                        <span className="text-xs font-semibold text-[var(--gold)]">
+                          Meio #{idx + 1}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeMixedRow(p.id)}
+                          disabled={busy || mixedPayments.length === 1}
+                          className="text-xs text-[var(--danger)] hover:text-red-400 disabled:opacity-30 cursor-pointer"
+                        >
+                          Remover
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                            Forma
+                          </label>
+                          <select
+                            value={p.method}
+                            onChange={(e) => updateMixedRow(p.id, "method", e.target.value)}
+                            disabled={busy}
+                            className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none"
+                          >
+                            <option value="PIX">Pix</option>
+                            <option value="CREDIT">Cartão de Crédito</option>
+                            {canConsumeCredit && customerCreditBalance > 0 && (
+                              <option value="CUSTOMER_CREDIT">Crédito do Cliente</option>
+                            )}
+                            <option value="DEBIT">Cartão de Débito</option>
+                            <option value="CASH">Dinheiro</option>
+                            <option value="OTHER">Outros</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                            Valor Venda (R$)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={p.amount}
+                            onChange={(e) => updateMixedRow(p.id, "amount", e.target.value)}
+                            disabled={busy}
+                            className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {p.method === "CUSTOMER_CREDIT" ? (
+                        <div className="text-[11px] text-[var(--text-muted)] bg-[var(--surface)] p-1.5 rounded border border-[var(--border-subtle)]">
+                          ℹ️ Crédito do cliente: restrito à venda (sem gorjeta/depósito/troco).
+                        </div>
+                      ) : (
+                        <div className="space-y-2 pt-1 border-t border-[var(--border-subtle)]">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
+                                Gorjeta (R$)
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                value={p.tipAmount ?? ""}
+                                onChange={(e) => updateMixedRow(p.id, "tipAmount", e.target.value)}
+                                disabled={busy}
+                                className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                              />
+                            </div>
+                            {tip > 0 && (
+                              <div>
+                                <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
+                                  Profissional Favorecido <span className="text-[var(--danger)]">*</span>
+                                </label>
+                                <select
+                                  value={p.tipMemberId ?? ""}
+                                  onChange={(e) => updateMixedRow(p.id, "tipMemberId", e.target.value)}
+                                  disabled={busy}
+                                  required
+                                  className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                                >
+                                  <option value="">Selecione...</option>
+                                  {members.map((m) => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
+                              Adicionar ao Crédito do Cliente (R$)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              value={p.creditDepositAmount ?? ""}
+                              onChange={(e) => updateMixedRow(p.id, "creditDepositAmount", e.target.value)}
+                              disabled={busy}
+                              className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                            />
+                          </div>
+
+                          {p.method === "CASH" && (
+                            <div className="pt-1 border-t border-[var(--border-subtle)]">
+                              <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
+                                Valor recebido em dinheiro (R$)
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder={`Mínimo: R$ ${baseNeeded.toFixed(2)}`}
+                                value={p.receivedAmount ?? ""}
+                                onChange={(e) => updateMixedRow(p.id, "receivedAmount", e.target.value)}
+                                disabled={busy}
+                                className="w-full bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--text-primary)] focus:outline-none"
+                              />
+                              {rowChange > 0 && (
+                                <p className="mt-1 text-xs text-[var(--gold)] font-serif font-medium">
+                                  Troco desta parcela: R$ {rowChange.toFixed(2)}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -537,22 +746,22 @@ export function PaymentModal({
               <span>Aplicado à venda:</span>
               <span>R$ {appliedTotal.toFixed(2)}</span>
             </div>
-            {tipAmountNum > 0 && (
+            {(isMixed ? mixedTipsTotal : tipAmountNum) > 0 && (
               <div className="flex justify-between text-emerald-400">
                 <span>Gorjeta:</span>
-                <span>R$ {tipAmountNum.toFixed(2)}</span>
+                <span>R$ {(isMixed ? mixedTipsTotal : tipAmountNum).toFixed(2)}</span>
               </div>
             )}
-            {creditDepositNum > 0 && (
+            {(isMixed ? mixedCreditDepositTotal : creditDepositNum) > 0 && (
               <div className="flex justify-between text-blue-400">
                 <span>Crédito gerado:</span>
-                <span>R$ {creditDepositNum.toFixed(2)}</span>
+                <span>R$ {(isMixed ? mixedCreditDepositTotal : creditDepositNum).toFixed(2)}</span>
               </div>
             )}
-            {showChange && change > 0 && (
+            {(isMixed ? mixedChangeTotal > 0 : (showChange && change > 0)) && (
               <div className="flex justify-between text-amber-300 font-medium">
                 <span>Troco (dinheiro):</span>
-                <span>R$ {change.toFixed(2)}</span>
+                <span>R$ {(isMixed ? mixedChangeTotal : change).toFixed(2)}</span>
               </div>
             )}
             {outstanding > 0.009 && (

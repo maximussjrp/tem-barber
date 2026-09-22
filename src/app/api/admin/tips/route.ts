@@ -16,7 +16,11 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status");
 
   const where: Prisma.TipEntryWhereInput = { barbershopId: data!.barbershopId };
-  if (memberId) where.memberId = memberId;
+  if (data!.role === "BARBER") {
+    where.memberId = data!.memberId;
+  } else if (memberId) {
+    where.memberId = memberId;
+  }
   if (status) where.status = status as TipStatus;
 
   const tips = await prisma.tipEntry.findMany({

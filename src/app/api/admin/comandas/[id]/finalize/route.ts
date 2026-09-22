@@ -186,6 +186,7 @@ export async function POST(
       const currentComanda = await recalculateComandaTotals(tx, id);
 
       if (body.allocations && body.allocations.length > 0) {
+        const allowOutstanding = Boolean(body.closeWithDebt && body.confirmOutstandingBalance);
         const { comanda: closedComanda } = await processCheckoutAllocation(tx, {
           barbershopId: data!.barbershopId,
           comandaId: id,
@@ -195,6 +196,7 @@ export async function POST(
           actorMemberId: data!.memberId,
           actorRole: data!.role,
           mode: "FINALIZE",
+          allowOutstanding,
           idempotencyKey,
         });
         return closedComanda;

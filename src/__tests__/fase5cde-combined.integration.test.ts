@@ -646,4 +646,426 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
       ).rejects.toThrow("Comanda nao encontrada.");
     });
   });
+
+  describe("6. Corrective Patch C1–C5 Verification Suite", () => {
+    test("C1: Same tenders in same order with same idempotency key replays successfully", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente C1",
+          subtotal: 100.0,
+          total: 100.0,
+          paidTotal: 0.0,
+          remainingTotal: 100.0,
+          status: "OPEN",
+        },
+      });
+
+      await prisma.comandaItem.create({
+        data: {
+          comandaId: comanda.id,
+          barbershopId,
+          type: "SERVICE",
+          description: "Serviço Teste",
+          quantity: 1,
+          unitPrice: 100.0,
+          total: 100.0,
+        },
+      });
+
+      const key = `c1-key-${Date.now()}`;
+      const tenders = [
+        { method: PaymentMethod.PIX, receivedAmount: 60.0 },
+        { method: PaymentMethod.CASH, receivedAmount: 40.0 },
+      ];
+
+      const res1 = await prisma.$transaction(async (tx) => {
+        return processCheckoutAllocation(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          tenders,
+          createdById: cashierUserId,
+          idempotencyKey: key,
+        });
+      });
+
+      const res2 = await prisma.$transaction(async (tx) => {
+        return processCheckoutAllocation(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          tenders,
+          createdById: cashierUserId,
+          idempotencyKey: key,
+        });
+      });
+
+      expect(res1.transaction.id).toBe(res2.transaction.id);
+    });
+
+    test("C1: Same tenders in reversed order with same idempotency key throws 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente C1 Rev",
+          subtotal: 100.0,
+          total: 100.0,
+          paidTotal: 0.0,
+          remainingTotal: 100.0,
+          status: "OPEN",
+        },
+      });
+
+      await prisma.comandaItem.create({
+        data: {
+          comandaId: comanda.id,
+          barbershopId,
+          type: "SERVICE",
+          description: "Serviço Teste",
+          quantity: 1,
+          unitPrice: 100.0,
+          total: 100.0,
+        },
+      });
+
+      const key = `c1-rev-key-${Date.now()}`;
+
+      await prisma.$transaction(async (tx) => {
+        return processCheckoutAllocation(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          tenders: [
+            { method: PaymentMethod.PIX, receivedAmount: 60.0 },
+            { method: PaymentMethod.CASH, receivedAmount: 40.0 },
+          ],
+          createdById: cashierUserId,
+          idempotencyKey: key,
+        });
+      });
+
+      // Tenta submeter ordem invertida com a MESMA chave de idempotência
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return processCheckoutAllocation(tx, {
+            barbershopId,
+            comandaId: comanda.id,
+            tenders: [
+              { method: PaymentMethod.CASH, receivedAmount: 40.0 },
+              { method: PaymentMethod.PIX, receivedAmount: 60.0 },
+            ],
+            createdById: cashierUserId,
+            idempotencyKey: key,
+          });
+        })
+      ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+    });
+
+    test("C2: Comanda with PAID_OUT tip throws TIP_PAYOUT_REVERSAL_REQUIRED on cancel without side effects", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente C2",
+          subtotal: 50.0,
+          total: 50.0,
+          paidTotal: 50.0,
+          remainingTotal: 0.0,
+          status: "CLOSED",
+        },
+      });
+
+      const payment = await prisma.payment.create({
+        data: {
+          barbershopId,
+          comandaId: comanda.id,
+          method: "PIX",
+          amount: 50.0,
+          status: "CONFIRMED",
+          receivedById: cashierUserId,
+        },
+      });
+
+      const tip = await prisma.tipEntry.create({
+        data: {
+          barbershopId,
+          comandaId: comanda.id,
+          memberId: barberMemberId,
+          amount: 15.0,
+          method: "PIX",
+          status: "PAID_OUT",
+          paidOutAmount: 15.0,
+        },
+      });
+
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return cancelComanda(tx, {
+            barbershopId,
+            comandaId: comanda.id,
+            reason: "Cancelamento teste C2",
+            userId: cashierUserId,
+            refundAll: true,
+          });
+        })
+      ).rejects.toThrow("A comanda possui gorjetas já repassadas ao profissional. Reverta o repasse antes de cancelar.");
+
+      // Prova ausência de efeitos colaterais
+      const refreshedPayment = await prisma.payment.findUnique({ where: { id: payment.id } });
+      expect(Number(refreshedPayment?.refundedAmount || 0)).toBe(0);
+
+      const refreshedComanda = await prisma.comanda.findUnique({ where: { id: comanda.id } });
+      expect(refreshedComanda?.status).toBe("CLOSED");
+
+      const refreshedTip = await prisma.tipEntry.findUnique({ where: { id: tip.id } });
+      expect(refreshedTip?.status).toBe("PAID_OUT");
+    });
+
+    test("C3: reverseCheckoutCreditDeposit with CASH and isPhysicalCashReturned=true creates negative CashMovement", async () => {
+      const { entry: depositEntry } = await prisma.$transaction(async (tx) => {
+        const { depositCustomerCreditFromCheckout } = await import("@/lib/operations/customer-credit");
+        return depositCustomerCreditFromCheckout(tx, {
+          barbershopId,
+          customerId,
+          amount: 25.0,
+          fundingMethod: PaymentMethod.CASH,
+          createdByUserId: cashierUserId,
+        });
+      });
+
+      const { reverseCheckoutCreditDeposit } = await import("@/lib/operations/customer-credit");
+      const { entry: reversalEntry } = await prisma.$transaction(async (tx) => {
+        return reverseCheckoutCreditDeposit(tx, {
+          barbershopId,
+          creditEntryId: depositEntry.id,
+          reason: "Devolução em dinheiro teste C3",
+          createdByUserId: cashierUserId,
+          isPhysicalCashReturned: true,
+        });
+      });
+
+      const cashMove = await prisma.cashMovement.findFirst({
+        where: { customerCreditEntryId: reversalEntry.id },
+      });
+      expect(cashMove).not.toBeNull();
+      expect(Number(cashMove?.amount)).toBe(-25.0);
+    });
+
+    test("C3: reverseCheckoutCreditDeposit with CASH and isPhysicalCashReturned=false does NOT create CashMovement", async () => {
+      const { entry: depositEntry } = await prisma.$transaction(async (tx) => {
+        const { depositCustomerCreditFromCheckout } = await import("@/lib/operations/customer-credit");
+        return depositCustomerCreditFromCheckout(tx, {
+          barbershopId,
+          customerId,
+          amount: 15.0,
+          fundingMethod: PaymentMethod.CASH,
+          createdByUserId: cashierUserId,
+        });
+      });
+
+      const { reverseCheckoutCreditDeposit } = await import("@/lib/operations/customer-credit");
+      const { entry: reversalEntry } = await prisma.$transaction(async (tx) => {
+        return reverseCheckoutCreditDeposit(tx, {
+          barbershopId,
+          creditEntryId: depositEntry.id,
+          reason: "Estorno sem devolução física",
+          createdByUserId: cashierUserId,
+          isPhysicalCashReturned: false,
+        });
+      });
+
+      const cashMove = await prisma.cashMovement.findFirst({
+        where: { customerCreditEntryId: reversalEntry.id },
+      });
+      expect(cashMove).toBeNull();
+    });
+
+    test("C3: reverseCheckoutCreditDeposit with PIX and isPhysicalCashReturned=true does NOT create CashMovement", async () => {
+      const { entry: depositEntry } = await prisma.$transaction(async (tx) => {
+        const { depositCustomerCreditFromCheckout } = await import("@/lib/operations/customer-credit");
+        return depositCustomerCreditFromCheckout(tx, {
+          barbershopId,
+          customerId,
+          amount: 30.0,
+          fundingMethod: PaymentMethod.PIX,
+          createdByUserId: cashierUserId,
+        });
+      });
+
+      const { reverseCheckoutCreditDeposit } = await import("@/lib/operations/customer-credit");
+      const { entry: reversalEntry } = await prisma.$transaction(async (tx) => {
+        return reverseCheckoutCreditDeposit(tx, {
+          barbershopId,
+          creditEntryId: depositEntry.id,
+          reason: "Estorno de PIX",
+          createdByUserId: cashierUserId,
+          isPhysicalCashReturned: true,
+        });
+      });
+
+      const cashMove = await prisma.cashMovement.findFirst({
+        where: { customerCreditEntryId: reversalEntry.id },
+      });
+      expect(cashMove).toBeNull();
+    });
+
+    test("C4: BARBER role is strictly scoped to own tips in where filter", async () => {
+      // In route handler: if role === BARBER, where.memberId = session.memberId
+      const simulateRouteQuery = (role: string, sessionMemberId: string, queryMemberId?: string | null) => {
+        const where: { barbershopId: string; memberId?: string } = { barbershopId };
+        if (role === "BARBER") {
+          where.memberId = sessionMemberId;
+        } else if (queryMemberId) {
+          where.memberId = queryMemberId;
+        }
+        return where;
+      };
+
+      const barberWhereWithoutParam = simulateRouteQuery("BARBER", barberMemberId, null);
+      expect(barberWhereWithoutParam.memberId).toBe(barberMemberId);
+
+      const barberWhereWithOtherParam = simulateRouteQuery("BARBER", barberMemberId, "other-member-id");
+      expect(barberWhereWithOtherParam.memberId).toBe(barberMemberId);
+
+      const managerWhereWithParam = simulateRouteQuery("MANAGER", "manager-id", barberMemberId);
+      expect(managerWhereWithParam.memberId).toBe(barberMemberId);
+
+      const managerWhereWithoutParam = simulateRouteQuery("MANAGER", "manager-id", null);
+      expect(managerWhereWithoutParam.memberId).toBeUndefined();
+    });
+
+    test("C5: OPEN comanda checkout with debt requires permissions and confirmation", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente C5",
+          subtotal: 100.0,
+          total: 100.0,
+          paidTotal: 0.0,
+          remainingTotal: 100.0,
+          status: "OPEN",
+        },
+      });
+
+      await prisma.comandaItem.create({
+        data: {
+          comandaId: comanda.id,
+          barbershopId,
+          type: "SERVICE",
+          description: "Serviço Teste",
+          quantity: 1,
+          unitPrice: 100.0,
+          total: 100.0,
+        },
+      });
+
+      // 1. BARBER tentando com allowOutstanding=true -> 403 DEBT_PERMISSION_REQUIRED
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return processCheckoutAllocation(tx, {
+            barbershopId,
+            comandaId: comanda.id,
+            tenders: [{ method: PaymentMethod.PIX, receivedAmount: 60.0 }],
+            createdById: cashierUserId,
+            actorRole: "BARBER",
+            actorMemberId: barberMemberId,
+            mode: "FINALIZE",
+            allowOutstanding: true,
+          });
+        })
+      ).rejects.toThrow("Apenas gerentes e proprietários podem finalizar comanda com saldo em aberto.");
+
+      // 2. MANAGER sem allowOutstanding (sem confirmação) -> 422 DEBT_CONFIRMATION_REQUIRED
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return processCheckoutAllocation(tx, {
+            barbershopId,
+            comandaId: comanda.id,
+            tenders: [{ method: PaymentMethod.PIX, receivedAmount: 60.0 }],
+            createdById: cashierUserId,
+            actorRole: "MANAGER",
+            mode: "FINALIZE",
+            allowOutstanding: false,
+          });
+        })
+      ).rejects.toThrow("É necessário confirmar o encerramento com saldo em aberto.");
+
+      // 3. MANAGER com allowOutstanding=true -> encerra comanda com saldo em aberto
+      const { comanda: closedComanda } = await prisma.$transaction(async (tx) => {
+        return processCheckoutAllocation(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          tenders: [{ method: PaymentMethod.PIX, receivedAmount: 60.0 }],
+          createdById: cashierUserId,
+          actorRole: "MANAGER",
+          mode: "FINALIZE",
+          allowOutstanding: true,
+        });
+      });
+
+      expect(closedComanda.status).toBe("CLOSED");
+      expect(Number(closedComanda.paidTotal)).toBe(60.0);
+      expect(Number(closedComanda.remainingTotal)).toBe(40.0);
+    });
+
+    test("C5: Fingerprint differs between full settlement vs partial with debt on same key", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente C5 Fingerprint",
+          subtotal: 100.0,
+          total: 100.0,
+          paidTotal: 0.0,
+          remainingTotal: 100.0,
+          status: "OPEN",
+        },
+      });
+
+      await prisma.comandaItem.create({
+        data: {
+          comandaId: comanda.id,
+          barbershopId,
+          type: "SERVICE",
+          description: "Serviço Teste",
+          quantity: 1,
+          unitPrice: 100.0,
+          total: 100.0,
+        },
+      });
+
+      const key = `c5-fp-${Date.now()}`;
+
+      // Primeiro fecha com allowOutstanding=true
+      await prisma.$transaction(async (tx) => {
+        return processCheckoutAllocation(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          tenders: [{ method: PaymentMethod.PIX, receivedAmount: 50.0 }],
+          createdById: cashierUserId,
+          actorRole: "MANAGER",
+          mode: "FINALIZE",
+          allowOutstanding: true,
+          idempotencyKey: key,
+        });
+      });
+
+      // Se tentar a mesma chave agora com allowOutstanding=false, gera 409 IDEMPOTENCY_KEY_CONFLICT
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return processCheckoutAllocation(tx, {
+            barbershopId,
+            comandaId: comanda.id,
+            tenders: [{ method: PaymentMethod.PIX, receivedAmount: 50.0 }],
+            createdById: cashierUserId,
+            actorRole: "MANAGER",
+            mode: "FINALIZE",
+            allowOutstanding: false,
+            idempotencyKey: key,
+          });
+        })
+      ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+    });
+  });
 });

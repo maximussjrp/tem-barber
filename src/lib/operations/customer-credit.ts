@@ -2,6 +2,7 @@ import { CreditSourceKind, PaymentMethod, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { fromCents, MoneyValue, positiveCents, toCents } from "./money";
 import { OperationalError } from "./comandas";
+import { syncCashSessionExpectedAmount } from "./cash";
 
 export async function getCustomerCreditAccount(
   barbershopId: string,
@@ -562,6 +563,7 @@ export async function reverseCheckoutCreditDeposit(
     reason?: string | null;
     createdByUserId: string;
     idempotencyKey?: string | null;
+    isPhysicalCashReturned?: boolean;
   }
 ) {
   const originalEntry = await tx.customerCreditEntry.findUnique({
@@ -637,6 +639,24 @@ export async function reverseCheckoutCreditDeposit(
       idempotencyKey: input.idempotencyKey || null,
     },
   });
+
+  if (input.isPhysicalCashReturned && originalEntry.fundingMethod === "CASH") {
+    const activeSession = await tx.cashSession.findFirst({
+      where: { barbershopId: input.barbershopId, status: "OPEN" },
+    });
+    if (activeSession) {
+      await tx.cashMovement.create({
+        data: {
+          barbershopId: input.barbershopId,
+          cashSessionId: activeSession.id,
+          amount: fromCents(-amountCents),
+          description: input.reason || `Devolução física em dinheiro de troco depositado em crédito`,
+          customerCreditEntryId: reversalEntry.id,
+        },
+      });
+      await syncCashSessionExpectedAmount(tx, activeSession.id);
+    }
+  }
 
   await tx.financialEntry.create({
     data: {
