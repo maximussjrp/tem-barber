@@ -29,7 +29,7 @@ export interface ProcessCheckoutInput {
   idempotencyKey?: string | null;
 }
 
-function computeCheckoutFingerprint(input: {
+export function computeCheckoutFingerprint(input: {
   barbershopId: string;
   comandaId: string;
   tenders: TenderInput[];

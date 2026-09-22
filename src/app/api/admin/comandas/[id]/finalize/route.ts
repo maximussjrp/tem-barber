@@ -7,7 +7,7 @@ import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTot
 import { registerPayment, payComandaWithCustomerCredit, closeComanda } from "@/lib/operations/payments";
 import { toCents } from "@/lib/operations/money";
 
-import { processCheckoutAllocation, TenderInput } from "@/lib/operations/checkout";
+import { computeCheckoutFingerprint, processCheckoutAllocation, TenderInput } from "@/lib/operations/checkout";
 
 interface PaymentItem {
   method: PaymentMethod;
@@ -84,17 +84,114 @@ export async function POST(
         }
       }
 
+      // RESOLVER ROOT TRANSACTION EXISTENTE ANTES DA DECISÃO OPEN/CLOSED OU FINALIZE/DEBT_PAYMENT
+      if (body.allocations && body.allocations.length > 0 && idempotencyKey) {
+        const existingTx = await tx.checkoutTransaction.findFirst({
+          where: { barbershopId: data!.barbershopId, idempotencyKey },
+          include: { allocations: true },
+        });
+
+        if (existingTx) {
+          if (existingTx.comandaId !== id) {
+            throw new OperationalError(
+              "IDEMPOTENCY_KEY_CONFLICT",
+              "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+              409
+            );
+          }
+
+          let derivedAllowOutstanding: boolean | undefined = undefined;
+          if (existingTx.mode === "FINALIZE") {
+            const fpTrue = computeCheckoutFingerprint({
+              barbershopId: data!.barbershopId,
+              comandaId: id,
+              tenders: body.allocations,
+              mode: "FINALIZE",
+              allowOutstanding: true,
+            });
+            const fpFalse = computeCheckoutFingerprint({
+              barbershopId: data!.barbershopId,
+              comandaId: id,
+              tenders: body.allocations,
+              mode: "FINALIZE",
+              allowOutstanding: false,
+            });
+
+            if (existingTx.payloadFingerprint === fpTrue) {
+              derivedAllowOutstanding = true;
+            } else if (existingTx.payloadFingerprint === fpFalse) {
+              derivedAllowOutstanding = false;
+            } else {
+              throw new OperationalError(
+                "IDEMPOTENCY_KEY_CONFLICT",
+                "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                409
+              );
+            }
+
+            if (body.closeWithDebt !== undefined) {
+              const requestedAllow = Boolean(body.closeWithDebt && body.confirmOutstandingBalance);
+              if (requestedAllow !== derivedAllowOutstanding) {
+                throw new OperationalError(
+                  "IDEMPOTENCY_KEY_CONFLICT",
+                  "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                  409
+                );
+              }
+            }
+          } else if (existingTx.mode === "DEBT_PAYMENT") {
+            const fpDebt = computeCheckoutFingerprint({
+              barbershopId: data!.barbershopId,
+              comandaId: id,
+              tenders: body.allocations,
+              mode: "DEBT_PAYMENT",
+            });
+            if (existingTx.payloadFingerprint !== fpDebt) {
+              throw new OperationalError(
+                "IDEMPOTENCY_KEY_CONFLICT",
+                "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                409
+              );
+            }
+          }
+
+          const { comanda: closedComanda } = await processCheckoutAllocation(tx, {
+            barbershopId: data!.barbershopId,
+            comandaId: id,
+            customerId: comanda.customerId,
+            tenders: body.allocations,
+            createdById: data!.userId,
+            actorMemberId: data!.memberId,
+            actorRole: data!.role,
+            mode: existingTx.mode,
+            allowOutstanding: derivedAllowOutstanding,
+            idempotencyKey,
+          });
+          return closedComanda;
+        }
+      }
+
       // 9B: COMANDA JÁ CLOSED
       if (comanda.status === "CLOSED") {
         const remainingCents = toCents(comanda.remainingTotal);
         if (remainingCents === 0) {
-          if (idempotencyKey) {
-            const fullComanda = await tx.comanda.findUnique({
-              where: { id },
-              include: comandaInclude,
+          if (idempotencyKey && body.payments && body.payments.length > 0) {
+            const existingPayment = await tx.payment.findFirst({
+              where: {
+                barbershopId: data!.barbershopId,
+                comandaId: id,
+                idempotencyKey: { startsWith: idempotencyKey },
+              },
             });
-            return fullComanda;
+            if (existingPayment) {
+              const fullComanda = await tx.comanda.findUnique({
+                where: { id },
+                include: comandaInclude,
+              });
+              return fullComanda;
+            }
           }
+
           if ((body.payments && body.payments.length > 0) || (body.allocations && body.allocations.length > 0)) {
             throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga e encerrada.", 422);
           }

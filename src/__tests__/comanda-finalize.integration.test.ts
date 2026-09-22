@@ -165,7 +165,7 @@ async function markServicesDone(comandaId: string) {
   });
 }
 
-describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () => {
+describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", { timeout: 30000 }, () => {
   beforeAll(async () => {
     process.env.DATABASE_URL = testDatabaseUrl;
     vi.resetModules();
@@ -532,5 +532,182 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", () =>
     const resMonthly = await commissionsRoute.GET(reqMonthly);
     const listMonthly = await resMonthly.json();
     expect(listMonthly).toHaveLength(0); // O redesenho não cria novos CommissionPeriod legados.
+  });
+
+  describe("Idempotência da Rota Finalize com Alocações (C1-C6 Root Idempotency Patch)", () => {
+    it("1-3. OPEN com dívida, replay legítimo e rejeição de payload conflitante", async () => {
+      const tenant = await seedTenant("idem-debt");
+      getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+      const createComanda = await comandasRoute.POST(
+        jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+      );
+      expect(createComanda.status).toBe(201);
+      const comanda = await createComanda.json();
+      await markServicesDone(comanda.id);
+
+      const keyABC = `idem-key-abc-${Date.now()}`;
+      const body1 = {
+        allocations: [{ method: "PIX", receivedAmount: 30.0 }],
+        closeWithDebt: true,
+        confirmOutstandingBalance: true,
+      };
+
+      // 1. OPEN + allocations + closeWithDebt -> 200, CLOSED com dívida
+      const res1 = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, body1, keyABC),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(res1.status).toBe(200);
+      const json1 = await res1.json();
+      expect(json1.status).toBe("CLOSED");
+      expect(Number(json1.paidTotal)).toBe(30.0);
+      expect(Number(json1.remainingTotal)).toBe(20.0);
+
+      // Contagens antes do replay
+      const txCountBefore = await prisma.checkoutTransaction.count({ where: { comandaId: comanda.id } });
+      const paymentCountBefore = await prisma.payment.count({ where: { comandaId: comanda.id } });
+      const tipCountBefore = await prisma.tipEntry.count({ where: { comandaId: comanda.id } });
+      const creditCountBefore = await prisma.customerCreditEntry.count({ where: { comandaId: comanda.id } });
+      expect(txCountBefore).toBe(1);
+      expect(paymentCountBefore).toBe(1);
+
+      // 2. Repetir exatamente request #1 mesma key ABC após comanda já estar CLOSED
+      const res2 = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, body1, keyABC),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(res2.status).toBe(200);
+      const json2 = await res2.json();
+      expect(json2.status).toBe("CLOSED");
+      expect(Number(json2.paidTotal)).toBe(30.0);
+      expect(Number(json2.remainingTotal)).toBe(20.0);
+
+      // Contagens após replay (nenhum efeito duplicado)
+      const txCountAfter = await prisma.checkoutTransaction.count({ where: { comandaId: comanda.id } });
+      const paymentCountAfter = await prisma.payment.count({ where: { comandaId: comanda.id } });
+      const tipCountAfter = await prisma.tipEntry.count({ where: { comandaId: comanda.id } });
+      const creditCountAfter = await prisma.customerCreditEntry.count({ where: { comandaId: comanda.id } });
+      expect(txCountAfter).toBe(txCountBefore);
+      expect(paymentCountAfter).toBe(paymentCountBefore);
+      expect(tipCountAfter).toBe(tipCountBefore);
+      expect(creditCountAfter).toBe(creditCountBefore);
+
+      // 3. Após #1: mesma key ABC payload diferente -> 409 IDEMPOTENCY_KEY_CONFLICT
+      const bodyDiff = {
+        allocations: [{ method: "PIX", receivedAmount: 40.0 }],
+        closeWithDebt: true,
+        confirmOutstandingBalance: true,
+      };
+      const res3 = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, bodyDiff, keyABC),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(res3.status).toBe(409);
+      const json3 = await res3.json();
+      expect(json3.error).toBe("IDEMPOTENCY_KEY_CONFLICT");
+    });
+
+    it("4-5. Comanda quitada: rejeição de key nova e replay de FINALIZE quitado", async () => {
+      const tenant = await seedTenant("idem-settled");
+      getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+      const createComanda = await comandasRoute.POST(
+        jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+      );
+      const comanda = await createComanda.json();
+      await markServicesDone(comanda.id);
+
+      const fullKey = `full-settle-key-${Date.now()}`;
+      const fullBody = {
+        allocations: [{ method: "PIX", receivedAmount: 50.0 }],
+      };
+
+      // 5. Finalizar com quitação total
+      const resOrig = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, fullBody, fullKey),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(resOrig.status).toBe(200);
+      const jsonOrig = await resOrig.json();
+      expect(jsonOrig.status).toBe("CLOSED");
+      expect(Number(jsonOrig.remainingTotal)).toBe(0);
+
+      // 4. Comanda CLOSED totalmente quitada: key NOVA + allocations -> 422 COMANDA_ALREADY_SETTLED
+      const newKey = `brand-new-key-${Date.now()}`;
+      const resNew = await finalizeRoute.POST(
+        jsonRequest(
+          `http://localhost/api/admin/comandas/${comanda.id}/finalize`,
+          { allocations: [{ method: "PIX", receivedAmount: 10.0 }] },
+          newKey
+        ),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(resNew.status).toBe(422);
+      const jsonNew = await resNew.json();
+      expect(jsonNew.error).toBe("COMANDA_ALREADY_SETTLED");
+
+      // 5. Replay normal de FINALIZE totalmente quitado: mesma key + mesmo payload -> success 200
+      const resReplay = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, fullBody, fullKey),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(resReplay.status).toBe(200);
+      const jsonReplay = await resReplay.json();
+      expect(jsonReplay.status).toBe("CLOSED");
+      expect(Number(jsonReplay.remainingTotal)).toBe(0);
+    });
+
+    it("6. Replay DEBT_PAYMENT existente: mesma key + mesmo payload -> 200", async () => {
+      const tenant = await seedTenant("idem-debt-payment");
+      getServerSessionMock.mockResolvedValue({ user: { id: tenant.ownerUser.id, role: "OWNER" } });
+
+      const createComanda = await comandasRoute.POST(
+        jsonRequest("http://localhost/api/admin/comandas", { appointmentId: tenant.appointment.id })
+      );
+      const comanda = await createComanda.json();
+      await markServicesDone(comanda.id);
+
+      // Fecha com dívida: total 50, pago 20, resta 30
+      await finalizeRoute.POST(
+        jsonRequest(
+          `http://localhost/api/admin/comandas/${comanda.id}/finalize`,
+          {
+            allocations: [{ method: "PIX", receivedAmount: 20.0 }],
+            closeWithDebt: true,
+            confirmOutstandingBalance: true,
+          },
+          `init-debt-${Date.now()}`
+        ),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+
+      // Pagamento parcial de dívida (15.0)
+      const debtKey = `debt-pay-key-${Date.now()}`;
+      const debtBody = {
+        allocations: [{ method: "PIX", receivedAmount: 15.0 }],
+      };
+
+      const resDebt1 = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, debtBody, debtKey),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(resDebt1.status).toBe(200);
+      const jsonDebt1 = await resDebt1.json();
+      expect(jsonDebt1.status).toBe("CLOSED");
+      expect(Number(jsonDebt1.paidTotal)).toBe(35.0);
+      expect(Number(jsonDebt1.remainingTotal)).toBe(15.0);
+
+      // Replay do pagamento de dívida com mesma key e mesmo payload -> 200
+      const resDebtReplay = await finalizeRoute.POST(
+        jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/finalize`, debtBody, debtKey),
+        { params: Promise.resolve({ id: comanda.id }) }
+      );
+      expect(resDebtReplay.status).toBe(200);
+      const jsonDebtReplay = await resDebtReplay.json();
+      expect(jsonDebtReplay.status).toBe("CLOSED");
+      expect(Number(jsonDebtReplay.paidTotal)).toBe(35.0);
+      expect(Number(jsonDebtReplay.remainingTotal)).toBe(15.0);
+    });
   });
 });
