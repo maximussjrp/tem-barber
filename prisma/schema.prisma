@@ -73,6 +73,11 @@ model User {
   financialTitleEventsAsActor         FinancialTitleEvent[]               @relation("FinancialTitleEventActorUser")
   customerCreditAccounts              CustomerCreditAccount[]
   createdCustomerCreditEntries        CustomerCreditEntry[]               @relation("CustomerCreditEntryCreatedByUser")
+  createdCheckoutTransactions         CheckoutTransaction[]               @relation("CheckoutCreatedByUser")
+  createdTipEntries                   TipEntry[]                          @relation("TipCreatedByUser")
+  refundedTipRefunds                  TipRefund[]                         @relation("TipRefundedByUser")
+  createdTipPayouts                   TipPayout[]                         @relation("TipPayoutCreatedByUser")
+  createdTipPayoutReversals           TipPayoutReversal[]                 @relation("TipPayoutReversalCreatedByUser")
 
   @@map("users")
 }
@@ -170,6 +175,12 @@ model Barbershop {
   financialEntryAllocations          FinancialEntryAllocation[]
   customerCreditAccounts             CustomerCreditAccount[]
   customerCreditEntries              CustomerCreditEntry[]
+  checkoutTransactions               CheckoutTransaction[]
+  checkoutAllocations                CheckoutAllocation[]
+  tipEntries                         TipEntry[]
+  tipRefunds                         TipRefund[]
+  tipPayouts                         TipPayout[]
+  tipPayoutReversals                 TipPayoutReversal[]
 
   @@map("barbershops")
 }
@@ -240,6 +251,9 @@ model BarbershopMember {
   marketingConsentEventsAsActor     CustomerMarketingConsentEvent[]     @relation("MarketingConsentEventActorMember")
   createdReactivationCampaigns      ReactivationCampaign[]              @relation("ReactivationCampaignCreatedByMember")
   suggestedInReactivationRecipients ReactivationCampaignRecipient[]     @relation("ReactivationRecipientSuggestedMember")
+  receivedTipEntries                TipEntry[]                          @relation("TipMember")
+  tipPayouts                        TipPayout[]                         @relation("TipPayoutMember")
+  allocatedCheckoutTips             CheckoutAllocation[]                @relation("CheckoutTipMember")
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -812,6 +826,12 @@ enum FinancialEntryType {
   COMMISSION_ADVANCE
   COMMISSION_ADVANCE_REVERSAL
   COMMISSION_PAYOUT
+  TIP_RECEIVED
+  TIP_REFUND
+  TIP_PAYOUT
+  TIP_PAYOUT_REVERSAL
+  CUSTOMER_CREDIT_DEPOSIT
+  CUSTOMER_CREDIT_DEPOSIT_REFUND
 }
 
 model Comanda {
@@ -845,6 +865,8 @@ model Comanda {
   reopenAudits                     ComandaReopenAudit[]
   cancelAudits                     ComandaCancelAudit[]
   attributedReactivationRecipients ReactivationCampaignRecipient[] @relation("ReactivationRecipientAttributedComanda")
+  checkoutTransactions             CheckoutTransaction[]
+  tipEntries                       TipEntry[]
 
   @@index([barbershopId, status])
   @@index([barbershopId, openedAt])
@@ -999,6 +1021,7 @@ model Payment {
   refundedAmount Decimal              @default(0) @map("refunded_amount") @db.Decimal(10, 2)
   refundOfId     String?              @map("refund_of_id")
   refundReason   String?              @map("refund_reason")
+  checkoutAllocationId String?        @unique @map("checkout_allocation_id")
   createdAt      DateTime             @default(now()) @map("created_at")
 
   comanda                Comanda                 @relation(fields: [comandaId], references: [id], onDelete: Cascade)
@@ -1008,6 +1031,7 @@ model Payment {
   financialEntries       FinancialEntry[]
   commissionAdjustments  CommissionAdjustment[]
   commissionPayableItems CommissionPayableItem[]
+  checkoutAllocation     CheckoutAllocation?     @relation(fields: [checkoutAllocationId], references: [id], onDelete: Restrict)
 
   @@unique([barbershopId, idempotencyKey])
   @@index([barbershopId, paidAt])
@@ -1049,10 +1073,20 @@ model CashMovement {
   commissionAdvanceId         String?     @unique @map("commission_advance_id")
   commissionAdvanceReversalId String?     @unique @map("commission_advance_reversal_id")
   commissionPayoutId          String?     @unique @map("commission_payout_id")
+  tipEntryId                  String?     @unique @map("tip_entry_id")
+  tipRefundId                 String?     @unique @map("tip_refund_id")
+  tipPayoutId                 String?     @unique @map("tip_payout_id")
+  tipPayoutReversalId         String?     @unique @map("tip_payout_reversal_id")
+  customerCreditEntryId       String?     @unique @map("customer_credit_entry_id")
 
   commissionAdvance         CommissionAdvance?         @relation(fields: [commissionAdvanceId], references: [id], onDelete: Restrict)
   commissionAdvanceReversal CommissionAdvanceReversal? @relation(fields: [commissionAdvanceReversalId], references: [id], onDelete: Restrict)
   commissionPayout          CommissionPayout?          @relation(fields: [commissionPayoutId], references: [id], onDelete: Restrict)
+  tipEntry                  TipEntry?                  @relation(fields: [tipEntryId], references: [id], onDelete: Restrict)
+  tipRefund                 TipRefund?                 @relation(fields: [tipRefundId], references: [id], onDelete: Restrict)
+  tipPayout                 TipPayout?                 @relation(fields: [tipPayoutId], references: [id], onDelete: Restrict)
+  tipPayoutReversal         TipPayoutReversal?         @relation(fields: [tipPayoutReversalId], references: [id], onDelete: Restrict)
+  customerCreditEntry       CustomerCreditEntry?       @relation(fields: [customerCreditEntryId], references: [id], onDelete: Restrict)
 
   @@index([barbershopId, cashSessionId, createdAt])
   @@map("cash_movements")
@@ -1082,10 +1116,20 @@ model FinancialEntry {
   commissionAdvanceId         String?                  @unique @map("commission_advance_id")
   commissionAdvanceReversalId String?                  @unique @map("commission_advance_reversal_id")
   commissionPayoutId          String?                  @unique @map("commission_payout_id")
+  tipEntryId                  String?                  @unique @map("tip_entry_id")
+  tipRefundId                 String?                  @unique @map("tip_refund_id")
+  tipPayoutId                 String?                  @unique @map("tip_payout_id")
+  tipPayoutReversalId         String?                  @unique @map("tip_payout_reversal_id")
+  customerCreditEntryId       String?                  @unique @map("customer_credit_entry_id")
 
   commissionAdvance         CommissionAdvance?         @relation(fields: [commissionAdvanceId], references: [id], onDelete: Restrict)
   commissionAdvanceReversal CommissionAdvanceReversal? @relation(fields: [commissionAdvanceReversalId], references: [id], onDelete: Restrict)
   commissionPayout          CommissionPayout?          @relation(fields: [commissionPayoutId], references: [id], onDelete: Restrict)
+  tipEntry                  TipEntry?                  @relation(fields: [tipEntryId], references: [id], onDelete: Restrict)
+  tipRefund                 TipRefund?                 @relation(fields: [tipRefundId], references: [id], onDelete: Restrict)
+  tipPayout                 TipPayout?                 @relation(fields: [tipPayoutId], references: [id], onDelete: Restrict)
+  tipPayoutReversal         TipPayoutReversal?         @relation(fields: [tipPayoutReversalId], references: [id], onDelete: Restrict)
+  customerCreditEntry       CustomerCreditEntry?       @relation(fields: [customerCreditEntryId], references: [id], onDelete: Restrict)
 
   financialSettlementId         String? @map("financial_settlement_id")
   financialSettlementReversalId String? @map("financial_settlement_reversal_id")
@@ -2732,6 +2776,7 @@ enum CreditSourceKind {
   REFUND_TO_CREDIT
   COMANDA_PAYMENT
   COMANDA_REFUND
+  OVERPAYMENT_REVERSAL
 }
 
 model CustomerCreditAccount {
@@ -2753,26 +2798,231 @@ model CustomerCreditAccount {
 }
 
 model CustomerCreditEntry {
-  id              String           @id @default(uuid())
-  accountId       String           @map("account_id")
-  barbershopId    String           @map("barbershop_id")
-  type            CreditEntryType
-  sourceKind      CreditSourceKind @map("source_kind")
-  amount          Decimal          @db.Decimal(10, 2)
-  balanceAfter    Decimal          @map("balance_after") @db.Decimal(10, 2)
-  description     String
-  comandaId       String?          @map("comanda_id")
-  paymentId       String?          @map("payment_id")
-  createdByUserId String?          @map("created_by_user_id")
-  idempotencyKey  String?          @map("idempotency_key")
-  createdAt       DateTime         @default(now()) @map("created_at")
+  id                   String               @id @default(uuid())
+  accountId            String               @map("account_id")
+  barbershopId         String               @map("barbershop_id")
+  type                 CreditEntryType
+  sourceKind           CreditSourceKind     @map("source_kind")
+  amount               Decimal              @db.Decimal(10, 2)
+  balanceAfter         Decimal              @map("balance_after") @db.Decimal(10, 2)
+  description          String
+  comandaId            String?              @map("comanda_id")
+  paymentId            String?              @map("payment_id")
+  createdByUserId      String?              @map("created_by_user_id")
+  idempotencyKey       String?              @map("idempotency_key")
+  checkoutAllocationId String?              @unique @map("checkout_allocation_id")
+  fundingMethod        PaymentMethod?       @map("funding_method")
+  reversalOfEntryId    String?              @map("reversal_of_entry_id")
+  createdAt            DateTime             @default(now()) @map("created_at")
 
-  account       CustomerCreditAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  barbershop    Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
-  createdByUser User?                 @relation("CustomerCreditEntryCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  account            CustomerCreditAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  barbershop         Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdByUser      User?                 @relation("CustomerCreditEntryCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  checkoutAllocation CheckoutAllocation?   @relation(fields: [checkoutAllocationId], references: [id], onDelete: Restrict)
+  reversalOfEntry    CustomerCreditEntry?  @relation("CreditEntryReversal", fields: [reversalOfEntryId], references: [id], onDelete: Restrict)
+  reversals          CustomerCreditEntry[] @relation("CreditEntryReversal")
+  cashMovement       CashMovement?
+  financialEntry     FinancialEntry?
 
   @@unique([barbershopId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([barbershopId, createdAt])
   @@map("customer_credit_entries")
+}
+
+// ----------------------------------------------------
+// 22. GORJETAS E ENGINE DE CHECKOUT (FASES 5C + 5D)
+// ----------------------------------------------------
+
+enum TipStatus {
+  ACTIVE
+  REFUNDED
+  PAID_OUT
+  PAID_OUT_REVERSED
+}
+
+enum TipPayoutStatus {
+  COMPLETED
+  REVERSED
+}
+
+enum AllocationKind {
+  SALE_PAYMENT
+  TIP
+  CUSTOMER_CREDIT_DEPOSIT
+}
+
+model CheckoutTransaction {
+  id                  String   @id @default(uuid())
+  barbershopId        String   @map("barbershop_id")
+  comandaId           String   @map("comanda_id")
+  totalReceivedAmount Decimal  @map("total_received_amount") @db.Decimal(10, 2)
+  totalSaleApplied    Decimal  @map("total_sale_applied") @db.Decimal(10, 2)
+  totalTipAmount      Decimal  @map("total_tip_amount") @db.Decimal(10, 2)
+  totalCreditDeposit  Decimal  @map("total_credit_deposit") @db.Decimal(10, 2)
+  totalChangeAmount   Decimal  @map("total_change_amount") @db.Decimal(10, 2)
+  fingerprint         String
+  createdById         String   @map("created_by_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  barbershop  Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comanda     Comanda              @relation(fields: [comandaId], references: [id], onDelete: Restrict)
+  createdBy   User                 @relation("CheckoutCreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  allocations CheckoutAllocation[]
+
+  @@index([barbershopId, comandaId])
+  @@index([barbershopId, createdAt])
+  @@map("checkout_transactions")
+}
+
+model CheckoutAllocation {
+  id                    String         @id @default(uuid())
+  checkoutTransactionId String         @map("checkout_transaction_id")
+  barbershopId          String         @map("barbershop_id")
+  tenderMethod          PaymentMethod  @map("tender_method")
+  receivedAmount        Decimal        @map("received_amount") @db.Decimal(10, 2)
+  allocationKind        AllocationKind @map("allocation_kind")
+  allocatedAmount       Decimal        @map("allocated_amount") @db.Decimal(10, 2)
+  tipMemberId           String?        @map("tip_member_id")
+  createdAt             DateTime       @default(now()) @map("created_at")
+
+  checkoutTransaction CheckoutTransaction  @relation(fields: [checkoutTransactionId], references: [id], onDelete: Cascade)
+  barbershop          Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  tipMember           BarbershopMember?    @relation("CheckoutTipMember", fields: [tipMemberId], references: [id], onDelete: Restrict)
+  payment             Payment?
+  tipEntry            TipEntry?
+  creditEntry         CustomerCreditEntry?
+
+  @@index([barbershopId, checkoutTransactionId])
+  @@map("checkout_allocations")
+}
+
+model TipEntry {
+  id                   String    @id @default(uuid())
+  barbershopId         String    @map("barbershop_id")
+  comandaId            String    @map("comanda_id")
+  memberId             String    @map("member_id")
+  amount               Decimal   @db.Decimal(10, 2)
+  method               PaymentMethod
+  status               TipStatus @default(ACTIVE)
+  checkoutAllocationId String?   @unique @map("checkout_allocation_id")
+  createdById          String?   @map("created_by_id")
+  idempotencyKey       String?   @map("idempotency_key")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  barbershop         Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  comanda            Comanda               @relation(fields: [comandaId], references: [id], onDelete: Restrict)
+  member             BarbershopMember      @relation("TipMember", fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy          User?                 @relation("TipCreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  checkoutAllocation CheckoutAllocation?  @relation(fields: [checkoutAllocationId], references: [id], onDelete: Restrict)
+  cashMovement       CashMovement?
+  financialEntry     FinancialEntry?
+  tipRefund                  TipRefund?
+  payoutAllocations          TipPayoutAllocation[]
+  payoutReversalAllocations  TipPayoutReversalAllocation[]
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, comandaId])
+  @@index([barbershopId, memberId, status])
+  @@map("tip_entries")
+}
+
+model TipRefund {
+  id             String   @id @default(uuid())
+  barbershopId   String   @map("barbershop_id")
+  tipEntryId     String   @unique @map("tip_entry_id")
+  amount         Decimal  @db.Decimal(10, 2)
+  reason         String?
+  refundedById   String   @map("refunded_by_id")
+  idempotencyKey String?  @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  barbershop     Barbershop      @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  tipEntry       TipEntry        @relation(fields: [tipEntryId], references: [id], onDelete: Restrict)
+  refundedBy     User            @relation("TipRefundedByUser", fields: [refundedById], references: [id], onDelete: Restrict)
+  cashMovement   CashMovement?
+  financialEntry FinancialEntry?
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, createdAt])
+  @@map("tip_refunds")
+}
+
+model TipPayout {
+  id             String          @id @default(uuid())
+  barbershopId   String          @map("barbershop_id")
+  memberId       String          @map("member_id")
+  totalAmount    Decimal         @map("total_amount") @db.Decimal(10, 2)
+  method         PaymentMethod
+  status         TipPayoutStatus @default(COMPLETED)
+  createdById    String          @map("created_by_id")
+  idempotencyKey String?         @map("idempotency_key")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  barbershop     Barbershop            @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member         BarbershopMember      @relation("TipPayoutMember", fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy      User                  @relation("TipPayoutCreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  allocations    TipPayoutAllocation[]
+  reversal       TipPayoutReversal?
+  cashMovement   CashMovement?
+  financialEntry FinancialEntry?
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, memberId, createdAt])
+  @@map("tip_payouts")
+}
+
+model TipPayoutAllocation {
+  id         String   @id @default(uuid())
+  payoutId   String   @map("payout_id")
+  tipEntryId String   @map("tip_entry_id")
+  amount     Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  payout              TipPayout                     @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  tipEntry            TipEntry                      @relation(fields: [tipEntryId], references: [id], onDelete: Restrict)
+  reversalAllocations TipPayoutReversalAllocation[]
+
+  @@unique([payoutId, tipEntryId])
+  @@index([tipEntryId])
+  @@map("tip_payout_allocations")
+}
+
+model TipPayoutReversal {
+  id             String   @id @default(uuid())
+  barbershopId   String   @map("barbershop_id")
+  payoutId       String   @unique @map("payout_id")
+  reason         String?
+  createdById    String   @map("created_by_id")
+  idempotencyKey String?  @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  barbershop     Barbershop                    @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  payout         TipPayout                     @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  createdBy      User                          @relation("TipPayoutReversalCreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  cashMovement   CashMovement?
+  financialEntry FinancialEntry?
+  allocations    TipPayoutReversalAllocation[]
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, createdAt])
+  @@map("tip_payout_reversals")
+}
+
+model TipPayoutReversalAllocation {
+  id                    String   @id @default(uuid())
+  reversalId            String   @map("reversal_id")
+  tipPayoutAllocationId String   @map("tip_payout_allocation_id")
+  tipEntryId            String   @map("tip_entry_id")
+  amountRestored        Decimal  @map("amount_restored") @db.Decimal(10, 2)
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  reversal            TipPayoutReversal   @relation(fields: [reversalId], references: [id], onDelete: Cascade)
+  tipPayoutAllocation TipPayoutAllocation @relation(fields: [tipPayoutAllocationId], references: [id], onDelete: Restrict)
+  tipEntry            TipEntry            @relation(fields: [tipEntryId], references: [id], onDelete: Restrict)
+
+  @@index([reversalId])
+  @@index([tipEntryId])
+  @@map("tip_payout_reversal_allocations")
 }

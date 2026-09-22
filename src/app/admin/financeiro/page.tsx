@@ -48,6 +48,11 @@ type FinancialSummaryData = {
     releasedCommissions: number;
     estimatedCommissions: number;
     operationalResult: number;
+    liabilities?: {
+      tipCashInflowNet: number;
+      customerCreditDepositCashInflowNet: number;
+      tipPayoutOutNet: number;
+    };
   };
   paymentMethods: PaymentMethodItem[];
   topServices: TopServiceItem[];
@@ -607,6 +612,45 @@ export default function FinanceiroPage() {
                 </div>
               )}
             </section>
+
+            {/* Seção de Passivos / Terceiros */}
+            {data.totals.liabilities && (
+              <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-3 col-span-full">
+                <div className="flex flex-wrap items-center justify-between border-b border-[var(--border-subtle)] pb-2 gap-2">
+                  <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-widest">
+                    Valores de Terceiros & Passivos
+                  </h2>
+                  <span className="text-xs bg-amber-950/40 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium">
+                    Não compõem faturamento nem lucro operacional
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-[var(--surface-raised)] p-3 rounded-lg border border-[var(--border-subtle)] space-y-1">
+                    <p className="text-xs text-[var(--text-muted)] font-medium">Gorjetas Recebidas (Líquidas)</p>
+                    <p className="text-lg font-bold text-emerald-400">
+                      {formatBRL(data.totals.liabilities.tipCashInflowNet || 0)}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-muted)]">Devidas aos profissionais favorecidos</p>
+                  </div>
+
+                  <div className="bg-[var(--surface-raised)] p-3 rounded-lg border border-[var(--border-subtle)] space-y-1">
+                    <p className="text-xs text-[var(--text-muted)] font-medium">Créditos Adicionados por Clientes</p>
+                    <p className="text-lg font-bold text-blue-400">
+                      {formatBRL(data.totals.liabilities.customerCreditDepositCashInflowNet || 0)}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-muted)]">Passivo financeiro de saldo de clientes</p>
+                  </div>
+
+                  <div className="bg-[var(--surface-raised)] p-3 rounded-lg border border-[var(--border-subtle)] space-y-1">
+                    <p className="text-xs text-[var(--text-muted)] font-medium">Repasses de Gorjetas Efetuados</p>
+                    <p className="text-lg font-bold text-purple-400">
+                      {formatBRL(data.totals.liabilities.tipPayoutOutNet || 0)}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-muted)]">Liquidação de gorjetas repassadas à equipe</p>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Resumo de Comandas */}
             <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-4">

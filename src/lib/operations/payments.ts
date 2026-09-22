@@ -13,11 +13,12 @@ export async function registerPayment(
     amount: string | number;
     userId: string;
     idempotencyKey?: string | null;
+    checkoutAllocationId?: string | null;
     allowClosedDebtPayment?: boolean;
   }
 ) {
   await lockComandaRow(tx, input.barbershopId, input.comandaId);
-  const amount = positiveCents(input.amount, "Pagamento");
+  const amount = positiveCents(input.amount, "Valor do pagamento");
 
   const comanda = await tx.comanda.findFirst({
     where: { id: input.comandaId, barbershopId: input.barbershopId },
@@ -101,6 +102,7 @@ export async function registerPayment(
       amount: fromCents(amount),
       idempotencyKey: input.idempotencyKey || null,
       receivedById: input.userId,
+      checkoutAllocationId: input.checkoutAllocationId || null,
     },
   });
 

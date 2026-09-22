@@ -133,6 +133,13 @@ const navItems = [
     ownerOnly: false,
   },
   {
+    label: "Gorjetas",
+    href: "/admin/gorjetas",
+    icon: Icons.dashboard,
+    children: [],
+    ownerOnly: false,
+  },
+  {
     label: "Serviços",
     href: "/admin/servicos",
     icon: Icons.scissors,

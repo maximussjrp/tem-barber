@@ -271,16 +271,27 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   
   const remainingTotal = Math.max(0, total - paidTotal);
 
+  const existingComanda = await tx.comanda.findUnique({
+    where: { id: comandaId },
+    select: { status: true },
+  });
+
+  const updateData: Prisma.ComandaUpdateInput = {
+    subtotal: fromCents(subtotal),
+    discountTotal: fromCents(discountTotal),
+    surchargeTotal: fromCents(surchargeTotal),
+    total: fromCents(total),
+    paidTotal: fromCents(paidTotal),
+    remainingTotal: fromCents(remainingTotal),
+  };
+
+  if (existingComanda?.status === "CLOSED" && remainingTotal > 0) {
+    updateData.status = "PENDING_PAYMENT";
+  }
+
   return tx.comanda.update({
     where: { id: comandaId },
-    data: {
-      subtotal: fromCents(subtotal),
-      discountTotal: fromCents(discountTotal),
-      surchargeTotal: fromCents(surchargeTotal),
-      total: fromCents(total),
-      paidTotal: fromCents(paidTotal),
-      remainingTotal: fromCents(remainingTotal),
-    },
+    data: updateData,
     include: comandaInclude,
   });
 }
@@ -681,6 +692,40 @@ export async function cancelComanda(
           idempotencyKey: `auto-refund-${comanda.id}-${payment.id}`,
         });
       }
+    }
+  }
+
+  // 1b. Revert active tips linked to comanda
+  const activeTips = await tx.tipEntry.findMany({
+    where: { comandaId: comanda.id, barbershopId: input.barbershopId, status: "ACTIVE" },
+  });
+  if (activeTips.length > 0) {
+    const { refundTip } = await import("./tips");
+    for (const tip of activeTips) {
+      await refundTip(tx, {
+        barbershopId: input.barbershopId,
+        tipEntryId: tip.id,
+        reason: `Estorno automático por cancelamento de comanda: ${input.reason}`,
+        refundedById: input.userId,
+        idempotencyKey: `auto-refund-tip-${comanda.id}-${tip.id}`,
+      });
+    }
+  }
+
+  // 1c. Revert credit deposits linked to checkout allocations of comanda
+  const creditDeposits = await tx.customerCreditEntry.findMany({
+    where: { comandaId: comanda.id, barbershopId: input.barbershopId, sourceKind: "OVERPAYMENT" },
+  });
+  if (creditDeposits.length > 0) {
+    const { reverseCheckoutCreditDeposit } = await import("./customer-credit");
+    for (const deposit of creditDeposits) {
+      await reverseCheckoutCreditDeposit(tx, {
+        barbershopId: input.barbershopId,
+        creditEntryId: deposit.id,
+        reason: `Estorno de depósito por cancelamento de comanda: ${input.reason}`,
+        createdByUserId: input.userId,
+        idempotencyKey: `auto-reverse-deposit-${comanda.id}-${deposit.id}`,
+      });
     }
   }
 

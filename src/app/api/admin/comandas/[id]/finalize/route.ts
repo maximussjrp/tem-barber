@@ -7,13 +7,16 @@ import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTot
 import { registerPayment, payComandaWithCustomerCredit, closeComanda } from "@/lib/operations/payments";
 import { toCents } from "@/lib/operations/money";
 
+import { processCheckoutAllocation, TenderInput } from "@/lib/operations/checkout";
+
 interface PaymentItem {
   method: PaymentMethod;
   amount: string | number;
 }
 
 interface FinalizeBody {
-  payments: PaymentItem[];
+  payments?: PaymentItem[];
+  allocations?: TenderInput[];
   closeWithDebt?: boolean;
   confirmOutstandingBalance?: boolean;
   idempotencyKey?: string;
@@ -35,8 +38,8 @@ export async function POST(
     return NextResponse.json({ error: "Body inválido." }, { status: 400 });
   }
 
-  if (!Array.isArray(body.payments)) {
-    return NextResponse.json({ error: "payments deve ser um array." }, { status: 400 });
+  if (!body.allocations && !Array.isArray(body.payments)) {
+    return NextResponse.json({ error: "Informe 'allocations' ou 'payments'." }, { status: 400 });
   }
 
   // Obter chave de idempotência dos headers ou do body
@@ -75,7 +78,14 @@ export async function POST(
       if (comanda.status === "CLOSED") {
         const remainingCents = toCents(comanda.remainingTotal);
         if (remainingCents === 0) {
-          if (body.payments.length > 0) {
+          if (idempotencyKey) {
+            const fullComanda = await tx.comanda.findUnique({
+              where: { id },
+              include: comandaInclude,
+            });
+            return fullComanda;
+          }
+          if (body.payments && body.payments.length > 0) {
             throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga e encerrada.", 422);
           }
           const fullComanda = await tx.comanda.findUnique({
@@ -90,7 +100,8 @@ export async function POST(
           throw new OperationalError("DEBT_PERMISSION_REQUIRED", "Apenas gerentes e proprietários podem receber saldo de comanda fechada.", 403);
         }
 
-        const totalPaymentsCents = body.payments.reduce((sum, p) => {
+        const paymentsList = body.payments || [];
+        const totalPaymentsCents = paymentsList.reduce((sum, p) => {
           const cents = Math.round(Number(p.amount) * 100);
           if (cents <= 0) {
             throw new OperationalError("INVALID_PAYMENT_AMOUNT", "Cada pagamento deve ser maior que zero.", 400);
@@ -106,8 +117,8 @@ export async function POST(
           throw new OperationalError("PAYMENT_EXCEEDS_REMAINING", `A soma dos pagamentos (R$ ${(totalPaymentsCents / 100).toFixed(2)}) excede o saldo restante da comanda (R$ ${(remainingCents / 100).toFixed(2)}).`, 422);
         }
 
-        for (let i = 0; i < body.payments.length; i++) {
-          const p = body.payments[i];
+        for (let i = 0; i < paymentsList.length; i++) {
+          const p = paymentsList[i];
           const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
           if (p.method === "CUSTOMER_CREDIT") {
             await payComandaWithCustomerCredit(tx, {
@@ -148,9 +159,23 @@ export async function POST(
 
       // Recalcular totais para garantir dados atualizados
       const currentComanda = await recalculateComandaTotals(tx, id);
+
+      if (body.allocations && body.allocations.length > 0) {
+        const { comanda: closedComanda } = await processCheckoutAllocation(tx, {
+          barbershopId: data!.barbershopId,
+          comandaId: id,
+          customerId: comanda.customerId,
+          tenders: body.allocations,
+          createdById: data!.userId,
+          idempotencyKey,
+        });
+        return closedComanda;
+      }
+
       const remainingCents = toCents(currentComanda.remainingTotal);
 
-      const totalPaymentsCents = body.payments.reduce((sum, p) => {
+      const paymentsList = body.payments || [];
+      const totalPaymentsCents = paymentsList.reduce((sum, p) => {
         const cents = Math.round(Number(p.amount) * 100);
         if (cents <= 0) {
           throw new OperationalError("INVALID_PAYMENT_AMOUNT", "Cada pagamento deve ser maior que zero.", 400);
@@ -160,6 +185,10 @@ export async function POST(
 
       if (totalPaymentsCents > remainingCents) {
         throw new OperationalError("OVERPAYMENT", "A soma dos pagamentos excede o saldo da comanda.", 422);
+      }
+
+      if (totalPaymentsCents === 0 && remainingCents > 0 && !body.closeWithDebt) {
+        throw new OperationalError("PAYMENT_REQUIRED", "Informe pelo menos um pagamento para a comanda.", 422);
       }
 
       const isPartialOrZero = totalPaymentsCents < remainingCents;
@@ -178,8 +207,8 @@ export async function POST(
       }
 
       // Registrar cada pagamento sequencialmente
-      for (let i = 0; i < body.payments.length; i++) {
-        const p = body.payments[i];
+      for (let i = 0; i < paymentsList.length; i++) {
+        const p = paymentsList[i];
         const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
         
         if (p.method === "CUSTOMER_CREDIT") {

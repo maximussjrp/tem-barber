@@ -9,9 +9,20 @@ type Props = {
   isClosedWithDebt?: boolean;
   customerCreditBalance?: number;
   canConsumeCredit?: boolean;
+  members?: { id: string; name: string }[];
   onPay: (
     payments: { method: string; amount: string }[],
-    options?: { closeWithDebt?: boolean; confirmOutstandingBalance?: boolean }
+    options?: {
+      closeWithDebt?: boolean;
+      confirmOutstandingBalance?: boolean;
+      allocations?: {
+        method: string;
+        receivedAmount: number;
+        tipAmount?: number;
+        tipMemberId?: string | null;
+        creditDepositAmount?: number;
+      }[];
+    }
   ) => Promise<void>;
   onClose: () => void;
 };
@@ -20,6 +31,9 @@ interface MixedPaymentItem {
   id: string;
   method: string;
   amount: string;
+  tipAmount?: string;
+  tipMemberId?: string;
+  creditDepositAmount?: string;
 }
 
 export function PaymentModal({
@@ -29,12 +43,18 @@ export function PaymentModal({
   isClosedWithDebt = false,
   customerCreditBalance = 0,
   canConsumeCredit = true,
+  members = [],
   onPay,
   onClose,
 }: Props) {
   const [isMixed, setIsMixed] = useState(false);
   const [singleMethod, setSingleMethod] = useState("PIX");
   const [singleAmount, setSingleAmount] = useState(remainingTotal.toFixed(2));
+
+  // Allocation engine extras: gorjeta e depósito em crédito
+  const [tipAmount, setTipAmount] = useState("");
+  const [tipMemberId, setTipMemberId] = useState(members.length === 1 ? members[0].id : "");
+  const [creditDepositAmount, setCreditDepositAmount] = useState("");
 
   // Para pagamento misto
   const [mixedPayments, setMixedPayments] = useState<MixedPaymentItem[]>([
@@ -45,9 +65,17 @@ export function PaymentModal({
   const [confirmDebt, setConfirmDebt] = useState(false);
 
   const amountNum = Number(singleAmount) || 0;
+  const tipAmountNum = singleMethod === "CUSTOMER_CREDIT" ? 0 : (Number(tipAmount) || 0);
+  const creditDepositNum = singleMethod === "CUSTOMER_CREDIT" ? 0 : (Number(creditDepositAmount) || 0);
   const cashReceivedNum = Number(cashReceived) || 0;
-  const showChange = !isMixed && singleMethod === "CASH" && cashReceivedNum > amountNum && amountNum > 0;
-  const change = showChange ? cashReceivedNum - amountNum : 0;
+
+  const totalAllocatedNoChange = amountNum + tipAmountNum + creditDepositNum;
+  const effectiveReceived = singleMethod === "CASH" && cashReceivedNum > totalAllocatedNoChange
+    ? cashReceivedNum
+    : totalAllocatedNoChange;
+
+  const showChange = !isMixed && singleMethod === "CASH" && cashReceivedNum > totalAllocatedNoChange && totalAllocatedNoChange >= 0;
+  const change = showChange ? cashReceivedNum - totalAllocatedNoChange : 0;
 
   // Calculos para pagamento misto/único
   const mixedTotal = mixedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -80,6 +108,11 @@ export function PaymentModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
+    if (tipAmountNum > 0 && !tipMemberId && members.length > 0) {
+      alert("Selecione o profissional que receberá a gorjeta.");
+      return;
+    }
+
     if (isClosedWithDebt) {
       // Receber dívida de comanda já fechada
       if (appliedTotal <= 0) {
@@ -92,8 +125,8 @@ export function PaymentModal({
       }
       let payload: { method: string; amount: string }[];
       if (!isMixed) {
-        if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < amountNum) {
-          alert("Valor recebido em dinheiro é menor que o valor a pagar.");
+        if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < totalAllocatedNoChange) {
+          alert("Valor recebido em dinheiro é menor que a soma de venda, gorjeta e depósito.");
           return;
         }
         if (singleMethod === "CUSTOMER_CREDIT" && amountNum > customerCreditBalance + 0.009) {
@@ -115,7 +148,18 @@ export function PaymentModal({
           amount: (Number(p.amount) || 0).toFixed(2),
         }));
       }
-      await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true });
+
+      const allocations = !isMixed && (tipAmountNum > 0 || creditDepositNum > 0) ? [
+        {
+          method: singleMethod,
+          receivedAmount: effectiveReceived,
+          tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
+          tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
+          creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
+        }
+      ] : undefined;
+
+      await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
       return;
     }
 
@@ -129,8 +173,8 @@ export function PaymentModal({
         alert("Valor não pode ser maior que o saldo restante.");
         return;
       }
-      if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < amountNum) {
-        alert("Valor recebido em dinheiro é menor que o valor a pagar.");
+      if (singleMethod === "CASH" && cashReceivedNum > 0 && cashReceivedNum < totalAllocatedNoChange) {
+        alert("Valor recebido em dinheiro é menor que a soma de venda, gorjeta e depósito.");
         return;
       }
       if (singleMethod === "CUSTOMER_CREDIT" && amountNum > customerCreditBalance + 0.009) {
@@ -147,7 +191,21 @@ export function PaymentModal({
       }
 
       const payload = amountNum > 0 ? [{ method: singleMethod, amount: amountNum.toFixed(2) }] : [];
-      await onPay(payload, isPartialOrZero ? { closeWithDebt: true, confirmOutstandingBalance: true } : undefined);
+      const allocations = (tipAmountNum > 0 || creditDepositNum > 0) ? [
+        {
+          method: singleMethod,
+          receivedAmount: effectiveReceived,
+          tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
+          tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
+          creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
+        }
+      ] : undefined;
+
+      await onPay(payload, {
+        closeWithDebt: isPartialOrZero,
+        confirmOutstandingBalance: isPartialOrZero,
+        allocations,
+      });
     } else {
       if (mixedPayments.some((p) => (Number(p.amount) || 0) <= 0)) {
         alert("Cada parcela deve ter um valor maior que zero.");
@@ -292,7 +350,7 @@ export function PaymentModal({
 
               <div>
                 <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
-                  Valor do Pagamento (R$)
+                  Valor Aplicado à Venda (R$)
                 </label>
                 <input
                   type="number"
@@ -305,6 +363,67 @@ export function PaymentModal({
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
               </div>
+
+              {singleMethod !== "CUSTOMER_CREDIT" ? (
+                <div className="space-y-3 pt-2 border-t border-[var(--border-subtle)]">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                        Gorjeta (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={tipAmount}
+                        onChange={(e) => setTipAmount(e.target.value)}
+                        disabled={busy}
+                        className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                      />
+                    </div>
+                    {tipAmountNum > 0 && (
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                          Profissional Favorecido <span className="text-[var(--danger)]">*</span>
+                        </label>
+                        <select
+                          value={tipMemberId}
+                          onChange={(e) => setTipMemberId(e.target.value)}
+                          disabled={busy}
+                          required
+                          className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                        >
+                          <option value="">Selecione...</option>
+                          {members.map((m) => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                      Adicionar ao Crédito do Cliente (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={creditDepositAmount}
+                      onChange={(e) => setCreditDepositAmount(e.target.value)}
+                      disabled={busy}
+                      className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] p-2 rounded border border-[var(--border-subtle)]">
+                  ℹ️ Pagamento via Crédito do Cliente é restrito à quitação da venda. Não permite gorjeta, depósito ou troco.
+                </div>
+              )}
 
               {singleMethod === "CASH" && (
                 <div className="pt-2 border-t border-[var(--border-subtle)]">
@@ -386,6 +505,43 @@ export function PaymentModal({
               </button>
             </div>
           )}
+
+          {/* Allocation Engine Summary Card */}
+          <div className="p-3 bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg space-y-1.5 text-xs">
+            <div className="font-bold text-[var(--gold)] uppercase tracking-wider mb-1">Resumo de Alocação do Checkout</div>
+            <div className="flex justify-between text-[var(--text-secondary)]">
+              <span>Saldo da venda:</span>
+              <span>R$ {remainingTotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-[var(--text-primary)]">
+              <span>Aplicado à venda:</span>
+              <span>R$ {appliedTotal.toFixed(2)}</span>
+            </div>
+            {tipAmountNum > 0 && (
+              <div className="flex justify-between text-emerald-400">
+                <span>Gorjeta:</span>
+                <span>R$ {tipAmountNum.toFixed(2)}</span>
+              </div>
+            )}
+            {creditDepositNum > 0 && (
+              <div className="flex justify-between text-blue-400">
+                <span>Crédito gerado:</span>
+                <span>R$ {creditDepositNum.toFixed(2)}</span>
+              </div>
+            )}
+            {showChange && change > 0 && (
+              <div className="flex justify-between text-amber-300 font-medium">
+                <span>Troco (dinheiro):</span>
+                <span>R$ {change.toFixed(2)}</span>
+              </div>
+            )}
+            {outstanding > 0.009 && (
+              <div className="flex justify-between text-[var(--danger)] font-semibold pt-1 border-t border-[var(--border-subtle)]">
+                <span>Saldo em aberto:</span>
+                <span>R$ {outstanding.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
 
           {/* Seção de Saldo em Aberto / Confirmação */}
           {!isClosedWithDebt && isPartialOrZero && (

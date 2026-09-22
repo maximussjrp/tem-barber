@@ -102,6 +102,22 @@ export function canReverseCustomerCredit(role: string) {
   return role === "OWNER" || role === "MANAGER";
 }
 
+export function canViewTips(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "BARBER";
+}
+
+export function canRefundTip(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export function canPayoutTips(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export function canReverseTipPayout(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
 export function forbidden() {
   return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
 }

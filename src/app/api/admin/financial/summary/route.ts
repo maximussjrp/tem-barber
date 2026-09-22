@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
       commissionPayableItems,
       trueCycleAdjustments,
       estimatedCommissions,
+      liabilityEntries,
     ] = await Promise.all([
       // Concluded/closed comandas within period
       prisma.comanda.findMany({
@@ -198,6 +199,25 @@ export async function GET(request: NextRequest) {
             },
           })
         : Promise.resolve([]),
+
+      // Liabilities (Gorjetas e Crédito do Cliente)
+      prisma.financialEntry.findMany({
+        where: {
+          barbershopId,
+          entryDate: { gte: start, lt: endExclusive },
+          type: {
+            in: [
+              "TIP_RECEIVED",
+              "TIP_REFUND",
+              "TIP_PAYOUT",
+              "TIP_PAYOUT_REVERSAL",
+              "CUSTOMER_CREDIT_DEPOSIT",
+              "CUSTOMER_CREDIT_DEPOSIT_REFUND",
+            ],
+          },
+        },
+        select: { type: true, amount: true },
+      }),
     ]);
 
     // 1. Calculations for Comandas & Items
@@ -307,13 +327,10 @@ export async function GET(request: NextRequest) {
     };
 
     let cashRefundCents = 0;
-    let customerCreditRefundCents = 0;
     for (const p of payments) {
       const amtCents = toCents(p.amount);
       if (p.status === "REFUNDED") {
-        if (p.method === "CUSTOMER_CREDIT") {
-          customerCreditRefundCents += Math.abs(amtCents);
-        } else {
+        if (p.method !== "CUSTOMER_CREDIT") {
           cashRefundCents += Math.abs(amtCents);
         }
       } else {
@@ -416,7 +433,22 @@ export async function GET(request: NextRequest) {
     // 6. Operational Result
     const operationalResultCents = totalReceivedCents - totalExpensesCents - releasedCommissionsCents;
 
-    // 7. Format Top Services & Top Professionals
+    // 7. Liability Entries (Gorjetas e Depósitos de Crédito)
+    let tipCashInflowNetCents = 0;
+    let customerCreditDepositCashInflowNetCents = 0;
+    let tipPayoutOutNetCents = 0;
+
+    for (const le of liabilityEntries) {
+      const amt = toCents(le.amount);
+      if (le.type === "TIP_RECEIVED") tipCashInflowNetCents += Math.max(0, amt);
+      else if (le.type === "TIP_REFUND") tipCashInflowNetCents -= Math.abs(amt);
+      else if (le.type === "CUSTOMER_CREDIT_DEPOSIT") customerCreditDepositCashInflowNetCents += Math.max(0, amt);
+      else if (le.type === "CUSTOMER_CREDIT_DEPOSIT_REFUND") customerCreditDepositCashInflowNetCents -= Math.abs(amt);
+      else if (le.type === "TIP_PAYOUT") tipPayoutOutNetCents += Math.abs(amt);
+      else if (le.type === "TIP_PAYOUT_REVERSAL") tipPayoutOutNetCents -= Math.abs(amt);
+    }
+
+    // 8. Format Top Services & Top Professionals
     const topServices = Object.values(topServicesMap)
       .map((s) => ({
         serviceId: s.serviceId,
@@ -462,6 +494,11 @@ export async function GET(request: NextRequest) {
         releasedCommissions: money(releasedCommissionsCents),
         estimatedCommissions: money(estimatedCommissionsCents),
         operationalResult: money(operationalResultCents),
+        liabilities: {
+          tipCashInflowNet: money(tipCashInflowNetCents),
+          customerCreditDepositCashInflowNet: money(customerCreditDepositCashInflowNetCents),
+          tipPayoutOutNet: money(tipPayoutOutNetCents),
+        },
       },
       paymentMethods: paymentMethodsList,
       topServices,

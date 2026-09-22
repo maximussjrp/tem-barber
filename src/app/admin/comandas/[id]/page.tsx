@@ -203,11 +203,7 @@ export default function ComandaDetailPage() {
 
   async function handleFinalize() {
     if (!comanda) return;
-    if (Number(comanda.remainingTotal) <= 0) {
-      await mutate(`/api/admin/comandas/${id}/finalize`, { payments: [] });
-    } else {
-      setShowPaymentModal(true);
-    }
+    setShowPaymentModal(true);
   }
 
   async function handleAddService(e: React.FormEvent) {
@@ -285,7 +281,18 @@ export default function ComandaDetailPage() {
 
   async function handlePay(
     payments: { method: string; amount: string }[],
-    options?: { closeWithDebt?: boolean; confirmOutstandingBalance?: boolean }
+    options?: {
+      closeWithDebt?: boolean;
+      confirmOutstandingBalance?: boolean;
+      allocations?: {
+        method: string;
+        receivedAmount: number;
+        tipAmount?: number;
+        tipMemberId?: string | null;
+        creditDepositAmount?: number;
+        change?: number;
+      }[];
+    }
   ) {
     const ok = await mutate(`/api/admin/comandas/${id}/finalize`, { payments, ...options });
     if (ok) setShowPaymentModal(false);
@@ -721,6 +728,7 @@ export default function ComandaDetailPage() {
           busy={busy} 
           canManageDebt={Boolean(comanda.permissions?.canManageDebt)}
           isClosedWithDebt={comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0}
+          members={members.map(m => ({ id: m.id, name: m.user.name }))}
           onPay={handlePay} 
           onClose={() => setShowPaymentModal(false)} 
         />
