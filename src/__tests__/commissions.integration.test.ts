@@ -167,6 +167,7 @@ describeIf("release operacional 1B - comissoes", () => {
         serviceId: tenant.beard.id,
       },
     });
+    await prisma.$transaction((tx) => recalculateComandaTotals(tx, tenant.comanda.id));
     await prisma.$transaction((tx) =>
       registerPayment(tx, { barbershopId: tenant.shop.id, comandaId: tenant.comanda.id, method: "PIX", amount: "240.00", userId: tenant.ownerUser.id, idempotencyKey: "pay-all" })
     );

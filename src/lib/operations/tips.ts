@@ -13,6 +13,8 @@ export async function recordTip(
     method: PaymentMethod;
     checkoutAllocationId?: string | null;
     createdById?: string | null;
+    actorMemberId?: string | null;
+    actorRole?: string | null;
     idempotencyKey?: string | null;
   }
 ) {
@@ -21,6 +23,14 @@ export async function recordTip(
       "INVALID_TIP_METHOD",
       "Crédito do cliente não pode ser utilizado para pagar gorjetas.",
       422
+    );
+  }
+
+  if (input.actorRole === "BARBER" && input.actorMemberId && input.memberId !== input.actorMemberId) {
+    throw new OperationalError(
+      "TIP_SCOPE_VIOLATION",
+      "Barbeiro só pode registrar gorjeta para si mesmo.",
+      403
     );
   }
 
@@ -56,8 +66,26 @@ export async function recordTip(
     where: { id: input.memberId },
     include: { user: true },
   });
-  if (!member || member.barbershopId !== input.barbershopId) {
-    throw new OperationalError("MEMBER_NOT_FOUND", "Profissional não pertence a esta barbearia.", 404);
+  if (!member || member.barbershopId !== input.barbershopId || member.isActive === false) {
+    throw new OperationalError("MEMBER_NOT_FOUND", "Profissional não encontrado ou inativo.", 404);
+  }
+
+  const comanda = await tx.comanda.findUnique({
+    where: { id: input.comandaId },
+    include: { appointment: true, items: true },
+  });
+  if (!comanda || comanda.barbershopId !== input.barbershopId) {
+    throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
+  }
+
+  const isAppointmentBarber = comanda.appointment?.memberId === input.memberId;
+  const isItemExecutor = comanda.items.some((item) => item.executorId === input.memberId);
+  if (!isAppointmentBarber && !isItemExecutor && input.actorRole === "BARBER") {
+    throw new OperationalError(
+      "MEMBER_NOT_IN_COMANDA",
+      "O profissional não participou dos serviços desta comanda.",
+      422
+    );
   }
 
   let cashMovementId: string | undefined;
@@ -85,6 +113,8 @@ export async function recordTip(
       comandaId: input.comandaId,
       memberId: input.memberId,
       amount: fromCents(amountCents),
+      refundedAmount: fromCents(0),
+      paidOutAmount: fromCents(0),
       method: input.method,
       status: "ACTIVE",
       checkoutAllocationId: input.checkoutAllocationId || null,
@@ -120,6 +150,7 @@ export async function refundTip(
   input: {
     barbershopId: string;
     tipEntryId: string;
+    amountToRefund?: MoneyValue;
     reason?: string | null;
     refundedById: string;
     idempotencyKey?: string | null;
@@ -127,26 +158,62 @@ export async function refundTip(
 ) {
   const tipEntry = await tx.tipEntry.findUnique({
     where: { id: input.tipEntryId },
-    include: { member: { include: { user: true } }, tipRefund: true },
+    include: { member: { include: { user: true } }, tipRefunds: true },
   });
 
   if (!tipEntry || tipEntry.barbershopId !== input.barbershopId) {
     throw new OperationalError("TIP_NOT_FOUND", "Gorjeta não encontrada.", 404);
   }
 
-  if (tipEntry.status === "REFUNDED") {
-    if (tipEntry.tipRefund) return tipEntry.tipRefund;
-  }
+  const totalCents = toCents(tipEntry.amount);
+  const currentRefundedCents = toCents(tipEntry.refundedAmount || 0);
+  const currentPaidOutCents = toCents(tipEntry.paidOutAmount || 0);
+  const availableToRefundCents = totalCents - currentRefundedCents - currentPaidOutCents;
 
-  if (tipEntry.status === "PAID_OUT") {
+  if (availableToRefundCents <= 0) {
     throw new OperationalError(
-      "TIP_ALREADY_PAID_OUT",
-      "Não é possível estornar uma gorjeta que já foi repassada ao profissional. Reverta o repasse primeiro.",
+      "TIP_NOT_REFUNDABLE",
+      "Não há saldo disponível nesta gorjeta para estorno.",
       422
     );
   }
 
-  const amountCents = toCents(tipEntry.amount);
+  const requestedRefundCents = input.amountToRefund
+    ? positiveCents(input.amountToRefund, "Valor do estorno")
+    : availableToRefundCents;
+
+  if (input.idempotencyKey) {
+    const existingRefund = await tx.tipRefund.findFirst({
+      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+    });
+    if (existingRefund) {
+      if (
+        toCents(existingRefund.amount) !== requestedRefundCents ||
+        existingRefund.tipEntryId !== input.tipEntryId
+      ) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+          409
+        );
+      }
+      return existingRefund;
+    }
+  }
+
+  if (requestedRefundCents > availableToRefundCents) {
+    throw new OperationalError(
+      "TIP_REFUND_EXCEEDS_AVAILABLE",
+      `O valor solicitado (R$ ${(requestedRefundCents / 100).toFixed(2)}) excede o saldo disponível para estorno (R$ ${(availableToRefundCents / 100).toFixed(2)}).`,
+      422
+    );
+  }
+
+  const newRefundedCents = currentRefundedCents + requestedRefundCents;
+  let newStatus: "ACTIVE" | "PARTIALLY_REFUNDED" | "REFUNDED" = "PARTIALLY_REFUNDED";
+  if (newRefundedCents === totalCents) {
+    newStatus = "REFUNDED";
+  }
 
   let cashMovementId: string | undefined;
   if (tipEntry.method === "CASH") {
@@ -160,7 +227,7 @@ export async function refundTip(
       data: {
         barbershopId: input.barbershopId,
         cashSessionId: activeSession.id,
-        amount: fromCents(-amountCents),
+        amount: fromCents(-requestedRefundCents),
         description: `Estorno de gorjeta em dinheiro (${tipEntry.member.user?.name || tipEntry.memberId.split("-")[0]})`,
       },
     });
@@ -169,14 +236,17 @@ export async function refundTip(
 
   await tx.tipEntry.update({
     where: { id: tipEntry.id },
-    data: { status: "REFUNDED" },
+    data: {
+      status: newStatus,
+      refundedAmount: fromCents(newRefundedCents),
+    },
   });
 
   const tipRefund = await tx.tipRefund.create({
     data: {
       barbershopId: input.barbershopId,
       tipEntryId: tipEntry.id,
-      amount: fromCents(amountCents),
+      amount: fromCents(requestedRefundCents),
       reason: input.reason || "Estorno de gorjeta",
       refundedById: input.refundedById,
       idempotencyKey: input.idempotencyKey || null,
@@ -195,7 +265,7 @@ export async function refundTip(
       barbershopId: input.barbershopId,
       type: "TIP_REFUND",
       category: "GORJETA",
-      amount: fromCents(amountCents),
+      amount: fromCents(requestedRefundCents),
       description: `Estorno de gorjeta de ${tipEntry.member.user?.name || tipEntry.memberId.split("-")[0]}`,
       comandaId: tipEntry.comandaId,
       tipRefundId: tipRefund.id,
@@ -237,23 +307,39 @@ export async function executeTipPayout(
   const replayed = await checkExisting();
   if (replayed) return replayed;
 
+  await tx.$queryRaw`
+    SELECT id FROM barbershop_members
+    WHERE id = ${input.memberId} AND barbershop_id = ${input.barbershopId}
+    FOR UPDATE
+  `;
+
   const member = await tx.barbershopMember.findUnique({
     where: { id: input.memberId },
     include: { user: true },
   });
-  if (!member || member.barbershopId !== input.barbershopId) {
-    throw new OperationalError("MEMBER_NOT_FOUND", "Profissional não pertence a esta barbearia.", 404);
+  if (!member || member.barbershopId !== input.barbershopId || member.isActive === false) {
+    throw new OperationalError("MEMBER_NOT_FOUND", "Profissional não encontrado ou inativo.", 404);
   }
 
   const whereClause: Prisma.TipEntryWhereInput = {
     barbershopId: input.barbershopId,
     memberId: input.memberId,
-    status: "ACTIVE",
+    status: { in: ["ACTIVE", "PARTIALLY_REFUNDED"] },
   };
 
   if (input.tipEntryIds && input.tipEntryIds.length > 0) {
     whereClause.id = { in: input.tipEntryIds };
   }
+
+  await tx.$queryRaw`
+    SELECT id FROM tip_entries
+    WHERE barbershop_id = ${input.barbershopId}
+      AND member_id = ${input.memberId}
+      AND status IN ('ACTIVE', 'PARTIALLY_REFUNDED')
+      ${input.tipEntryIds && input.tipEntryIds.length > 0 ? Prisma.sql`AND id IN (${Prisma.join(input.tipEntryIds)})` : Prisma.empty}
+    ORDER BY created_at ASC, id ASC
+    FOR UPDATE;
+  `;
 
   const eligibleEntries = await tx.tipEntry.findMany({
     where: whereClause,
@@ -264,9 +350,27 @@ export async function executeTipPayout(
     throw new OperationalError("NO_ELIGIBLE_TIPS", "Nenhuma gorjeta pendente encontrada para repasse.", 422);
   }
 
+  const payoutAllocationsToCreate: Array<{ tipEntryId: string; amount: Prisma.Decimal; amountCents: number }> = [];
   let totalCents = 0;
+
   for (const entry of eligibleEntries) {
-    totalCents += toCents(entry.amount);
+    const totalEntCents = toCents(entry.amount);
+    const refundedEntCents = toCents(entry.refundedAmount || 0);
+    const paidOutEntCents = toCents(entry.paidOutAmount || 0);
+    const availableForPayoutCents = totalEntCents - refundedEntCents - paidOutEntCents;
+
+    if (availableForPayoutCents > 0) {
+      payoutAllocationsToCreate.push({
+        tipEntryId: entry.id,
+        amount: fromCents(availableForPayoutCents),
+        amountCents: availableForPayoutCents,
+      });
+      totalCents += availableForPayoutCents;
+    }
+  }
+
+  if (totalCents === 0 || payoutAllocationsToCreate.length === 0) {
+    throw new OperationalError("NO_ELIGIBLE_TIPS", "Nenhuma gorjeta com saldo disponível para repasse.", 422);
   }
 
   let cashMovementId: string | undefined;
@@ -298,19 +402,28 @@ export async function executeTipPayout(
       createdById: input.createdById,
       idempotencyKey: input.idempotencyKey || null,
       allocations: {
-        create: eligibleEntries.map((e) => ({
-          tipEntryId: e.id,
-          amount: e.amount,
+        create: payoutAllocationsToCreate.map((a) => ({
+          tipEntryId: a.tipEntryId,
+          amount: a.amount,
         })),
       },
     },
     include: { allocations: true },
   });
 
-  await tx.tipEntry.updateMany({
-    where: { id: { in: eligibleEntries.map((e) => e.id) } },
-    data: { status: "PAID_OUT" },
-  });
+  for (const alloc of payoutAllocationsToCreate) {
+    const entry = eligibleEntries.find((e) => e.id === alloc.tipEntryId)!;
+    const currentPaidOutCents = toCents(entry.paidOutAmount || 0);
+    const newPaidOutCents = currentPaidOutCents + alloc.amountCents;
+
+    await tx.tipEntry.update({
+      where: { id: entry.id },
+      data: {
+        status: "PAID_OUT",
+        paidOutAmount: fromCents(newPaidOutCents),
+      },
+    });
+  }
 
   if (cashMovementId) {
     await tx.cashMovement.update({
@@ -339,6 +452,7 @@ export async function reverseTipPayout(
     barbershopId: string;
     payoutId: string;
     reason?: string | null;
+    isPhysicalCashReturned?: boolean;
     createdById: string;
     idempotencyKey?: string | null;
   }
@@ -363,12 +477,12 @@ export async function reverseTipPayout(
   const totalCents = toCents(payout.totalAmount);
 
   let cashMovementId: string | undefined;
-  if (payout.method === "CASH") {
+  if (payout.method === "CASH" && input.isPhysicalCashReturned) {
     const activeSession = await tx.cashSession.findFirst({
       where: { barbershopId: input.barbershopId, status: "OPEN" },
     });
     if (!activeSession) {
-      throw new OperationalError("CASH_SESSION_NOT_OPEN", "Não há caixa aberto para estornar repasse em dinheiro.", 422);
+      throw new OperationalError("CASH_SESSION_NOT_OPEN", "Não há caixa aberto para estornar repasse em dinheiro com devolução de caixa.", 422);
     }
     const movement = await tx.cashMovement.create({
       data: {
@@ -386,11 +500,28 @@ export async function reverseTipPayout(
     data: { status: "REVERSED" },
   });
 
-  const tipEntryIds = payout.allocations.map((a) => a.tipEntryId);
-  await tx.tipEntry.updateMany({
-    where: { id: { in: tipEntryIds } },
-    data: { status: "ACTIVE" },
-  });
+  for (const alloc of payout.allocations) {
+    const entry = alloc.tipEntry;
+    const currentPaidOutCents = toCents(entry.paidOutAmount || 0);
+    const allocCents = toCents(alloc.amount);
+    const newPaidOutCents = Math.max(0, currentPaidOutCents - allocCents);
+    const refundedCents = toCents(entry.refundedAmount || 0);
+
+    let restoredStatus: "ACTIVE" | "PARTIALLY_REFUNDED" | "REFUNDED" = "ACTIVE";
+    if (refundedCents > 0) {
+      const totalEntCents = toCents(entry.amount);
+      if (refundedCents === totalEntCents) restoredStatus = "REFUNDED";
+      else restoredStatus = "PARTIALLY_REFUNDED";
+    }
+
+    await tx.tipEntry.update({
+      where: { id: entry.id },
+      data: {
+        status: restoredStatus,
+        paidOutAmount: fromCents(newPaidOutCents),
+      },
+    });
+  }
 
   const reversal = await tx.tipPayoutReversal.create({
     data: {
@@ -448,11 +579,17 @@ export async function reconcileTipLedger(
 
   for (const t of tipEntries) {
     const cents = toCents(t.amount);
-    totalReceivedCents += cents;
+    const refCents = toCents(t.refundedAmount || 0);
+    const paidCents = toCents(t.paidOutAmount || 0);
 
-    if (t.status === "ACTIVE") activePendingCents += cents;
-    else if (t.status === "REFUNDED") totalRefundedCents += cents;
-    else if (t.status === "PAID_OUT") totalPaidOutCents += cents;
+    totalReceivedCents += cents;
+    totalRefundedCents += refCents;
+    totalPaidOutCents += paidCents;
+
+    const netActiveCents = cents - refCents - paidCents;
+    if (netActiveCents > 0) {
+      activePendingCents += netActiveCents;
+    }
   }
 
   const expectedActiveCents = totalReceivedCents - totalRefundedCents - totalPaidOutCents;

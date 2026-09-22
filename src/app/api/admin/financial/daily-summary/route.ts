@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   const start = localDateToUTCBoundary(dateStr);
   const endExclusive = localDateToUTCBoundary(shiftDateISO(dateStr, 1));
 
-  const [payments, entries, commandCounts, receivables] = await Promise.all([
+  const [payments, entries, commandCounts, receivables, liabilityEntries] = await Promise.all([
     prisma.payment.findMany({
       where: { barbershopId: data!.barbershopId, paidAt: { gte: start, lt: endExclusive } },
     }),
@@ -93,6 +93,23 @@ export async function GET(request: NextRequest) {
         remainingTotal: { gt: 0 },
       },
       _sum: { remainingTotal: true },
+    }),
+    prisma.financialEntry.findMany({
+      where: {
+        barbershopId: data!.barbershopId,
+        entryDate: { gte: start, lt: endExclusive },
+        type: {
+          in: [
+            "TIP_RECEIVED",
+            "TIP_REFUND",
+            "TIP_PAYOUT",
+            "TIP_PAYOUT_REVERSAL",
+            "CUSTOMER_CREDIT_DEPOSIT",
+            "CUSTOMER_CREDIT_DEPOSIT_REFUND",
+          ],
+        },
+      },
+      select: { type: true, amount: true },
     }),
   ]);
 
@@ -158,6 +175,23 @@ export async function GET(request: NextRequest) {
         titlePayableExpenseNetCents += -amtCents;
       }
     }
+  }
+
+  let tipReceivedCents = 0;
+  let tipRefundCents = 0;
+  let tipPayoutCents = 0;
+  let tipPayoutReversalCents = 0;
+  let customerCreditDepositCents = 0;
+  let customerCreditDepositRefundCents = 0;
+
+  for (const le of liabilityEntries) {
+    const amt = toCents(le.amount);
+    if (le.type === "TIP_RECEIVED") tipReceivedCents += Math.max(0, amt);
+    else if (le.type === "TIP_REFUND") tipRefundCents += Math.abs(amt);
+    else if (le.type === "TIP_PAYOUT") tipPayoutCents += Math.abs(amt);
+    else if (le.type === "TIP_PAYOUT_REVERSAL") tipPayoutReversalCents += Math.max(0, amt);
+    else if (le.type === "CUSTOMER_CREDIT_DEPOSIT") customerCreditDepositCents += Math.max(0, amt);
+    else if (le.type === "CUSTOMER_CREDIT_DEPOSIT_REFUND") customerCreditDepositRefundCents += Math.abs(amt);
   }
 
   const totalReceived =
@@ -232,6 +266,12 @@ export async function GET(request: NextRequest) {
     commissionAdvanceOut: money(commissionAdvanceOut),
     commissionPayoutOut: money(commissionPayoutOut),
     commissionAdvanceReversalIn: money(commissionAdvanceReversalIn),
+    tipReceived: money(tipReceivedCents),
+    tipRefund: money(tipRefundCents),
+    tipPayout: money(tipPayoutCents),
+    tipPayoutReversal: money(tipPayoutReversalCents),
+    customerCreditDeposit: money(customerCreditDepositCents),
+    customerCreditDepositRefund: money(customerCreditDepositRefundCents),
     net: money(netCents),
     openCommands: counts.OPEN ?? 0,
     pendingCommands: counts.PENDING_PAYMENT ?? 0,

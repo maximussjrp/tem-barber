@@ -1,4 +1,4 @@
-import { CreditSourceKind, Prisma } from "@prisma/client";
+import { CreditSourceKind, PaymentMethod, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { fromCents, MoneyValue, positiveCents, toCents } from "./money";
 import { OperationalError } from "./comandas";
@@ -477,7 +477,7 @@ export async function depositCustomerCreditFromCheckout(
     barbershopId: string;
     customerId: string;
     amount: MoneyValue;
-    fundingMethod: any;
+    fundingMethod: PaymentMethod;
     comandaId?: string | null;
     checkoutAllocationId?: string | null;
     createdByUserId: string;
@@ -635,6 +635,18 @@ export async function reverseCheckoutCreditDeposit(
       reversalOfEntryId: originalEntry.id,
       createdByUserId: input.createdByUserId,
       idempotencyKey: input.idempotencyKey || null,
+    },
+  });
+
+  await tx.financialEntry.create({
+    data: {
+      barbershopId: input.barbershopId,
+      type: "CUSTOMER_CREDIT_DEPOSIT_REFUND",
+      category: "DEPOSITO_CREDITO_CLIENTE",
+      amount: fromCents(-amountCents),
+      description: input.reason || `Estorno de troco depositado em crédito de cliente`,
+      comandaId: originalEntry.comandaId,
+      customerCreditEntryId: reversalEntry.id,
     },
   });
 

@@ -16,16 +16,22 @@ export async function POST(
   }
 
   const { id } = await params;
-  let body: { reason?: string; idempotencyKey?: string } = {};
+  let body: { amount?: number | string; reason?: string; idempotencyKey?: string } = {};
   try {
     body = await request.json();
   } catch {}
+
+  const amountToRefund =
+    body.amount !== undefined && body.amount !== null && body.amount !== ""
+      ? body.amount
+      : undefined;
 
   try {
     const refund = await prisma.$transaction(async (tx) => {
       return refundTip(tx, {
         barbershopId: data!.barbershopId,
         tipEntryId: id,
+        amountToRefund,
         reason: body.reason,
         refundedById: data!.userId,
         idempotencyKey: request.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? null,

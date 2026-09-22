@@ -89,7 +89,7 @@ describe("PR #16 — Financial Summary Range API Tests", () => {
       barbershopId: barbershopId1, status: "CLOSED", closedAt: period,
     } }));
     expect(mockedComanda.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
-      barbershopId: barbershopId1, status: { in: ["OPEN", "IN_SERVICE", "PENDING_PAYMENT"] },
+      barbershopId: barbershopId1, status: { not: "CANCELLED" }, remainingTotal: { gt: 0 },
     } }));
     expect(mockedPayment.findMany).toHaveBeenCalledWith({ where: { barbershopId: barbershopId1, paidAt: period } });
     expect(mockedFinancialEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {

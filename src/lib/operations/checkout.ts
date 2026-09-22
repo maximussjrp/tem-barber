@@ -1,7 +1,8 @@
 import { CheckoutAllocation, CheckoutTransaction, Comanda, PaymentMethod, Prisma } from "@prisma/client";
+import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { fromCents, MoneyValue, positiveCents, toCents } from "./money";
-import { lockComandaRow, OperationalError } from "./comandas";
+import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "./comandas";
 import { closeComanda, registerPayment } from "./payments";
 import { consumeCustomerCredit, depositCustomerCreditFromCheckout } from "./customer-credit";
 import { recordTip } from "./tips";
@@ -14,11 +15,25 @@ export interface TenderInput {
   creditDepositAmount?: MoneyValue;
 }
 
+export interface ProcessCheckoutInput {
+  barbershopId: string;
+  comandaId: string;
+  customerId?: string | null;
+  tenders: TenderInput[];
+  createdById: string;
+  actorMemberId?: string | null;
+  actorRole?: string | null;
+  mode?: "FINALIZE" | "DEBT_PAYMENT";
+  idempotencyKey?: string | null;
+}
+
 function computeCheckoutFingerprint(input: {
   barbershopId: string;
   comandaId: string;
   tenders: TenderInput[];
+  mode?: "FINALIZE" | "DEBT_PAYMENT";
 }): string {
+  const mode = input.mode || "FINALIZE";
   const sortedTenders = [...input.tenders].sort((a, b) => a.method.localeCompare(b.method));
   const tenderStr = sortedTenders
     .map(
@@ -26,19 +41,13 @@ function computeCheckoutFingerprint(input: {
         `${t.method}:${toCents(t.receivedAmount)}:${toCents(t.tipAmount || 0)}:${t.tipMemberId || ""}:${toCents(t.creditDepositAmount || 0)}`
     )
     .join("|");
-  return `${input.barbershopId}:${input.comandaId}:${tenderStr}`;
+  const raw = `${input.barbershopId}:${mode}:${input.comandaId}:${tenderStr}`;
+  return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
 export async function processCheckoutAllocation(
   tx: Prisma.TransactionClient,
-  input: {
-    barbershopId: string;
-    comandaId: string;
-    customerId?: string | null;
-    tenders: TenderInput[];
-    createdById: string;
-    idempotencyKey?: string | null;
-  }
+  input: ProcessCheckoutInput
 ): Promise<{ transaction: CheckoutTransaction & { allocations: CheckoutAllocation[] }; comanda: Comanda }> {
   if (!input.tenders || input.tenders.length === 0) {
     throw new OperationalError(
@@ -48,31 +57,53 @@ export async function processCheckoutAllocation(
     );
   }
 
+  const mode = input.mode || "FINALIZE";
   const fingerprint = computeCheckoutFingerprint(input);
 
   if (input.idempotencyKey) {
     const existingTx = await tx.checkoutTransaction.findFirst({
-      where: { barbershopId: input.barbershopId, fingerprint },
+      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
       include: { allocations: true },
     });
     if (existingTx) {
-      const existingComanda = await tx.comanda.findUnique({ where: { id: input.comandaId } });
+      if (existingTx.payloadFingerprint !== fingerprint || existingTx.comandaId !== input.comandaId) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+          409
+        );
+      }
+      const existingComanda = await tx.comanda.findUnique({
+        where: { id: input.comandaId },
+        include: comandaInclude,
+      });
       return { transaction: existingTx, comanda: existingComanda! };
-    }
-
-    const keyConflict = await tx.idempotencyKey.findUnique({
-      where: { barbershopId_key: { barbershopId: input.barbershopId, key: input.idempotencyKey } },
-    });
-    if (keyConflict) {
-      throw new OperationalError(
-        "IDEMPOTENCY_KEY_CONFLICT",
-        "A chave de idempotência já foi utilizada com parâmetros diferentes.",
-        409
-      );
     }
   }
 
   await lockComandaRow(tx, input.barbershopId, input.comandaId);
+
+  if (input.idempotencyKey) {
+    const existingTx = await tx.checkoutTransaction.findFirst({
+      where: { barbershopId: input.barbershopId, idempotencyKey: input.idempotencyKey },
+      include: { allocations: true },
+    });
+    if (existingTx) {
+      if (existingTx.payloadFingerprint !== fingerprint || existingTx.comandaId !== input.comandaId) {
+        throw new OperationalError(
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+          409
+        );
+      }
+      const existingComanda = await tx.comanda.findUnique({
+        where: { id: input.comandaId },
+        include: comandaInclude,
+      });
+      return { transaction: existingTx, comanda: existingComanda! };
+    }
+  }
+
   const comanda = await tx.comanda.findUnique({
     where: { id: input.comandaId },
   });
@@ -80,12 +111,37 @@ export async function processCheckoutAllocation(
     throw new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
   }
 
-  if (comanda.status === "CLOSED" || comanda.status === "CANCELLED") {
+  if (comanda.status === "CANCELLED") {
     throw new OperationalError(
       "INVALID_COMANDA_STATUS",
-      `Comanda não pode receber pagamentos no status atual (${comanda.status}).`,
+      "Comanda cancelada não pode receber pagamentos.",
       422
     );
+  }
+
+  if (mode === "FINALIZE" && comanda.status === "CLOSED") {
+    throw new OperationalError(
+      "INVALID_COMANDA_STATUS",
+      "Comanda fechada não pode ser finalizada novamente.",
+      422
+    );
+  }
+
+  if (mode === "DEBT_PAYMENT") {
+    if (comanda.status !== "CLOSED") {
+      throw new OperationalError(
+        "INVALID_COMANDA_STATUS",
+        "Modo DEBT_PAYMENT é permitido apenas para comandas no status CLOSED.",
+        422
+      );
+    }
+    if (toCents(comanda.remainingTotal) <= 0) {
+      throw new OperationalError(
+        "COMANDA_ALREADY_SETTLED",
+        "A comanda já está totalmente paga e encerrada.",
+        422
+      );
+    }
   }
 
   const comandaRemainingCents = toCents(comanda.remainingTotal);
@@ -119,19 +175,29 @@ export async function processCheckoutAllocation(
       }
     }
 
-    if (tipCents > 0 && !t.tipMemberId) {
-      throw new OperationalError(
-        "TIP_MEMBER_REQUIRED",
-        `Profissional favorecido deve ser informado para a gorjeta do meio #${idx + 1}.`,
-        422
-      );
+    if (tipCents > 0) {
+      if (!t.tipMemberId) {
+        throw new OperationalError(
+          "TIP_MEMBER_REQUIRED",
+          `Profissional favorecido deve ser informado para a gorjeta do meio #${idx + 1}.`,
+          422
+        );
+      }
+
+      if (input.actorRole === "BARBER" && input.actorMemberId && t.tipMemberId !== input.actorMemberId) {
+        throw new OperationalError(
+          "TIP_SCOPE_VIOLATION",
+          "Barbeiro só pode registrar gorjeta para si mesmo.",
+          403
+        );
+      }
     }
 
     const nonSaleAllocatedCents = tipCents + creditDepositCents;
     if (receivedCents < nonSaleAllocatedCents) {
       throw new OperationalError(
         "INVALID_TENDER_ALLOCATION",
-        `Valor recebido em ${t.method} (${receivedCents / 100}) é menor que gorjetas e depósitos (${nonSaleAllocatedCents / 100}).`,
+        `Valor recebido em ${t.method} (${(receivedCents / 100).toFixed(2)}) é menor que gorjetas e depósitos (${(nonSaleAllocatedCents / 100).toFixed(2)}).`,
         422
       );
     }
@@ -174,10 +240,18 @@ export async function processCheckoutAllocation(
     };
   });
 
-  if (accumulatedSaleCents !== comandaRemainingCents) {
+  if (mode === "FINALIZE" && accumulatedSaleCents !== comandaRemainingCents) {
     throw new OperationalError(
       "SALE_ALLOCATION_MISMATCH",
       `O total alocado para a venda (R$ ${(accumulatedSaleCents / 100).toFixed(2)}) não quita o saldo remanescente da comanda (R$ ${(comandaRemainingCents / 100).toFixed(2)}).`,
+      422
+    );
+  }
+
+  if (mode === "DEBT_PAYMENT" && (accumulatedSaleCents <= 0 || accumulatedSaleCents > comandaRemainingCents)) {
+    throw new OperationalError(
+      "SALE_ALLOCATION_MISMATCH",
+      `O total alocado para pagamento da dívida deve ser maior que zero e até R$ ${(comandaRemainingCents / 100).toFixed(2)}.`,
       422
     );
   }
@@ -194,12 +268,17 @@ export async function processCheckoutAllocation(
       totalCreditDeposit: fromCents(totalCreditDepositCents),
       totalChangeAmount: fromCents(totalChangeCents),
       fingerprint,
+      payloadFingerprint: fingerprint,
+      idempotencyKey: input.idempotencyKey || null,
+      mode,
       createdById: input.createdById,
     },
     include: { allocations: true },
   });
 
-  for (const t of parsedTenders) {
+  for (let i = 0; i < parsedTenders.length; i++) {
+    const t = parsedTenders[i];
+
     if (t.saleAppliedCents > 0) {
       const allocation = await tx.checkoutAllocation.create({
         data: {
@@ -211,6 +290,8 @@ export async function processCheckoutAllocation(
           allocatedAmount: fromCents(t.saleAppliedCents),
         },
       });
+
+      const childSaleKey = input.idempotencyKey ? `${input.idempotencyKey}:sale:${i}` : null;
 
       if (t.method === "CUSTOMER_CREDIT") {
         if (!effectiveCustomerId) {
@@ -228,7 +309,7 @@ export async function processCheckoutAllocation(
           comandaId: input.comandaId,
           paymentId: creditPaymentId,
           createdByUserId: input.createdById,
-          idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:sale:${allocation.id}` : null,
+          idempotencyKey: childSaleKey,
         });
 
         const payment = await tx.payment.create({
@@ -261,8 +342,9 @@ export async function processCheckoutAllocation(
           method: t.method,
           amount: t.saleAppliedCents / 100,
           userId: input.createdById,
-          idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:sale:${allocation.id}` : null,
+          idempotencyKey: childSaleKey,
           checkoutAllocationId: allocation.id,
+          allowClosedDebtPayment: mode === "DEBT_PAYMENT",
         });
       }
     }
@@ -280,6 +362,8 @@ export async function processCheckoutAllocation(
         },
       });
 
+      const childTipKey = input.idempotencyKey ? `${input.idempotencyKey}:tip:${i}` : null;
+
       await recordTip(tx, {
         barbershopId: input.barbershopId,
         comandaId: input.comandaId,
@@ -288,7 +372,9 @@ export async function processCheckoutAllocation(
         method: t.method,
         checkoutAllocationId: tipAllocation.id,
         createdById: input.createdById,
-        idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:tip:${tipAllocation.id}` : null,
+        actorMemberId: input.actorMemberId,
+        actorRole: input.actorRole,
+        idempotencyKey: childTipKey,
       });
     }
 
@@ -312,6 +398,8 @@ export async function processCheckoutAllocation(
         },
       });
 
+      const childCreditKey = input.idempotencyKey ? `${input.idempotencyKey}:credit:${i}` : null;
+
       const { entry: creditEntry } = await depositCustomerCreditFromCheckout(tx, {
         barbershopId: input.barbershopId,
         customerId: effectiveCustomerId,
@@ -320,7 +408,7 @@ export async function processCheckoutAllocation(
         comandaId: input.comandaId,
         checkoutAllocationId: depositAllocation.id,
         createdByUserId: input.createdById,
-        idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:deposit:${depositAllocation.id}` : null,
+        idempotencyKey: childCreditKey,
       });
 
       if (t.method === "CASH") {
@@ -352,42 +440,18 @@ export async function processCheckoutAllocation(
         },
       });
     }
-
-    if (t.changeCents > 0 && t.method === "CASH") {
-      const activeSession = await tx.cashSession.findFirst({
-        where: { barbershopId: input.barbershopId, status: "OPEN" },
-      });
-      if (activeSession) {
-        await tx.cashMovement.create({
-          data: {
-            barbershopId: input.barbershopId,
-            cashSessionId: activeSession.id,
-            amount: fromCents(-t.changeCents),
-            description: `Troco devolvido em dinheiro ao cliente na comanda ${input.comandaId.split("-")[0]}`,
-          },
-        });
-      }
-    }
   }
 
-  if (input.idempotencyKey) {
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await tx.idempotencyKey.create({
-      data: {
-        barbershopId: input.barbershopId,
-        key: input.idempotencyKey,
-        requestHash: fingerprint,
-        result: { checkoutTransactionId: checkoutTx.id },
-        expiresAt,
-      },
-    });
+  let finalComanda: Comanda;
+  if (mode === "DEBT_PAYMENT") {
+    finalComanda = await recalculateComandaTotals(tx, input.comandaId);
+  } else {
+    finalComanda = await closeComanda(tx, input.barbershopId, input.comandaId);
   }
-
-  const updatedComanda = await closeComanda(tx, input.barbershopId, input.comandaId);
 
   return {
     transaction: checkoutTx,
-    comanda: updatedComanda,
+    comanda: finalComanda,
   };
 }
 

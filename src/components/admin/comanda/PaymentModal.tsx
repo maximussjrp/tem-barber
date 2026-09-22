@@ -232,7 +232,27 @@ export function PaymentModal({
         method: p.method,
         amount: (Number(p.amount) || 0).toFixed(2),
       }));
-      await onPay(payload, isPartialOrZero ? { closeWithDebt: true, confirmOutstandingBalance: true } : undefined);
+
+      const allocations = mixedPayments.some((p) => (Number(p.tipAmount) || 0) > 0 || (Number(p.creditDepositAmount) || 0) > 0)
+        ? mixedPayments.map((p) => {
+            const r = Number(p.amount) || 0;
+            const t = Number(p.tipAmount) || 0;
+            const c = Number(p.creditDepositAmount) || 0;
+            return {
+              method: p.method,
+              receivedAmount: r + t + c,
+              tipAmount: t > 0 ? t : undefined,
+              tipMemberId: t > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
+              creditDepositAmount: c > 0 ? c : undefined,
+            };
+          })
+        : undefined;
+
+      await onPay(payload, {
+        closeWithDebt: isPartialOrZero,
+        confirmOutstandingBalance: isPartialOrZero,
+        allocations,
+      });
     }
   }
 

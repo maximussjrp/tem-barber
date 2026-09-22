@@ -273,7 +273,7 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
 
   const existingComanda = await tx.comanda.findUnique({
     where: { id: comandaId },
-    select: { status: true },
+    select: { status: true, remainingTotal: true },
   });
 
   const updateData: Prisma.ComandaUpdateInput = {
@@ -285,8 +285,8 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
     remainingTotal: fromCents(remainingTotal),
   };
 
-  if (existingComanda?.status === "CLOSED" && remainingTotal > 0) {
-    updateData.status = "PENDING_PAYMENT";
+  if (existingComanda?.status === "CLOSED") {
+    // Preserve CLOSED status and closedAt on closed comanda
   }
 
   return tx.comanda.update({
@@ -697,9 +697,18 @@ export async function cancelComanda(
 
   // 1b. Revert active tips linked to comanda
   const activeTips = await tx.tipEntry.findMany({
-    where: { comandaId: comanda.id, barbershopId: input.barbershopId, status: "ACTIVE" },
+    where: { comandaId: comanda.id, barbershopId: input.barbershopId, status: { in: ["ACTIVE", "PARTIALLY_REFUNDED"] } },
   });
   if (activeTips.length > 0) {
+    for (const tip of activeTips) {
+      if (toCents(tip.paidOutAmount || 0) > 0) {
+        throw new OperationalError(
+          "TIP_PAYOUT_REVERSAL_REQUIRED",
+          "A comanda possui gorjetas já repassadas ao profissional. Reverta o repasse antes de cancelar.",
+          422
+        );
+      }
+    }
     const { refundTip } = await import("./tips");
     for (const tip of activeTips) {
       await refundTip(tx, {
@@ -715,8 +724,20 @@ export async function cancelComanda(
   // 1c. Revert credit deposits linked to checkout allocations of comanda
   const creditDeposits = await tx.customerCreditEntry.findMany({
     where: { comandaId: comanda.id, barbershopId: input.barbershopId, sourceKind: "OVERPAYMENT" },
+    include: { account: true },
   });
   if (creditDeposits.length > 0) {
+    for (const deposit of creditDeposits) {
+      const currentAccBalance = toCents(deposit.account.balance);
+      const depositAmt = toCents(deposit.amount);
+      if (currentAccBalance < depositAmt) {
+        throw new OperationalError(
+          "CUSTOMER_CREDIT_DEPOSIT_ALREADY_CONSUMED",
+          "O troco depositado em crédito já foi utilizado pelo cliente. Não é possível cancelar a comanda sem ajustar o saldo.",
+          422
+        );
+      }
+    }
     const { reverseCheckoutCreditDeposit } = await import("./customer-credit");
     for (const deposit of creditDeposits) {
       await reverseCheckoutCreditDeposit(tx, {

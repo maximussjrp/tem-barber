@@ -2836,6 +2836,7 @@ model CustomerCreditEntry {
 
 enum TipStatus {
   ACTIVE
+  PARTIALLY_REFUNDED
   REFUNDED
   PAID_OUT
   PAID_OUT_REVERSED
@@ -2852,24 +2853,33 @@ enum AllocationKind {
   CUSTOMER_CREDIT_DEPOSIT
 }
 
+enum CheckoutMode {
+  FINALIZE
+  DEBT_PAYMENT
+}
+
 model CheckoutTransaction {
-  id                  String   @id @default(uuid())
-  barbershopId        String   @map("barbershop_id")
-  comandaId           String   @map("comanda_id")
-  totalReceivedAmount Decimal  @map("total_received_amount") @db.Decimal(10, 2)
-  totalSaleApplied    Decimal  @map("total_sale_applied") @db.Decimal(10, 2)
-  totalTipAmount      Decimal  @map("total_tip_amount") @db.Decimal(10, 2)
-  totalCreditDeposit  Decimal  @map("total_credit_deposit") @db.Decimal(10, 2)
-  totalChangeAmount   Decimal  @map("total_change_amount") @db.Decimal(10, 2)
+  id                  String       @id @default(uuid())
+  barbershopId        String       @map("barbershop_id")
+  comandaId           String       @map("comanda_id")
+  idempotencyKey      String?      @map("idempotency_key")
+  payloadFingerprint  String       @map("payload_fingerprint")
+  mode                CheckoutMode @default(FINALIZE)
+  totalReceivedAmount Decimal      @map("total_received_amount") @db.Decimal(10, 2)
+  totalSaleApplied    Decimal      @map("total_sale_applied") @db.Decimal(10, 2)
+  totalTipAmount      Decimal      @map("total_tip_amount") @db.Decimal(10, 2)
+  totalCreditDeposit  Decimal      @map("total_credit_deposit") @db.Decimal(10, 2)
+  totalChangeAmount   Decimal      @map("total_change_amount") @db.Decimal(10, 2)
   fingerprint         String
-  createdById         String   @map("created_by_id")
-  createdAt           DateTime @default(now()) @map("created_at")
+  createdById         String       @map("created_by_id")
+  createdAt           DateTime     @default(now()) @map("created_at")
 
   barbershop  Barbershop           @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
   comanda     Comanda              @relation(fields: [comandaId], references: [id], onDelete: Restrict)
   createdBy   User                 @relation("CheckoutCreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
   allocations CheckoutAllocation[]
 
+  @@unique([barbershopId, idempotencyKey])
   @@index([barbershopId, comandaId])
   @@index([barbershopId, createdAt])
   @@map("checkout_transactions")
@@ -2903,6 +2913,8 @@ model TipEntry {
   comandaId            String    @map("comanda_id")
   memberId             String    @map("member_id")
   amount               Decimal   @db.Decimal(10, 2)
+  refundedAmount       Decimal   @default(0) @map("refunded_amount") @db.Decimal(10, 2)
+  paidOutAmount        Decimal   @default(0) @map("paid_out_amount") @db.Decimal(10, 2)
   method               PaymentMethod
   status               TipStatus @default(ACTIVE)
   checkoutAllocationId String?   @unique @map("checkout_allocation_id")
@@ -2918,7 +2930,7 @@ model TipEntry {
   checkoutAllocation CheckoutAllocation?  @relation(fields: [checkoutAllocationId], references: [id], onDelete: Restrict)
   cashMovement       CashMovement?
   financialEntry     FinancialEntry?
-  tipRefund                  TipRefund?
+  tipRefunds                 TipRefund[]
   payoutAllocations          TipPayoutAllocation[]
   payoutReversalAllocations  TipPayoutReversalAllocation[]
 
@@ -2931,7 +2943,7 @@ model TipEntry {
 model TipRefund {
   id             String   @id @default(uuid())
   barbershopId   String   @map("barbershop_id")
-  tipEntryId     String   @unique @map("tip_entry_id")
+  tipEntryId     String   @map("tip_entry_id")
   amount         Decimal  @db.Decimal(10, 2)
   reason         String?
   refundedById   String   @map("refunded_by_id")
@@ -2945,6 +2957,7 @@ model TipRefund {
   financialEntry FinancialEntry?
 
   @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, tipEntryId])
   @@index([barbershopId, createdAt])
   @@map("tip_refunds")
 }

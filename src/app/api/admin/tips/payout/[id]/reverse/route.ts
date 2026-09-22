@@ -16,7 +16,7 @@ export async function POST(
   }
 
   const { id } = await params;
-  let body: { reason?: string; idempotencyKey?: string } = {};
+  let body: { reason?: string; isPhysicalCashReturned?: boolean; idempotencyKey?: string } = {};
   try {
     body = await request.json();
   } catch {}
@@ -27,6 +27,7 @@ export async function POST(
         barbershopId: data!.barbershopId,
         payoutId: id,
         reason: body.reason,
+        isPhysicalCashReturned: body.isPhysicalCashReturned === true,
         createdById: data!.userId,
         idempotencyKey: request.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? null,
       });

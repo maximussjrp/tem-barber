@@ -45,6 +45,16 @@ export async function POST(
   // Obter chave de idempotência dos headers ou do body
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? null;
 
+  if (body.allocations && body.allocations.length > 0 && !idempotencyKey) {
+    return NextResponse.json(
+      {
+        error: "IDEMPOTENCY_KEY_REQUIRED",
+        message: "É necessário fornecer uma chave de idempotência ao utilizar o modo de alocação de checkout.",
+      },
+      { status: 400 }
+    );
+  }
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       await lockComandaRow(tx, data!.barbershopId, id);
@@ -85,7 +95,7 @@ export async function POST(
             });
             return fullComanda;
           }
-          if (body.payments && body.payments.length > 0) {
+          if ((body.payments && body.payments.length > 0) || (body.allocations && body.allocations.length > 0)) {
             throw new OperationalError("COMANDA_ALREADY_SETTLED", "A comanda já está totalmente paga e encerrada.", 422);
           }
           const fullComanda = await tx.comanda.findUnique({
@@ -98,6 +108,21 @@ export async function POST(
         // CLOSED com dívida
         if (!canManageDebt(data!.role)) {
           throw new OperationalError("DEBT_PERMISSION_REQUIRED", "Apenas gerentes e proprietários podem receber saldo de comanda fechada.", 403);
+        }
+
+        if (body.allocations && body.allocations.length > 0) {
+          const { comanda: closedComanda } = await processCheckoutAllocation(tx, {
+            barbershopId: data!.barbershopId,
+            comandaId: id,
+            customerId: comanda.customerId,
+            tenders: body.allocations,
+            createdById: data!.userId,
+            actorMemberId: data!.memberId,
+            actorRole: data!.role,
+            mode: "DEBT_PAYMENT",
+            idempotencyKey,
+          });
+          return closedComanda;
         }
 
         const paymentsList = body.payments || [];
@@ -167,6 +192,9 @@ export async function POST(
           customerId: comanda.customerId,
           tenders: body.allocations,
           createdById: data!.userId,
+          actorMemberId: data!.memberId,
+          actorRole: data!.role,
+          mode: "FINALIZE",
           idempotencyKey,
         });
         return closedComanda;

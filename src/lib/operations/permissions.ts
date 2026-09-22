@@ -107,15 +107,15 @@ export function canViewTips(role: string) {
 }
 
 export function canRefundTip(role: string) {
-  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+  return role === "OWNER" || role === "MANAGER";
 }
 
 export function canPayoutTips(role: string) {
-  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+  return role === "OWNER" || role === "MANAGER";
 }
 
 export function canReverseTipPayout(role: string) {
-  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+  return role === "OWNER" || role === "MANAGER";
 }
 
 export function forbidden() {

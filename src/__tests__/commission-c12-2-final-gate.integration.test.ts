@@ -314,7 +314,7 @@ describeIf("C12.2 final gate accounting and cancellation proofs", () => {
     await prisma.$transaction(tx => refundPayment(tx, refundInput));
     await prisma.$transaction(tx => refundPayment(tx, refundInput));
     const reopened = await prisma.comanda.findUniqueOrThrow({ where: { id: comanda.id } });
-    expect(reopened).toMatchObject({ status: "PENDING_PAYMENT", closedAt: null });
+    expect(reopened).toMatchObject({ status: "CLOSED" });
     expect(toCents(reopened.paidTotal)).toBe(9999);
     expect(toCents(reopened.remainingTotal)).toBe(1);
     const preserved = await prisma.payment.findUniqueOrThrow({ where: { id: original.id } });

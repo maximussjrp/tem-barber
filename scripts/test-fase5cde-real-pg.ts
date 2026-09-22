@@ -1,11 +1,16 @@
-import prisma from "../src/lib/prisma";
-import { PaymentMethod } from "@prisma/client";
-import { processCheckoutAllocation } from "../src/lib/operations/checkout";
-import { recordTip, executeTipPayout, reconcileTipLedger } from "../src/lib/operations/tips";
-import { cancelComanda } from "../src/lib/operations/comandas";
-import { reconcileCustomerCreditBalance } from "../src/lib/operations/customer-credit";
+const DEFAULT_TEST_DATABASE_URL =
+  "postgresql://match_barber_test_user:match_barber_test_password@localhost:55439/match_barber_test?schema=public";
+
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || DEFAULT_TEST_DATABASE_URL;
 
 async function runRealPgTests() {
+  const { default: prisma } = await import("../src/lib/prisma");
+  const { PaymentMethod } = await import("@prisma/client");
+  const { processCheckoutAllocation } = await import("../src/lib/operations/checkout");
+  const { recordTip, executeTipPayout, reconcileTipLedger } = await import("../src/lib/operations/tips");
+  const { cancelComanda } = await import("../src/lib/operations/comandas");
+  const { reconcileCustomerCreditBalance } = await import("../src/lib/operations/customer-credit");
+
   console.log("=== INICIANDO SUITE REAL-PG E DB CHECK CONSTRAINTS FASES 5C+5D+5E ===");
 
   const timestamp = Date.now();
@@ -97,131 +102,75 @@ async function runRealPgTests() {
 
   let dbCheckPassed = 0;
   const dbCheckCases = [
-    // 1. negative received
+    // 1. negative received amount on checkout_allocations
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CASH', -50.00, 0, 0, 0, 0);
+        INSERT INTO "checkout_allocations" ("id", "checkout_transaction_id", "barbershop_id", "tender_method", "received_amount", "allocation_kind", "allocated_amount", "created_at")
+        VALUES (gen_random_uuid(), gen_random_uuid(), ${barbershop.id}, 'CASH', -50.00, 'SALE_PAYMENT', 50.00, NOW());
       `;
     },
-    // 2. negative sale
+    // 2. negative allocated amount on checkout_allocations
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CASH', 50.00, -10.00, 0, 0, 0);
+        INSERT INTO "checkout_allocations" ("id", "checkout_transaction_id", "barbershop_id", "tender_method", "received_amount", "allocation_kind", "allocated_amount", "created_at")
+        VALUES (gen_random_uuid(), gen_random_uuid(), ${barbershop.id}, 'CASH', 50.00, 'SALE_PAYMENT', -10.00, NOW());
       `;
     },
-    // 3. negative tip
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CASH', 50.00, 50.00, -5.00, 0, 0);
-      `;
-    },
-    // 4. negative creditDeposit
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CASH', 50.00, 50.00, 0, -5.00, 0);
-      `;
-    },
-    // 5. negative change
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CASH', 50.00, 50.00, 0, 0, -5.00);
-      `;
-    },
-    // 6. allocation equation mismatch
+    // 3. transaction equation mismatch
     async () => {
       await prisma.$executeRaw`
         INSERT INTO "checkout_transactions" (
           "id", "barbershop_id", "comanda_id", "total_received_amount", "total_sale_applied",
-          "total_tip_amount", "total_credit_deposit", "total_change_amount", "fingerprint", "created_by_id"
+          "total_tip_amount", "total_credit_deposit", "total_change_amount", "fingerprint", "payload_fingerprint", "created_by_id"
         ) VALUES (
           gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), 100.00, 50.00,
-          10.00, 0.00, 0.00, 'fp-mismatch', ${userCashier.id}
+          10.00, 0.00, 0.00, 'fp-mismatch', 'fp-mismatch', ${userCashier.id}
         );
       `;
     },
-    // 7. non-CASH change > 0
+    // 4. TipEntry amount <= 0
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'PIX', 70.00, 50.00, 0, 0, 20.00);
+        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "refunded_amount", "paid_out_amount", "method", "status", "created_at", "updated_at")
+        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 0.00, 0.00, 0.00, 'CASH', 'ACTIVE', NOW(), NOW());
       `;
     },
-    // 8. CUSTOMER_CREDIT tip > 0
+    // 5. TipEntry refunded_amount < 0
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CUSTOMER_CREDIT', 60.00, 50.00, 10.00, 0, 0);
+        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "refunded_amount", "paid_out_amount", "method", "status", "created_at", "updated_at")
+        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 10.00, -2.00, 0.00, 'CASH', 'ACTIVE', NOW(), NOW());
       `;
     },
-    // 9. CUSTOMER_CREDIT creditDeposit > 0
+    // 6. TipEntry paid_out_amount < 0
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CUSTOMER_CREDIT', 60.00, 50.00, 0, 10.00, 0);
+        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "refunded_amount", "paid_out_amount", "method", "status", "created_at", "updated_at")
+        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 10.00, 0.00, -2.00, 'CASH', 'ACTIVE', NOW(), NOW());
       `;
     },
-    // 10. CUSTOMER_CREDIT change > 0
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CUSTOMER_CREDIT', 60.00, 50.00, 0, 0, 10.00);
-      `;
-    },
-    // 11. CUSTOMER_CREDIT received != sale
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "checkout_tenders" ("id", "checkout_transaction_id", "method", "received_amount", "sale_applied", "tip_amount", "credit_deposit", "change_amount")
-        VALUES (gen_random_uuid(), gen_random_uuid(), 'CUSTOMER_CREDIT', 60.00, 50.00, 0, 0, 0);
-      `;
-    },
-    // 12. TipEntry amount <= 0
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "method", "status", "created_at", "updated_at")
-        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 0.00, 'CASH', 'ACTIVE', NOW(), NOW());
-      `;
-    },
-    // 13. TipEntry refunded < 0
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "refunded_amount", "method", "status", "created_at", "updated_at")
-        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 10.00, -2.00, 'CASH', 'ACTIVE', NOW(), NOW());
-      `;
-    },
-    // 14. TipEntry paidOut < 0
-    async () => {
-      await prisma.$executeRaw`
-        INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "paid_out_amount", "method", "status", "created_at", "updated_at")
-        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 10.00, -2.00, 'CASH', 'ACTIVE', NOW(), NOW());
-      `;
-    },
-    // 15. refunded + paidOut > amount
+    // 7. refunded + paidOut > amount
     async () => {
       await prisma.$executeRaw`
         INSERT INTO "tip_entries" ("id", "barbershop_id", "comanda_id", "member_id", "amount", "refunded_amount", "paid_out_amount", "method", "status", "created_at", "updated_at")
         VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), ${memberBarber.id}, 10.00, 6.00, 6.00, 'CASH', 'ACTIVE', NOW(), NOW());
       `;
     },
-    // 16. TipRefund amount <= 0
+    // 8. TipRefund amount <= 0
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "tip_refunds" ("id", "barbershop_id", "tip_entry_id", "amount", "reason", "created_at")
-        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), 0.00, 'Invalid', NOW());
+        INSERT INTO "tip_refunds" ("id", "barbershop_id", "tip_entry_id", "amount", "reason", "refunded_by_id", "created_at")
+        VALUES (gen_random_uuid(), ${barbershop.id}, gen_random_uuid(), 0.00, 'Invalid', ${userCashier.id}, NOW());
       `;
     },
-    // 17. TipPayout amount <= 0
+    // 9. TipPayout total_amount <= 0
     async () => {
       await prisma.$executeRaw`
-        INSERT INTO "tip_payouts" ("id", "barbershop_id", "member_id", "total_amount", "method", "status", "created_at", "updated_at")
-        VALUES (gen_random_uuid(), ${barbershop.id}, ${memberBarber.id}, 0.00, 'PIX', 'COMPLETED', NOW(), NOW());
+        INSERT INTO "tip_payouts" ("id", "barbershop_id", "member_id", "total_amount", "method", "status", "created_by_id", "created_at", "updated_at")
+        VALUES (gen_random_uuid(), ${barbershop.id}, ${memberBarber.id}, 0.00, 'PIX', 'COMPLETED', ${userCashier.id}, NOW(), NOW());
       `;
     },
-    // 18. TipPayoutAllocation amount <= 0
+    // 10. TipPayoutAllocation amount <= 0
     async () => {
       await prisma.$executeRaw`
         INSERT INTO "tip_payout_allocations" ("id", "payout_id", "tip_entry_id", "amount", "created_at")
@@ -344,7 +293,7 @@ async function runRealPgTests() {
       return processCheckoutAllocation(tx, {
         barbershopId: barbershop.id,
         comandaId: comandaPayload.id,
-        tenders: [{ method: PaymentMethod.CASH, receivedAmount: 50.0 }], // different tender method payload
+        tenders: [{ method: PaymentMethod.CASH, receivedAmount: 50.0 }],
         createdById: userCashier.id,
         idempotencyKey: diffPayloadKey,
       });
@@ -451,16 +400,44 @@ async function runRealPgTests() {
   );
 
   await Promise.allSettled(payoutPromises);
+
   const tipEntryPayout = await prisma.tipEntry.findFirst({
     where: { memberId: barberPayoutMember.id },
-    include: { payoutAllocations: true },
+    include: { payoutAllocations: { include: { payout: true } } },
   });
-  const totalPaidOut = tipEntryPayout?.payoutAllocations.reduce((sum, a) => sum + Number(a.amount), 0) || 0;
-  if (totalPaidOut > Number(tipEntryPayout?.amount)) {
-    console.error("❌ FALHA: paidOutAmount excede o valor da gorjeta!");
+
+  const entryAmount = Number(tipEntryPayout?.amount || 0);
+  const entryRefunded = Number(tipEntryPayout?.refundedAmount || 0);
+  const entryPaidOut = Number(tipEntryPayout?.paidOutAmount || 0);
+
+  const activeAllocations = tipEntryPayout?.payoutAllocations.filter(
+    (a) => a.payout.status === "COMPLETED"
+  ) || [];
+
+  const sumAllocations = activeAllocations.reduce((sum, a) => sum + Number(a.amount), 0);
+
+  if (entryAmount !== 30.0) {
+    console.error(`❌ FALHA: TipEntry.amount (${entryAmount}) !== 30.0!`);
     process.exit(1);
   }
-  console.log("✓ REAL_PG_TIP_PAYOUT_CONCURRENCY=PASS");
+  if (sumAllocations !== 30.0) {
+    console.error(`❌ FALHA: SUM(TipPayoutAllocation.amount) (${sumAllocations}) !== 30.0!`);
+    process.exit(1);
+  }
+  if (entryPaidOut !== 30.0) {
+    console.error(`❌ FALHA: TipEntry.paidOutAmount (${entryPaidOut}) !== 30.0!`);
+    process.exit(1);
+  }
+  if (activeAllocations.length !== 1) {
+    console.error(`❌ FALHA: Ativos payouts (${activeAllocations.length}) !== 1!`);
+    process.exit(1);
+  }
+  if (entryPaidOut > entryAmount - entryRefunded) {
+    console.error("❌ FALHA: paidOutAmount excede amount - refundedAmount!");
+    process.exit(1);
+  }
+
+  console.log("✓ REAL_PG_TIP_PAYOUT_CONCURRENCY=PASS (EntryAmount=30, ActiveAllocSum=30, PaidOutAmount=30, ActivePayoutsCount=1)");
 
   // E. Credit deposit reversal concurrency
   console.log("\n--> Teste E: REAL_PG_CREDIT_REVERSAL_CONCURRENCY");
@@ -650,6 +627,5 @@ async function runRealPgTests() {
 
 runRealPgTests().catch(async (e) => {
   console.error("FALHA NOS TESTES REAL-PG:", e);
-  await prisma.$disconnect();
   process.exit(1);
 });

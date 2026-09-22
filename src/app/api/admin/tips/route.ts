@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     include: {
       member: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
       createdBy: { select: { id: true, name: true } },
-      tipRefund: true,
+      tipRefunds: true,
     },
     orderBy: { createdAt: "desc" },
   });

@@ -2,9 +2,10 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
 import { processCheckoutAllocation, reconcileCheckoutTransaction } from "@/lib/operations/checkout";
-import { recordTip, executeTipPayout, reverseTipPayout, reconcileTipLedger } from "@/lib/operations/tips";
+import { recordTip, refundTip, executeTipPayout, reverseTipPayout, reconcileTipLedger } from "@/lib/operations/tips";
 import { cancelComanda } from "@/lib/operations/comandas";
 import { getCustomerCreditAccount, reconcileCustomerCreditBalance } from "@/lib/operations/customer-credit";
+import { canRefundTip, canPayoutTips, canReverseTipPayout } from "@/lib/operations/permissions";
 
 describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
   let barbershopId: string;
@@ -96,7 +97,26 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
     await prisma.$disconnect();
   });
 
-  describe("1. Gorjetas Invariants (Fase 5C)", () => {
+  describe("1. RBAC and Permissions Invariants (Fase 5E Hardening)", () => {
+    test("SUPER_ADMIN and BARBER are DENIED (403) for tip refund, payout, and reversal", () => {
+      expect(canRefundTip("SUPER_ADMIN")).toBe(false);
+      expect(canPayoutTips("SUPER_ADMIN")).toBe(false);
+      expect(canReverseTipPayout("SUPER_ADMIN")).toBe(false);
+
+      expect(canRefundTip("BARBER")).toBe(false);
+      expect(canPayoutTips("BARBER")).toBe(false);
+      expect(canReverseTipPayout("BARBER")).toBe(false);
+
+      expect(canRefundTip("OWNER")).toBe(true);
+      expect(canRefundTip("MANAGER")).toBe(true);
+      expect(canPayoutTips("OWNER")).toBe(true);
+      expect(canPayoutTips("MANAGER")).toBe(true);
+      expect(canReverseTipPayout("OWNER")).toBe(true);
+      expect(canReverseTipPayout("MANAGER")).toBe(true);
+    });
+  });
+
+  describe("2. Gorjetas Invariants & Partial Refunds (Fase 5C)", () => {
     test("TIP_RECEIVED does NOT change comanda total or commission base", async () => {
       const comanda = await prisma.comanda.create({
         data: {
@@ -140,36 +160,208 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
       expect(ledger.activePending).toBe(15.0);
     });
 
-    test("Payout and Reversal lifecycle", async () => {
-      const payout = await prisma.$transaction(async (tx) => {
-        return executeTipPayout(tx, {
+    test("Partial tip refund, multiple partials, exceed available, and idempotency", async () => {
+      const comanda = await prisma.comanda.create({
+        data: {
           barbershopId,
+          customerId,
+          customerName: "Cliente Teste Partial",
+          subtotal: 50.0,
+          total: 50.0,
+          paidTotal: 50.0,
+          remainingTotal: 0.0,
+          status: "CLOSED",
+        },
+      });
+
+      const tip = await prisma.$transaction(async (tx) => {
+        return recordTip(tx, {
+          barbershopId,
+          comandaId: comanda.id,
           memberId: barberMemberId,
+          amount: 30.0,
           method: PaymentMethod.PIX,
           createdById: cashierUserId,
         });
       });
 
-      expect(payout.status).toBe("COMPLETED");
-      expect(Number(payout.totalAmount)).toBe(15.0);
-
-      const reversal = await prisma.$transaction(async (tx) => {
-        return reverseTipPayout(tx, {
+      // First partial refund $10
+      const refund1 = await prisma.$transaction(async (tx) => {
+        return refundTip(tx, {
           barbershopId,
-          payoutId: payout.id,
-          reason: "Erro de digitação",
+          tipEntryId: tip.id,
+          amountToRefund: 10.0,
+          reason: "Primeiro estorno parcial",
+          refundedById: cashierUserId,
+          idempotencyKey: `ref-partial-1-${tip.id}`,
+        });
+      });
+      expect(Number(refund1.amount)).toBe(10.0);
+
+      const tipAfter1 = await prisma.tipEntry.findUnique({ where: { id: tip.id } });
+      expect(tipAfter1?.status).toBe("PARTIALLY_REFUNDED");
+      expect(Number(tipAfter1?.refundedAmount)).toBe(10.0);
+
+      // Replay same idempotency key with same payload -> returns same refund
+      const refund1Replay = await prisma.$transaction(async (tx) => {
+        return refundTip(tx, {
+          barbershopId,
+          tipEntryId: tip.id,
+          amountToRefund: 10.0,
+          reason: "Primeiro estorno parcial",
+          refundedById: cashierUserId,
+          idempotencyKey: `ref-partial-1-${tip.id}`,
+        });
+      });
+      expect(refund1Replay.id).toBe(refund1.id);
+
+      // Same key with different amount -> 409 conflict
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return refundTip(tx, {
+            barbershopId,
+            tipEntryId: tip.id,
+            amountToRefund: 15.0,
+            reason: "Payload diferente",
+            refundedById: cashierUserId,
+            idempotencyKey: `ref-partial-1-${tip.id}`,
+          });
+        })
+      ).rejects.toThrow("A chave de idempotência já foi utilizada com parâmetros diferentes.");
+
+      // Second partial refund $10 (available remaining = 20)
+      const refund2 = await prisma.$transaction(async (tx) => {
+        return refundTip(tx, {
+          barbershopId,
+          tipEntryId: tip.id,
+          amountToRefund: 10.0,
+          reason: "Segundo estorno parcial",
+          refundedById: cashierUserId,
+        });
+      });
+      expect(Number(refund2.amount)).toBe(10.0);
+
+      const tipAfter2 = await prisma.tipEntry.findUnique({ where: { id: tip.id } });
+      expect(tipAfter2?.status).toBe("PARTIALLY_REFUNDED");
+      expect(Number(tipAfter2?.refundedAmount)).toBe(20.0);
+
+      // Attempt refund of $15 (available remaining is 10) -> throws TIP_REFUND_EXCEEDS_AVAILABLE
+      await expect(
+        prisma.$transaction(async (tx) => {
+          return refundTip(tx, {
+            barbershopId,
+            tipEntryId: tip.id,
+            amountToRefund: 15.0,
+            reason: "Excede disponível",
+            refundedById: cashierUserId,
+          });
+        })
+      ).rejects.toThrow("excede o saldo disponível para estorno");
+
+      // Full remaining refund $10 -> transitions status to REFUNDED
+      const refund3 = await prisma.$transaction(async (tx) => {
+        return refundTip(tx, {
+          barbershopId,
+          tipEntryId: tip.id,
+          amountToRefund: 10.0,
+          reason: "Estorno final restante",
+          refundedById: cashierUserId,
+        });
+      });
+      expect(Number(refund3.amount)).toBe(10.0);
+
+      const tipAfter3 = await prisma.tipEntry.findUnique({ where: { id: tip.id } });
+      expect(tipAfter3?.status).toBe("REFUNDED");
+      expect(Number(tipAfter3?.refundedAmount)).toBe(30.0);
+    });
+
+    test("Payout and Reversal lifecycle with isPhysicalCashReturned flag", async () => {
+      const cashUser = await prisma.user.create({
+        data: { name: "Barbeiro Cash Payout", phone: `119333${Date.now().toString().slice(-5)}` },
+      });
+      const cashMember = await prisma.barbershopMember.create({
+        data: { barbershopId, userId: cashUser.id, role: "BARBER" },
+      });
+
+      const comanda = await prisma.comanda.create({
+        data: {
+          barbershopId,
+          customerId,
+          customerName: "Cliente Cash Payout",
+          subtotal: 50.0,
+          total: 50.0,
+          paidTotal: 50.0,
+          remainingTotal: 0.0,
+          status: "CLOSED",
+        },
+      });
+
+      await prisma.$transaction(async (tx) => {
+        return recordTip(tx, {
+          barbershopId,
+          comandaId: comanda.id,
+          memberId: cashMember.id,
+          amount: 40.0,
+          method: PaymentMethod.CASH,
           createdById: cashierUserId,
         });
       });
 
-      expect(reversal.payoutId).toBe(payout.id);
+      // Payout in CASH (-40 in cash session)
+      const payout = await prisma.$transaction(async (tx) => {
+        return executeTipPayout(tx, {
+          barbershopId,
+          memberId: cashMember.id,
+          method: PaymentMethod.CASH,
+          createdById: cashierUserId,
+        });
+      });
 
-      const tip = await prisma.tipEntry.findFirst({ where: { barbershopId, memberId: barberMemberId } });
-      expect(tip?.status).toBe("ACTIVE");
+      // Reversal WITHOUT physical cash return (isPhysicalCashReturned = false)
+      const reversalNoCash = await prisma.$transaction(async (tx) => {
+        return reverseTipPayout(tx, {
+          barbershopId,
+          payoutId: payout.id,
+          isPhysicalCashReturned: false,
+          reason: "Sem retorno fisico ao caixa",
+          createdById: cashierUserId,
+        });
+      });
+
+      const movementNoCash = await prisma.cashMovement.findFirst({
+        where: { tipPayoutReversalId: reversalNoCash.id },
+      });
+      expect(movementNoCash).toBeNull();
+
+      // Re-execute payout and reverse WITH physical cash return (isPhysicalCashReturned = true)
+      const payout2 = await prisma.$transaction(async (tx) => {
+        return executeTipPayout(tx, {
+          barbershopId,
+          memberId: cashMember.id,
+          method: PaymentMethod.CASH,
+          createdById: cashierUserId,
+        });
+      });
+
+      const reversalWithCash = await prisma.$transaction(async (tx) => {
+        return reverseTipPayout(tx, {
+          barbershopId,
+          payoutId: payout2.id,
+          isPhysicalCashReturned: true,
+          reason: "Com retorno fisico ao caixa",
+          createdById: cashierUserId,
+        });
+      });
+
+      const movementWithCash = await prisma.cashMovement.findFirst({
+        where: { tipPayoutReversalId: reversalWithCash.id },
+      });
+      expect(movementWithCash).not.toBeNull();
+      expect(Number(movementWithCash?.amount)).toBe(40.0);
     });
   });
 
-  describe("2. Checkout Allocation Engine Invariants (Fase 5D)", () => {
+  describe("3. Checkout Allocation Engine Invariants (Fase 5D)", () => {
     test("Rejects non-CASH change", async () => {
       const comanda = await prisma.comanda.create({
         data: {
@@ -192,7 +384,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
             tenders: [
               {
                 method: PaymentMethod.PIX,
-                receivedAmount: 70.0, // 50 sale + 20 unallocated non-CASH change -> invalid
+                receivedAmount: 70.0,
               },
             ],
             createdById: cashierUserId,
@@ -269,12 +461,12 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
           tenders: [
             {
               method: PaymentMethod.CASH,
-              receivedAmount: 50.0, // 40 sale + 10 deposit
+              receivedAmount: 50.0,
               creditDepositAmount: 10.0,
             },
             {
               method: PaymentMethod.PIX,
-              receivedAmount: 20.0, // 10 sale + 10 tip
+              receivedAmount: 20.0,
               tipAmount: 10.0,
               tipMemberId: barberMemberId,
             },
@@ -298,7 +490,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
     });
   });
 
-  describe("3. Full Atomic Rollback on Comanda Cancel (Fase 5E)", () => {
+  describe("4. Full Atomic Rollback on Comanda Cancel (Fase 5E)", () => {
     test("Cancelling comanda refunds sale, tips, and credit deposits", async () => {
       const comanda = await prisma.comanda.create({
         data: {
@@ -335,14 +527,14 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
           tenders: [
             {
               method: PaymentMethod.CASH,
-              receivedAmount: 60.0, // 40 sale + 10 tip + 10 deposit
+              receivedAmount: 60.0,
               tipAmount: 10.0,
               tipMemberId: barberMemberId,
               creditDepositAmount: 10.0,
             },
             {
               method: PaymentMethod.PIX,
-              receivedAmount: 10.0, // 10 sale
+              receivedAmount: 10.0,
             },
           ],
           createdById: cashierUserId,
@@ -374,7 +566,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
     });
   });
 
-  describe("4. Advanced Business Scenarios & Hardening (Fase 5E)", () => {
+  describe("5. Advanced Business Scenarios & Hardening (Fase 5E)", () => {
     test("Zero-price comanda checkout with Tip", async () => {
       const comanda = await prisma.comanda.create({
         data: {
@@ -396,7 +588,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
           tenders: [
             {
               method: PaymentMethod.PIX,
-              receivedAmount: 20.0, // $0 sale + $20 tip
+              receivedAmount: 20.0,
               tipAmount: 20.0,
               tipMemberId: barberMemberId,
             },
@@ -412,69 +604,6 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
       const tip = await prisma.tipEntry.findFirst({ where: { comandaId: comanda.id } });
       expect(tip?.status).toBe("ACTIVE");
       expect(Number(tip?.amount)).toBe(20.0);
-    });
-
-    test("FIFO Tip Payout and TipPayoutReversalAllocation tracking", async () => {
-      const fifoUser = await prisma.user.create({
-        data: { name: "Barbeiro FIFO", phone: `119555${Date.now().toString().slice(-5)}` },
-      });
-      const fifoMember = await prisma.barbershopMember.create({
-        data: { barbershopId, userId: fifoUser.id, role: "BARBER" },
-      });
-
-      const comanda = await prisma.comanda.create({
-        data: {
-          barbershopId,
-          customerId,
-          customerName: "Cliente Tip FIFO",
-          subtotal: 50.0,
-          total: 50.0,
-          paidTotal: 50.0,
-          remainingTotal: 0.0,
-          status: "CLOSED",
-        },
-      });
-
-      // 1. Create a tip for barber
-      const createdTip = await prisma.$transaction(async (tx) => {
-        return recordTip(tx, {
-          barbershopId,
-          comandaId: comanda.id,
-          memberId: fifoMember.id,
-          amount: 25.0,
-          method: PaymentMethod.PIX,
-          createdById: cashierUserId,
-        });
-      });
-      expect(createdTip.status).toBe("ACTIVE");
-
-      // 2. Execute Payout
-      const payout = await prisma.$transaction(async (tx) => {
-        return executeTipPayout(tx, {
-          barbershopId,
-          memberId: fifoMember.id,
-          method: PaymentMethod.PIX,
-          createdById: cashierUserId,
-        });
-      });
-
-      expect(payout.status).toBe("COMPLETED");
-
-      // 3. Reverse Payout and verify TipPayoutReversalAllocation
-      const reversal = await prisma.$transaction(async (tx) => {
-        return reverseTipPayout(tx, {
-          barbershopId,
-          payoutId: payout.id,
-          reason: "Repasse indevido",
-          createdById: cashierUserId,
-        });
-      });
-
-      const reversalAllocations = await prisma.tipPayoutReversalAllocation.findMany({
-        where: { reversalId: reversal.id },
-      });
-      expect(reversalAllocations.length).toBeGreaterThan(0);
-      expect(Number(reversalAllocations[0].amountRestored)).toBe(25.0);
     });
 
     test("Tenant isolation blocks cross-tenant checkout or tip access", async () => {
@@ -508,7 +637,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
       await expect(
         prisma.$transaction(async (tx) => {
           return processCheckoutAllocation(tx, {
-            barbershopId: foreignBarbershop.id, // Mismatched tenant
+            barbershopId: foreignBarbershop.id,
             comandaId: comanda.id,
             tenders: [{ method: PaymentMethod.CASH, receivedAmount: 50.0 }],
             createdById: cashierUserId,

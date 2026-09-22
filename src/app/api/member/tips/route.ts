@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     where,
     include: {
       createdBy: { select: { id: true, name: true } },
-      tipRefund: true,
+      tipRefunds: true,
     },
     orderBy: { createdAt: "desc" },
   });
