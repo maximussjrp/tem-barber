@@ -4,15 +4,16 @@ import { authOptions } from "@/lib/auth";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
 import { resolveSingleActiveMembership } from "@/lib/tenant-context";
 
-export async function requireAdmin() {
+async function resolveAdminGuardInternal(options: { checkSubscription: boolean }) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {
     redirect("/login");
   }
 
-  const userId = (session.user as any).id as string;
-  const sessionRole = (session.user as any).role as string;
+  const user = session.user as { id?: string; role?: string; email?: string | null };
+  const userId = user.id as string;
+  const sessionRole = user.role as string;
   const email = session.user?.email as string | null;
 
   const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
@@ -39,8 +40,8 @@ export async function requireAdmin() {
     redirect("/acesso-negado");
   }
 
-  // Se não for platform admin e tiver barbearia vinculada, validar assinatura
-  if (!isPlatform && member) {
+  // Se não for platform admin e tiver barbearia vinculada, validar assinatura quando solicitado
+  if (options.checkSubscription && !isPlatform && member) {
     const subscription = await getTenantSubscription(member.barbershopId);
     if (!isSubscriptionActive(subscription)) {
       redirect("/assinatura-suspensa");
@@ -56,4 +57,12 @@ export async function requireAdmin() {
     barbershop: member?.barbershop ?? null,
     barbershopId: member?.barbershopId ?? null,
   };
+}
+
+export async function requireAdmin() {
+  return resolveAdminGuardInternal({ checkSubscription: true });
+}
+
+export async function requireBillingAdmin() {
+  return resolveAdminGuardInternal({ checkSubscription: false });
 }

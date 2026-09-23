@@ -5,20 +5,24 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopBillingProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+    asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     plan: { findUnique: vi.fn(), findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },
     $transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock)),
+    $executeRaw: vi.fn().mockResolvedValue(1),
   },
   getAdminSessionMock: vi.fn(),
   fetchMock: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
-vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
+vi.mock("@/lib/api-auth", () => ({
+  getAdminSession: getAdminSessionMock,
+  getBillingAdminSession: getAdminSessionMock,
+}));
 
 // Mock global fetch for Asaas API calls
 const originalFetch = globalThis.fetch;
@@ -66,7 +70,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       }
       return null;
     });
-    prismaMock.plan.findFirst.mockImplementation(prismaMock.plan.findUnique as any);
+    prismaMock.plan.findFirst.mockImplementation(prismaMock.plan.findUnique as never);
     prismaMock.asaasBillingPayment.findUnique.mockImplementation(async ({ where }: { where: { asaasPaymentId: string } }) => ({
       asaasPaymentId: where.asaasPaymentId,
       asaasSubscriptionId: "sub_123",
@@ -87,6 +91,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       planId: "plan-db-1",
       status: "ACTIVE",
     }));
+    prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
     prismaMock.asaasBillingPayment.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.tenantSubscription.update.mockResolvedValue({});
@@ -381,7 +386,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       expect(result.created).toBe(true);
       expect(result.asaasCustomerId).toBe("cus_new_456");
 
-      const [url, opts] = fetchMock.mock.calls[0];
+      const postCall = fetchMock.mock.calls.find(([, opts]) => opts?.method === "POST");
+      expect(postCall).toBeDefined();
+      const [url, opts] = postCall!;
       expect(url).toContain("sandbox.asaas.com/api/v3/customers");
       expect(opts.headers.access_token).toBe("test_api_key_secret");
       const body = JSON.parse(opts.body);
@@ -415,7 +422,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       await ensureAsaasCustomerForBarbershop("shop-1");
 
-      const [, opts] = fetchMock.mock.calls[0];
+      const postCall = fetchMock.mock.calls.find(([, opts]) => opts?.method === "POST");
+      expect(postCall).toBeDefined();
+      const [, opts] = postCall!;
       const body = JSON.parse(opts.body);
       expect(JSON.stringify(body)).not.toContain("test_api_key_secret");
     });
@@ -495,7 +504,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         externalReference: "tb_barbershop_shop-1",
       });
 
-      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+      const existingSub = {
         id: "sub-db-existing",
         barbershopId: "shop-1",
         asaasSubscriptionId: "sub_asaas_existing",
@@ -508,7 +517,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         billingType: "PIX",
         nextDueDate: new Date("2026-08-01"),
         externalReference: "tb_sub_shop-1_pro_monthly",
-      });
+      };
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(existingSub as never);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([existingSub] as never);
 
       const result = await createAsaasSubscriptionForBarbershop({
         barbershopId: "shop-1",
@@ -783,8 +794,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       const res = await postSubscription(
         makeRequest({ planCode: "pro_monthly", billingType: "PIX", value: 1, cycle: "YEARLY" })
       );
-      const [, options] = fetchMock.mock.calls.find(([url]) =>
-        String(url).includes("/subscriptions")
+      const [, options] = fetchMock.mock.calls.find(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
       )!;
       const asaasBody = JSON.parse(options.body);
 
@@ -912,8 +923,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         createdAt: new Date(),
       });
 
-      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+      const activeSub = {
         id: "sub-1",
+        barbershopId: "shop-1",
         asaasSubscriptionId: "sub_123",
         planCode: "pro_monthly",
         planName: "Plano Tem Barber",
@@ -924,7 +936,9 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         nextDueDate: new Date("2026-08-01"),
         externalReference: "tb_sub_shop-1_pro_monthly",
         createdAt: new Date(),
-      });
+      };
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(activeSub as never);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
 
       const res = await getStatus();
       const data = await res.json();
@@ -1008,7 +1022,7 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       // Verificar que apenas os mocks Asaas billing foram chamados
       expect(prismaMock.asaasBillingCustomer.findFirst).toHaveBeenCalled();
-      expect(prismaMock.asaasBillingSubscription.findFirst).toHaveBeenCalled();
+      expect(prismaMock.asaasBillingSubscription.findMany).toHaveBeenCalled();
       expect(prismaMock.asaasBillingSubscription.create).toHaveBeenCalled();
     });
   });
@@ -1030,9 +1044,21 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
       });
 
-      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue({
+      const activeSub = {
+        id: "sub-1",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_123",
+        status: "ACTIVE",
+        cycle: "MONTHLY",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+        billingType: "PIX",
+      };
+      const activePayment = {
         id: "p1",
         barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_123",
         asaasPaymentId: "pay_123",
         status: "PENDING",
         billingType: "PIX",
@@ -1041,7 +1067,11 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         paymentDate: null,
         invoiceUrl: "https://www.asaas.com/i/pay_123",
         bankSlipUrl: null,
-      });
+      };
+
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue(activePayment as never);
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([activePayment] as never);
 
       const res = await getCurrentPayment();
       const data = await res.json();
@@ -1069,13 +1099,29 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER", memberId: "m-1" },
       });
 
-      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue({
+      const activeSub = {
+        id: "sub-1",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_123",
+        status: "ACTIVE",
+        cycle: "MONTHLY",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: 49.9,
+        billingType: "PIX",
+      };
+      const activePayment = {
         id: "p1",
         barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_123",
         asaasPaymentId: "pay_123",
         status: "PENDING",
         billingType: "PIX",
-      });
+      };
+
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
+      prismaMock.asaasBillingPayment.findFirst.mockResolvedValue(activePayment as never);
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([activePayment] as never);
 
       fetchMock.mockResolvedValue({
         ok: true,
@@ -1226,11 +1272,14 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       prismaMock.asaasBillingPayment.findFirst.mockResolvedValueOnce(null);
 
       // Existe assinatura e cliente locais
-      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+      const activeSub = {
         id: "sub-db-1",
         barbershopId: "shop-1",
         asaasSubscriptionId: "sub_remote_100",
-      });
+        status: "ACTIVE",
+      };
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(activeSub as never);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
         id: "cust-db-1",
         barbershopId: "shop-1",
@@ -1308,11 +1357,14 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       });
 
       prismaMock.asaasBillingPayment.findFirst.mockResolvedValueOnce(null);
-      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+      const activeSub = {
         id: "sub-db-1",
         barbershopId: "shop-1",
         asaasSubscriptionId: "sub_remote_100",
-      });
+        status: "ACTIVE",
+      };
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(activeSub as never);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
       prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
         id: "cust-db-1",
         barbershopId: "shop-1",

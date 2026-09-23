@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getBillingAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
 import { asaasFetch } from "@/lib/asaas/client";
 import { mapAsaasPaymentStatus, sanitizeAsaasPayloadForLog } from "@/lib/asaas/mappers";
+import {
+  resolveCurrentBillableAsaasSubscription,
+  resolveCurrentPaymentForContract,
+} from "@/lib/billing/current-contract";
 
 export function sanitizeBillingUrl(url: string | null | undefined): string | null {
   if (!url || typeof url !== "string") return null;
@@ -31,11 +35,12 @@ interface RemoteAsaasPayment {
   invoiceUrl?: string;
   bankSlipUrl?: string;
   externalReference?: string;
+  createdAt?: string;
   [key: string]: unknown;
 }
 
 export async function GET() {
-  const session = await getAdminSession();
+  const session = await getBillingAdminSession();
   if (session.error) {
     return session.error;
   }
@@ -56,28 +61,48 @@ export async function GET() {
     );
   }
 
-  // 1. Buscar localmente primeiro (tenant-scoped)
-  let latestPayment = await prisma.asaasBillingPayment.findFirst({
-    where: { barbershopId },
-    orderBy: { createdAt: "desc" },
-  });
+  // 1. Resolver contrato billable atual do tenant
+  const contractResolution = await resolveCurrentBillableAsaasSubscription(prisma, barbershopId);
 
-  // 2. Fallback de conciliação: se não existir cobrança local, consultar remota sem criar nova cobrança
+  if (contractResolution.status === "RECONCILIATION_REQUIRED") {
+    return NextResponse.json(
+      {
+        error: "BILLING_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+        message: "Existe mais de uma assinatura ativa para esta barbearia. Reconciliação necessária.",
+      },
+      { status: 409 }
+    );
+  }
+
+  if (contractResolution.status === "NONE") {
+    return NextResponse.json({
+      exists: false,
+      status: null,
+      billingType: null,
+      value: null,
+      dueDate: null,
+      paymentDate: null,
+      invoiceUrl: null,
+      bankSlipUrl: null,
+      canPay: false,
+    });
+  }
+
+  const currentContract = contractResolution.subscription;
+
+  // 2. Buscar localmente cobrança escopada estritamente ao contrato atual
+  let latestPayment = await resolveCurrentPaymentForContract(prisma, barbershopId, currentContract);
+
+  // 3. Fallback de conciliação: se não existir cobrança local, consultar remota sem criar nova cobrança
   if (!latestPayment) {
-    const [subRecord, custRecord] = await Promise.all([
-      prisma.asaasBillingSubscription.findFirst({
-        where: { barbershopId },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.asaasBillingCustomer.findFirst({
-        where: { barbershopId },
-      }),
-    ]);
+    const custRecord = await prisma.asaasBillingCustomer.findFirst({
+      where: { barbershopId },
+    });
 
-    if (subRecord?.asaasSubscriptionId) {
+    if (currentContract.asaasSubscriptionId) {
       try {
         const remoteRes = await asaasFetch<{ data?: RemoteAsaasPayment[] }>(
-          `/subscriptions/${subRecord.asaasSubscriptionId}/payments`
+          `/subscriptions/${currentContract.asaasSubscriptionId}/payments`
         );
         const paymentsList = remoteRes?.data ?? [];
 
@@ -87,10 +112,20 @@ export async function GET() {
           if (custRecord?.asaasCustomerId && p.customer && p.customer !== custRecord.asaasCustomerId) {
             return false;
           }
-          if (p.subscription && p.subscription !== subRecord.asaasSubscriptionId) {
+          if (p.subscription && p.subscription !== currentContract.asaasSubscriptionId) {
             return false;
           }
           return true;
+        });
+
+        // Ordenar deterministicamente por dueDate DESC, createdAt DESC
+        validPayments.sort((a, b) => {
+          const aDue = a.dueDate ? new Date(a.dueDate).getTime() : -1;
+          const bDue = b.dueDate ? new Date(b.dueDate).getTime() : -1;
+          if (bDue !== aDue) return bDue - aDue;
+          const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bCreated - aCreated;
         });
 
         if (validPayments.length > 0) {
@@ -103,7 +138,7 @@ export async function GET() {
             create: {
               barbershopId,
               asaasPaymentId: remotePayment.id,
-              asaasSubscriptionId: remotePayment.subscription || subRecord.asaasSubscriptionId,
+              asaasSubscriptionId: remotePayment.subscription || currentContract.asaasSubscriptionId,
               asaasCustomerId: remotePayment.customer || custRecord?.asaasCustomerId || null,
               status: mappedStatus,
               billingType: remotePayment.billingType || null,
@@ -117,6 +152,7 @@ export async function GET() {
               rawPayload: sanitizeAsaasPayloadForLog(remotePayment) as object,
             },
             update: {
+              barbershopId,
               status: mappedStatus,
               billingType: remotePayment.billingType || undefined,
               value: remotePayment.value ?? undefined,

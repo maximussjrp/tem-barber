@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
 import { resolveSingleActiveMembership } from "@/lib/tenant-context";
 
-export async function getAdminSession() {
+async function resolveAdminSessionInternal(options: { checkSubscription: boolean }) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {
@@ -14,8 +14,9 @@ export async function getAdminSession() {
     };
   }
 
-  const userId = (session.user as any).id as string;
-  const sessionRole = (session.user as any).role as string;
+  const user = session.user as { id?: string; role?: string; email?: string | null };
+  const userId = user.id as string;
+  const sessionRole = user.role as string;
   const email = session.user?.email as string | null;
 
   const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
@@ -60,8 +61,8 @@ export async function getAdminSession() {
     };
   }
 
-  // Se não for platform admin e tiver barbearia vinculada, validar assinatura
-  if (!isPlatform && member) {
+  // Se não for platform admin e tiver barbearia vinculada, validar assinatura quando solicitado
+  if (options.checkSubscription && !isPlatform && member) {
     const subscription = await getTenantSubscription(member.barbershopId);
     if (!isSubscriptionActive(subscription)) {
       return {
@@ -83,6 +84,14 @@ export async function getAdminSession() {
       barbershopId: member?.barbershopId ?? null,
     },
   };
+}
+
+export async function getAdminSession() {
+  return resolveAdminSessionInternal({ checkSubscription: true });
+}
+
+export async function getBillingAdminSession() {
+  return resolveAdminSessionInternal({ checkSubscription: false });
 }
 
 export async function requireOperationalSession() {

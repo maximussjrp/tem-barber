@@ -4,6 +4,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import type { PrismaClient, Prisma } from "@prisma/client";
 import { asaasFetch } from "@/lib/asaas/client";
 import { buildAsaasCustomerExternalReference } from "@/lib/asaas/mappers";
 import { isBillingProfileCompleted } from "@/lib/billing/profile";
@@ -94,16 +95,29 @@ export async function configureAsaasCustomerEmailNotifications(
   }
 }
 
+export class AsaasCustomerReconciliationError extends Error {
+  public code = "ASAAS_CUSTOMER_RECONCILIATION_REQUIRED";
+
+  constructor(message = "Mais de um cliente remoto compatível encontrado no Asaas. Reconciliação necessária.") {
+    super(message);
+    this.name = "AsaasCustomerReconciliationError";
+  }
+}
+
 /**
  * Garante que existe um cliente Asaas vinculado a barbearia.
  * O BarbershopBillingProfile e a fonte oficial de dados fiscais.
  */
 export async function ensureAsaasCustomerForBarbershop(
-  barbershopId: string
+  barbershopId: string,
+  txOrPrisma?: PrismaClient | Prisma.TransactionClient
 ): Promise<EnsureCustomerResult> {
-  const profile = await prisma.barbershopBillingProfile.findUnique({
+  const db = txOrPrisma ?? prisma;
+  const profile = await db.barbershopBillingProfile.findUnique({
     where: { barbershopId },
   });
+
+  const billingPhone = profile?.billingPhone ?? null;
 
   if (!isBillingProfileCompleted(profile)) {
     throw new BillingProfileIncompleteError();
@@ -114,12 +128,12 @@ export async function ensureAsaasCustomerForBarbershop(
     name: profile.legalName,
     cpfCnpj: profile.cpfCnpj,
     email: profile.billingEmail,
-    ...(profile.billingPhone ? { mobilePhone: profile.billingPhone } : {}),
+    ...(billingPhone ? { mobilePhone: billingPhone } : {}),
     externalReference,
     notificationDisabled: false,
   };
 
-  const existing = await prisma.asaasBillingCustomer.findFirst({
+  const existing = await db.asaasBillingCustomer.findFirst({
     where: { barbershopId },
   });
 
@@ -131,13 +145,13 @@ export async function ensureAsaasCustomerForBarbershop(
 
     await configureAsaasCustomerEmailNotifications(existing.asaasCustomerId);
 
-    const updated = await prisma.asaasBillingCustomer.update({
+    const updated = await db.asaasBillingCustomer.update({
       where: { id: existing.id },
       data: {
         name: profile.legalName,
         email: profile.billingEmail,
         cpfCnpj: profile.cpfCnpj,
-        phone: profile.billingPhone,
+        phone: billingPhone,
         externalReference,
       },
     });
@@ -154,23 +168,71 @@ export async function ensureAsaasCustomerForBarbershop(
     };
   }
 
-  const asaasResponse = await asaasFetch<AsaasCustomerResponse>("/customers", {
-    method: "POST",
-    body: JSON.stringify(customerPayload),
+  // Se não existe localmente: consultar Asaas por externalReference antes de criar novo
+  const queryParams = new URLSearchParams({ externalReference });
+  const remoteRes = await asaasFetch<{ data?: AsaasCustomerResponse[] }>(
+    `/customers?${queryParams.toString()}`
+  );
+  const remoteList = remoteRes?.data ?? [];
+
+  const cleanDoc = (doc?: string | null) => (doc ? doc.replace(/\D/g, "") : "");
+  const cleanEmail = (em?: string | null) => (em ? em.trim().toLowerCase() : "");
+  const profileDoc = cleanDoc(profile.cpfCnpj);
+  const profileEmail = cleanEmail(profile.billingEmail);
+
+  const compatibleRemotes = remoteList.filter((rc) => {
+    if (!rc.id) return false;
+    if (rc.externalReference && rc.externalReference !== externalReference) return false;
+    const rcDoc = cleanDoc(rc.cpfCnpj);
+    const rcEmail = cleanEmail(rc.email);
+    if (profileDoc && rcDoc) return profileDoc === rcDoc;
+    if (profileEmail && rcEmail) return profileEmail === rcEmail;
+    return true;
   });
 
-  if (asaasResponse.id) {
-    await configureAsaasCustomerEmailNotifications(asaasResponse.id);
+  if (compatibleRemotes.length > 1) {
+    throw new AsaasCustomerReconciliationError(
+      `Existe mais de um cadastro de cliente no Asaas para esta referência (${externalReference}). Reconciliação necessária.`
+    );
   }
 
-  const saved = await prisma.asaasBillingCustomer.create({
+  let asaasCustomerId: string;
+  let isCreated = false;
+
+  if (compatibleRemotes.length === 1) {
+    const remoteCust = compatibleRemotes[0];
+    asaasCustomerId = remoteCust.id;
+
+    await asaasFetch<AsaasCustomerResponse>(`/customers/${asaasCustomerId}`, {
+      method: "PUT",
+      body: JSON.stringify(customerPayload),
+    });
+
+    await configureAsaasCustomerEmailNotifications(asaasCustomerId);
+    isCreated = false;
+  } else {
+    const asaasResponse = await asaasFetch<AsaasCustomerResponse>("/customers", {
+      method: "POST",
+      body: JSON.stringify(customerPayload),
+    });
+
+    if (!asaasResponse.id) {
+      throw new Error("Resposta inválida do Asaas ao criar cliente (id ausente).");
+    }
+
+    asaasCustomerId = asaasResponse.id;
+    await configureAsaasCustomerEmailNotifications(asaasCustomerId);
+    isCreated = true;
+  }
+
+  const saved = await db.asaasBillingCustomer.create({
     data: {
       barbershopId,
-      asaasCustomerId: asaasResponse.id,
+      asaasCustomerId,
       name: profile.legalName,
       email: profile.billingEmail,
       cpfCnpj: profile.cpfCnpj,
-      phone: profile.billingPhone,
+      phone: billingPhone,
       externalReference,
     },
   });
@@ -183,6 +245,6 @@ export async function ensureAsaasCustomerForBarbershop(
     cpfCnpj: saved.cpfCnpj,
     phone: saved.phone,
     externalReference: saved.externalReference,
-    created: true,
+    created: isCreated,
   };
 }

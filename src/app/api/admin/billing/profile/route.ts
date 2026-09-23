@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/api-auth";
+import { getBillingAdminSession } from "@/lib/api-auth";
 import { normalizeBillingPhone, serializeBillingProfile } from "@/lib/billing/profile";
 import { validateBillingDocument } from "@/lib/billing/documents";
 
@@ -11,7 +11,7 @@ function forbidden(message = "Acesso negado.") {
 }
 
 export async function GET() {
-  const session = await getAdminSession();
+  const session = await getBillingAdminSession();
   if (session.error) return session.error;
 
   const { barbershopId, role } = session.data;
@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const session = await getAdminSession();
+  const session = await getBillingAdminSession();
   if (session.error) return session.error;
 
   const { barbershopId, role } = session.data;

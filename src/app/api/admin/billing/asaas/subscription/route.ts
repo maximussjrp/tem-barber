@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getBillingAdminSession } from "@/lib/api-auth";
 import { createAsaasSubscriptionForBarbershop, SubscriptionValidationError } from "@/lib/asaas/subscriptions";
 import { AsaasApiError } from "@/lib/asaas/client";
 import { BillingProfileIncompleteError } from "@/lib/asaas/customers";
 
 export async function POST(request: NextRequest) {
-  const session = await getAdminSession();
+  const session = await getBillingAdminSession();
   if (session.error) {
     return session.error;
   }
@@ -64,9 +64,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, { status: result.alreadyExisted ? 200 : 201 });
   } catch (err: unknown) {
     if (err instanceof SubscriptionValidationError) {
+      const isReconciliation =
+        err.code === "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED" ||
+        err.code === "ASAAS_CUSTOMER_RECONCILIATION_REQUIRED" ||
+        err.code === "BILLING_SUBSCRIPTION_RECONCILIATION_REQUIRED";
       return NextResponse.json(
         { error: err.code, message: err.message },
-        { status: 400 }
+        { status: isReconciliation ? 409 : 400 }
       );
     }
 

@@ -5,7 +5,7 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     barbershopBillingProfile: { findUnique: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn() },
-    asaasBillingSubscription: { findFirst: vi.fn(), create: vi.fn() },
+    asaasBillingSubscription: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn() },
@@ -14,7 +14,10 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
-vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
+vi.mock("@/lib/api-auth", () => ({
+  getAdminSession: getAdminSessionMock,
+  getBillingAdminSession: getAdminSessionMock,
+}));
 
 import { asaasFetch, getAsaasConfig } from "@/lib/asaas/client";
 import {
@@ -31,6 +34,8 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([]);
+    prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -201,7 +206,7 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         createdAt: new Date(),
       });
 
-      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue({
+      const activeSub = {
         id: "sub-db-1",
         barbershopId: "shop-1",
         asaasSubscriptionId: "sub_asaas_999",
@@ -213,7 +218,9 @@ describe("PR #25 - Asaas Billing Foundation Test Suite", () => {
         nextDueDate: new Date("2026-08-01T00:00:00.000Z"),
         externalReference: "tb_sub_shop-1_PRO",
         createdAt: new Date(),
-      });
+      };
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(activeSub as never);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSub] as never);
       prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
       prismaMock.tenantSubscription.findFirst.mockResolvedValue(null);
 

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getBillingAdminSession } from "@/lib/api-auth";
 import prisma from "@/lib/prisma";
 import { asaasFetch } from "@/lib/asaas/client";
+import {
+  resolveCurrentBillableAsaasSubscription,
+  resolveCurrentPaymentForContract,
+} from "@/lib/billing/current-contract";
 
 interface AsaasPixQrCodeResponse {
   encodedImage: string;
@@ -10,7 +14,7 @@ interface AsaasPixQrCodeResponse {
 }
 
 export async function GET() {
-  const session = await getAdminSession();
+  const session = await getBillingAdminSession();
   if (session.error) {
     return session.error;
   }
@@ -31,10 +35,27 @@ export async function GET() {
     );
   }
 
-  const latestPayment = await prisma.asaasBillingPayment.findFirst({
-    where: { barbershopId },
-    orderBy: { createdAt: "desc" },
-  });
+  const contractResolution = await resolveCurrentBillableAsaasSubscription(prisma, barbershopId);
+
+  if (contractResolution.status === "RECONCILIATION_REQUIRED") {
+    return NextResponse.json(
+      {
+        error: "BILLING_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+        message: "Existe mais de uma assinatura ativa para este estabelecimento. Reconciliação necessária.",
+      },
+      { status: 409 }
+    );
+  }
+
+  if (contractResolution.status === "NONE") {
+    return NextResponse.json(
+      { error: "NO_PAYMENT", message: "Nenhum contrato ativo encontrado para obter o Pix QR Code." },
+      { status: 404 }
+    );
+  }
+
+  const currentContract = contractResolution.subscription;
+  const latestPayment = await resolveCurrentPaymentForContract(prisma, barbershopId, currentContract);
 
   if (!latestPayment || !latestPayment.asaasPaymentId) {
     return NextResponse.json(

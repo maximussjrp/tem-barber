@@ -9,6 +9,10 @@ import {
   deriveBillingStatus,
   formatBillingDatePtBr,
 } from "@/lib/billing/subscription-access";
+import {
+  selectCurrentBillableAsaasSubscription,
+  selectCurrentPaymentForContract,
+} from "@/lib/billing/current-contract";
 import { PlatformDashboard } from "@/components/admin/PlatformDashboard";
 
 export const metadata = {
@@ -23,7 +27,8 @@ export default async function PlatformAdminPage() {
     redirect("/login");
   }
 
-  const role = (session.user as any).role as string;
+  const user = session.user as { id?: string; role?: string; email?: string | null };
+  const role = user.role as string;
   const email = session.user?.email as string | null;
 
   const isPlatform = isPlatformAdmin(email) || role === "SUPER_ADMIN";
@@ -49,14 +54,18 @@ export default async function PlatformAdminPage() {
     orderBy: { name: "asc" },
   });
 
-  const plans = await prisma.plan.findMany({
-    where: { isActive: true },
-    orderBy: { price: "asc" },
-  });
-
-  const allPayments = await prisma.asaasBillingPayment.findMany({
-    orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
-  });
+  const [plans, allPayments, allAsaasSubscriptions] = await Promise.all([
+    prisma.plan.findMany({
+      where: { isActive: true },
+      orderBy: { price: "asc" },
+    }),
+    prisma.asaasBillingPayment.findMany({
+      orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.asaasBillingSubscription.findMany({
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
   // 2. Pré-calcular dados derivados no servidor para cada tenant
   const processedBarbershops = barbershops.map((shop) => {
@@ -64,13 +73,27 @@ export default async function PlatformAdminPage() {
     const latestSub = subs[0] ?? null;
     const subscriptionCount = subs.length;
 
+    const shopAsaasSubs = allAsaasSubscriptions.filter((s) => s.barbershopId === shop.id);
+    const contractResolution = selectCurrentBillableAsaasSubscription(shopAsaasSubs);
+    const currentContract =
+      contractResolution.status === "FOUND" ? contractResolution.subscription : null;
+
     const shopPayments = allPayments.filter((p) => p.barbershopId === shop.id);
-    const relevantPayment = shopPayments[0] ?? null;
+    const relevantPayment = currentContract
+      ? selectCurrentPaymentForContract(shopPayments, currentContract)
+      : null;
 
     const access = deriveTenantSubscriptionAccess(latestSub, { now });
     const billing = deriveBillingStatus(relevantPayment);
 
     const warnings: string[] = [...access.synchronizationWarnings, ...billing.warnings];
+
+    if (contractResolution.status === "RECONCILIATION_REQUIRED") {
+      warnings.push("BILLING_SUBSCRIPTION_RECONCILIATION_REQUIRED");
+      warnings.push(
+        `Existe mais de uma assinatura Asaas ativa/vencida (${contractResolution.count}) para esta barbearia. Reconciliação necessária.`
+      );
+    }
 
     if (subscriptionCount > 1) {
       warnings.push(`Existe mais de uma TenantSubscription (${subscriptionCount}) para esta barbearia.`);
@@ -115,11 +138,13 @@ export default async function PlatformAdminPage() {
       warnings.push("Acesso ativo manualmente sem comprovante de pagamento registrado.");
     }
 
-    // Critério estrito para MRR Confirmado
+    // Critério estrito para MRR Confirmado (exige contrato atual e nenhum conflito de conciliação)
     let isMrrConfirmed = false;
     const monthlyPriceNum = latestSub?.monthlyPrice ? Number(latestSub.monthlyPrice) : 0;
 
     if (
+      !contractResolution.isReconciliationRequired &&
+      currentContract &&
       access.effectiveStatus === "ACTIVE" &&
       access.accessType === "PAID" &&
       access.validUntil &&
