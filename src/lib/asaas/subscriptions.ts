@@ -8,7 +8,6 @@ import { asaasFetch } from "@/lib/asaas/client";
 import {
   buildAsaasSubscriptionExternalReference,
   mapAsaasSubscriptionStatus,
-  parseBarbershopIdFromExternalReference,
 } from "@/lib/asaas/mappers";
 import {
   ensureAsaasCustomerForBarbershop,
@@ -224,28 +223,28 @@ export async function createAsaasSubscriptionForBarbershop(
       );
       const remoteSubs = remoteSubsRes?.data ?? [];
 
-      const compatibleSubs = remoteSubs.filter((s) => {
+      const activeSubs = remoteSubs.filter((s) => {
         if (!s.id) return false;
         if (s.customer && s.customer !== customerResult.asaasCustomerId) return false;
-        const mapped = mapAsaasSubscriptionStatus(s.status);
-        if (mapped !== "ACTIVE") return false;
-        if (s.externalReference && s.externalReference !== externalReference) {
-          if (parseBarbershopIdFromExternalReference(s.externalReference) !== barbershopId) {
-            return false;
-          }
-        }
-        return true;
+        return mapAsaasSubscriptionStatus(s.status) === "ACTIVE";
       });
 
-      if (compatibleSubs.length > 1) {
+      const exactMatches = activeSubs.filter(
+        (s) => s.externalReference === externalReference
+      );
+      const foreignActive = activeSubs.filter(
+        (s) => s.externalReference !== externalReference
+      );
+
+      if (exactMatches.length > 1 || foreignActive.length > 0) {
         throw new SubscriptionValidationError(
           "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
-          "Mais de uma assinatura remota ativa compatível encontrada no Asaas. Reconciliação necessária."
+          "Existe assinatura remota ativa divergente ou ambígua no Asaas. Reconciliação necessária."
         );
       }
 
-      if (compatibleSubs.length === 1) {
-        const remoteSub = compatibleSubs[0];
+      if (exactMatches.length === 1) {
+        const remoteSub = exactMatches[0];
         const saved = await tx.asaasBillingSubscription.create({
           data: {
             barbershopId,

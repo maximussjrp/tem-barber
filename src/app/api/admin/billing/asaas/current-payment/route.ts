@@ -21,6 +21,13 @@ export function sanitizeBillingUrl(url: string | null | undefined): string | nul
   }
 }
 
+export class BillingPaymentIdentityConflictError extends Error {
+  constructor(message = "Conflito de identidade ao conciliar cobrança remota.") {
+    super(message);
+    this.name = "BillingPaymentIdentityConflictError";
+  }
+}
+
 interface RemoteAsaasPayment {
   id: string;
   customer?: string;
@@ -133,26 +140,76 @@ export async function GET() {
           const mappedStatus = mapAsaasPaymentStatus(remotePayment.status);
           const paymentDateStr = remotePayment.paymentDate || remotePayment.clientPaymentDate || null;
 
-          latestPayment = await prisma.asaasBillingPayment.upsert({
+          const existingPayment = await prisma.asaasBillingPayment.findUnique({
             where: { asaasPaymentId: remotePayment.id },
-            create: {
-              barbershopId,
-              asaasPaymentId: remotePayment.id,
-              asaasSubscriptionId: remotePayment.subscription || currentContract.asaasSubscriptionId,
-              asaasCustomerId: remotePayment.customer || custRecord?.asaasCustomerId || null,
-              status: mappedStatus,
-              billingType: remotePayment.billingType || null,
-              value: remotePayment.value ?? 0,
-              netValue: remotePayment.netValue ?? null,
-              dueDate: remotePayment.dueDate ? new Date(remotePayment.dueDate) : null,
-              paymentDate: paymentDateStr ? new Date(paymentDateStr) : null,
-              invoiceUrl: remotePayment.invoiceUrl || null,
-              bankSlipUrl: remotePayment.bankSlipUrl || null,
-              externalReference: remotePayment.externalReference || null,
-              rawPayload: sanitizeAsaasPayloadForLog(remotePayment) as object,
-            },
-            update: {
-              barbershopId,
+          });
+
+          const expectedSubscriptionId = currentContract.asaasSubscriptionId;
+          const validatedCustomerId =
+            custRecord?.asaasCustomerId || currentContract.asaasCustomerId || remotePayment.customer || null;
+
+          if (!existingPayment) {
+            latestPayment = await prisma.asaasBillingPayment.create({
+              data: {
+                barbershopId,
+                asaasPaymentId: remotePayment.id,
+                asaasSubscriptionId: expectedSubscriptionId,
+                asaasCustomerId: validatedCustomerId,
+                status: mappedStatus,
+                billingType: remotePayment.billingType || null,
+                value: remotePayment.value ?? 0,
+                netValue: remotePayment.netValue ?? null,
+                dueDate: remotePayment.dueDate ? new Date(remotePayment.dueDate) : null,
+                paymentDate: paymentDateStr ? new Date(paymentDateStr) : null,
+                invoiceUrl: remotePayment.invoiceUrl || null,
+                bankSlipUrl: remotePayment.bankSlipUrl || null,
+                externalReference: remotePayment.externalReference || null,
+                rawPayload: sanitizeAsaasPayloadForLog(remotePayment) as object,
+              },
+            });
+          } else {
+            // Validar identidade ANTES de qualquer update
+            if (existingPayment.barbershopId !== barbershopId) {
+              throw new BillingPaymentIdentityConflictError(
+                `Conflito de tenant para o pagamento ${remotePayment.id}.`
+              );
+            }
+
+            if (
+              existingPayment.asaasSubscriptionId != null &&
+              expectedSubscriptionId != null &&
+              existingPayment.asaasSubscriptionId !== expectedSubscriptionId
+            ) {
+              throw new BillingPaymentIdentityConflictError(
+                `Conflito de assinatura para o pagamento ${remotePayment.id}.`
+              );
+            }
+
+            if (
+              existingPayment.asaasCustomerId != null &&
+              validatedCustomerId != null &&
+              existingPayment.asaasCustomerId !== validatedCustomerId
+            ) {
+              throw new BillingPaymentIdentityConflictError(
+                `Conflito de customer para o pagamento ${remotePayment.id}.`
+              );
+            }
+
+            // Atualizar apenas fatos mutáveis e completar identidade se estava null
+            const updateData: {
+              status: typeof mappedStatus;
+              billingType?: string | null;
+              value?: number;
+              netValue?: number | null;
+              dueDate?: Date | null;
+              paymentDate?: Date | null;
+              invoiceUrl?: string | null;
+              bankSlipUrl?: string | null;
+              externalReference?: string | null;
+              rawPayload?: object;
+              asaasSubscriptionId?: string;
+              asaasCustomerId?: string;
+            } = {
               status: mappedStatus,
               billingType: remotePayment.billingType || undefined,
               value: remotePayment.value ?? undefined,
@@ -163,10 +220,32 @@ export async function GET() {
               bankSlipUrl: remotePayment.bankSlipUrl || undefined,
               externalReference: remotePayment.externalReference || undefined,
               rawPayload: sanitizeAsaasPayloadForLog(remotePayment) as object,
-            },
-          });
+            };
+
+            if (existingPayment.asaasSubscriptionId == null && expectedSubscriptionId) {
+              updateData.asaasSubscriptionId = expectedSubscriptionId;
+            }
+
+            if (existingPayment.asaasCustomerId == null && validatedCustomerId) {
+              updateData.asaasCustomerId = validatedCustomerId;
+            }
+
+            latestPayment = await prisma.asaasBillingPayment.update({
+              where: { id: existingPayment.id },
+              data: updateData,
+            });
+          }
         }
       } catch (err) {
+        if (err instanceof BillingPaymentIdentityConflictError) {
+          return NextResponse.json(
+            {
+              error: "BILLING_PAYMENT_IDENTITY_CONFLICT",
+              message: err.message,
+            },
+            { status: 409 }
+          );
+        }
         console.error("[current-payment] Erro ao buscar cobranças remotas no Asaas:", err);
       }
     }

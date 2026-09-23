@@ -6,7 +6,7 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
     barbershopBillingProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     asaasBillingCustomer: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
-    asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
+    asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     plan: { findUnique: vi.fn(), findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
@@ -1314,7 +1314,8 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
           }),
       });
 
-      prismaMock.asaasBillingPayment.upsert.mockResolvedValue({
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue(null);
+      prismaMock.asaasBillingPayment.create.mockResolvedValue({
         id: "payment-db-reconciled",
         barbershopId: "shop-1",
         asaasPaymentId: "pay_remote_777",
@@ -1342,10 +1343,10 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
       );
       expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
 
-      // Comprovar upsert local da cobrança reconciliada
-      expect(prismaMock.asaasBillingPayment.upsert).toHaveBeenCalledWith(
+      // Comprovar criacao local da cobrança reconciliada
+      expect(prismaMock.asaasBillingPayment.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { asaasPaymentId: "pay_remote_777" },
+          data: expect.objectContaining({ asaasPaymentId: "pay_remote_777" }),
         })
       );
     });
@@ -1678,6 +1679,442 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
           }),
         })
       );
+    });
+  });
+
+  // =============================================
+  // PATCH B1 — VALIDAÇÃO EXATA DE EXTERNAL REFERENCE E RECOVERY
+  // =============================================
+  describe("7. B1 — External reference da assinatura precisa ser exata", () => {
+    beforeEach(() => {
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-db-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_shop_1",
+        name: "Shop 1",
+        email: "shop1@example.com",
+        cpfCnpj: VALID_CPF,
+        phone: "11999999999",
+        externalReference: "tb_barbershop_shop-1",
+      });
+      prismaMock.asaasBillingCustomer.update.mockResolvedValue({
+        id: "cust-db-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_shop_1",
+        name: "Shop 1",
+        email: "shop1@example.com",
+        cpfCnpj: VALID_CPF,
+        phone: "11999999999",
+        externalReference: "tb_barbershop_shop-1",
+      });
+      prismaMock.asaasBillingSubscription.findFirst.mockResolvedValue(null);
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([]);
+    });
+
+    it("Exact recovery: recupera contrato quando customer, ACTIVE e externalReference são exatos (sem chamar POST)", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_exact",
+                  customer: "cus_shop_1",
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_pro_monthly",
+                  value: 49.9,
+                  billingType: "PIX",
+                  nextDueDate: "2026-08-01",
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      prismaMock.asaasBillingSubscription.create.mockResolvedValue({
+        id: "sub-db-recovered",
+        barbershopId: "shop-1",
+        asaasSubscriptionId: "sub_remote_exact",
+        asaasCustomerId: "cus_shop_1",
+        planCode: "pro_monthly",
+        planName: "Plano Tem Barber",
+        value: { toString: () => "49.9" },
+        cycle: "MONTHLY",
+        status: "ACTIVE",
+        billingType: "PIX",
+        nextDueDate: new Date("2026-08-01"),
+        externalReference: "tb_sub_shop-1_pro_monthly",
+      });
+
+      const result = await createAsaasSubscriptionForBarbershop({
+        barbershopId: "shop-1",
+        planCode: "pro_monthly",
+        billingType: "PIX",
+      });
+
+      expect(result.alreadyExisted).toBe(true);
+      expect(result.subscription.asaasSubscriptionId).toBe("sub_remote_exact");
+      expect(prismaMock.asaasBillingSubscription.create).toHaveBeenCalledTimes(1);
+
+      // Assegurar que nenhum POST /subscriptions foi executado
+      const postCalls = fetchMock.mock.calls.filter(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
+      );
+      expect(postCalls).toHaveLength(0);
+    });
+
+    it("Wrong reference same tenant: bloqueia com ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED e 0 POST", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_wrong_plan",
+                  customer: "cus_shop_1",
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_outro_plano",
+                  value: 49.9,
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toMatchObject({
+        code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+      });
+
+      const postCalls = fetchMock.mock.calls.filter(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
+      );
+      expect(postCalls).toHaveLength(0);
+    });
+
+    it("Missing reference: bloqueia com ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED e 0 POST", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_no_ref",
+                  customer: "cus_shop_1",
+                  status: "ACTIVE",
+                  externalReference: null,
+                  value: 49.9,
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toMatchObject({
+        code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+      });
+
+      const postCalls = fetchMock.mock.calls.filter(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
+      );
+      expect(postCalls).toHaveLength(0);
+    });
+
+    it("Exact + foreign: 1 exact + 1 foreign bloqueia com ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_exact",
+                  customer: "cus_shop_1",
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_pro_monthly",
+                  value: 49.9,
+                },
+                {
+                  id: "sub_remote_foreign",
+                  customer: "cus_shop_1",
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_outro",
+                  value: 49.9,
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toMatchObject({
+        code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+      });
+    });
+  });
+
+  // =============================================
+  // PATCH B2 — IDENTIDADE DE PAGAMENTO EM CURRENT-PAYMENT
+  // =============================================
+  describe("8. B2 — Nunca reatribuir identidade de Asaas Payment", () => {
+    const activeSubContract = {
+      id: "sub-contract-1",
+      barbershopId: "shop-1",
+      asaasSubscriptionId: "sub_target",
+      asaasCustomerId: "cus_shop_1",
+      status: "ACTIVE",
+      canceledAt: null,
+      createdAt: new Date(),
+    };
+
+    beforeEach(() => {
+      getAdminSessionMock.mockResolvedValue({
+        error: null,
+        data: { userId: "owner-1", barbershopId: "shop-1", role: "OWNER" },
+      });
+
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([activeSubContract] as never);
+      prismaMock.asaasBillingPayment.findMany.mockResolvedValue([]);
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_shop_1",
+      });
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_123",
+                customer: "cus_shop_1",
+                subscription: "sub_target",
+                status: "PENDING",
+                dueDate: "2026-08-01",
+                value: 49.9,
+                billingType: "PIX",
+              },
+            ],
+          }),
+      });
+    });
+
+    it("Novo pagamento: cria com barbershop, subscription e customer corretos", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue(null);
+      prismaMock.asaasBillingPayment.create.mockResolvedValue({
+        id: "pay-db-new",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_shop_1",
+        status: "PENDING",
+        billingType: "PIX",
+        value: { toString: () => "49.9" },
+        dueDate: new Date("2026-08-01"),
+        paymentDate: null,
+        invoiceUrl: null,
+        bankSlipUrl: null,
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(true);
+      expect(prismaMock.asaasBillingPayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          barbershopId: "shop-1",
+          asaasPaymentId: "pay_123",
+          asaasSubscriptionId: "sub_target",
+          asaasCustomerId: "cus_shop_1",
+          status: "PENDING",
+        }),
+      });
+    });
+
+    it("Replay consistente: atualiza campos mutáveis preservando identidade", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        id: "pay-db-existing",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_shop_1",
+        status: "PENDING",
+      });
+
+      prismaMock.asaasBillingPayment.update.mockResolvedValue({
+        id: "pay-db-existing",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_shop_1",
+        status: "PENDING",
+        billingType: "PIX",
+        value: { toString: () => "49.9" },
+        dueDate: new Date("2026-08-01"),
+        paymentDate: null,
+        invoiceUrl: null,
+        bankSlipUrl: null,
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(true);
+      expect(prismaMock.asaasBillingPayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-db-existing" },
+        data: expect.not.objectContaining({
+          barbershopId: expect.anything(),
+          asaasSubscriptionId: expect.anything(),
+          asaasCustomerId: expect.anything(),
+        }),
+      });
+    });
+
+    it("Cross-tenant: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT e UPDATE_COUNT=0", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        id: "pay-db-other-shop",
+        barbershopId: "shop-OTHER",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_shop_1",
+      });
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Wrong subscription: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT e UPDATE_COUNT=0", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        id: "pay-db-wrong-sub",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_DIFFERENT",
+        asaasCustomerId: "cus_shop_1",
+      });
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Wrong customer: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT e UPDATE_COUNT=0", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        id: "pay-db-wrong-cust",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_OTHER",
+      });
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Legacy null identity: preenche subscription e customer sem trocar barbershopId", async () => {
+      prismaMock.asaasBillingPayment.findUnique.mockResolvedValue({
+        id: "pay-db-legacy",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: null,
+        asaasCustomerId: null,
+        status: "PENDING",
+      });
+
+      prismaMock.asaasBillingPayment.update.mockResolvedValue({
+        id: "pay-db-legacy",
+        barbershopId: "shop-1",
+        asaasPaymentId: "pay_123",
+        asaasSubscriptionId: "sub_target",
+        asaasCustomerId: "cus_shop_1",
+        status: "PENDING",
+        billingType: "PIX",
+        value: { toString: () => "49.9" },
+        dueDate: new Date("2026-08-01"),
+        paymentDate: null,
+        invoiceUrl: null,
+        bankSlipUrl: null,
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.exists).toBe(true);
+      expect(prismaMock.asaasBillingPayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-db-legacy" },
+        data: expect.objectContaining({
+          asaasSubscriptionId: "sub_target",
+          asaasCustomerId: "cus_shop_1",
+        }),
+      });
+
+      const updateCallArgs = prismaMock.asaasBillingPayment.update.mock.calls[0][0];
+      expect(updateCallArgs.data.barbershopId).toBeUndefined();
     });
   });
 });
