@@ -225,15 +225,18 @@ export async function createAsaasSubscriptionForBarbershop(
 
       const activeSubs = remoteSubs.filter((s) => {
         if (!s.id) return false;
-        if (s.customer && s.customer !== customerResult.asaasCustomerId) return false;
         return mapAsaasSubscriptionStatus(s.status) === "ACTIVE";
       });
 
       const exactMatches = activeSubs.filter(
-        (s) => s.externalReference === externalReference
+        (s) =>
+          s.customer === customerResult.asaasCustomerId &&
+          s.externalReference === externalReference
       );
       const foreignActive = activeSubs.filter(
-        (s) => s.externalReference !== externalReference
+        (s) =>
+          s.customer !== customerResult.asaasCustomerId ||
+          s.externalReference !== externalReference
       );
 
       if (exactMatches.length > 1 || foreignActive.length > 0) {

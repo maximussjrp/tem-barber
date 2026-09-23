@@ -97,15 +97,34 @@ export async function GET() {
 
   const currentContract = contractResolution.subscription;
 
+  const expectedSubscriptionId = currentContract.asaasSubscriptionId;
+  const expectedCustomerId = currentContract.asaasCustomerId;
+
+  const custRecord = await prisma.asaasBillingCustomer.findFirst({
+    where: { barbershopId },
+  });
+
+  if (
+    custRecord?.asaasCustomerId &&
+    expectedCustomerId &&
+    custRecord.asaasCustomerId !== expectedCustomerId
+  ) {
+    return NextResponse.json(
+      {
+        error: "BILLING_PAYMENT_IDENTITY_CONFLICT",
+        message: "Conflito entre cliente do contrato e cliente da barbearia.",
+      },
+      { status: 409 }
+    );
+  }
+
+  const effectiveCustomerId = expectedCustomerId || custRecord?.asaasCustomerId || null;
+
   // 2. Buscar localmente cobrança escopada estritamente ao contrato atual
   let latestPayment = await resolveCurrentPaymentForContract(prisma, barbershopId, currentContract);
 
   // 3. Fallback de conciliação: se não existir cobrança local, consultar remota sem criar nova cobrança
   if (!latestPayment) {
-    const custRecord = await prisma.asaasBillingCustomer.findFirst({
-      where: { barbershopId },
-    });
-
     if (currentContract.asaasSubscriptionId) {
       try {
         const remoteRes = await asaasFetch<{ data?: RemoteAsaasPayment[] }>(
@@ -113,29 +132,33 @@ export async function GET() {
         );
         const paymentsList = remoteRes?.data ?? [];
 
-        // Filtrar estritamente pelo customer/subscription do tenant
-        const validPayments = paymentsList.filter((p) => {
-          if (!p.id) return false;
-          if (custRecord?.asaasCustomerId && p.customer && p.customer !== custRecord.asaasCustomerId) {
-            return false;
+        if (paymentsList.length > 0) {
+          // Validar identidade estrita de todos os pagamentos remotos devolvidos pelo Asaas
+          for (const p of paymentsList) {
+            if (!p.id) continue;
+            if (!p.customer || p.customer !== effectiveCustomerId) {
+              throw new BillingPaymentIdentityConflictError(
+                `Pagamento remoto ${p.id} com customer ausente ou divergente.`
+              );
+            }
+            if (!p.subscription || p.subscription !== expectedSubscriptionId) {
+              throw new BillingPaymentIdentityConflictError(
+                `Pagamento remoto ${p.id} com assinatura ausente ou divergente.`
+              );
+            }
           }
-          if (p.subscription && p.subscription !== currentContract.asaasSubscriptionId) {
-            return false;
-          }
-          return true;
-        });
 
-        // Ordenar deterministicamente por dueDate DESC, createdAt DESC
-        validPayments.sort((a, b) => {
-          const aDue = a.dueDate ? new Date(a.dueDate).getTime() : -1;
-          const bDue = b.dueDate ? new Date(b.dueDate).getTime() : -1;
-          if (bDue !== aDue) return bDue - aDue;
-          const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return bCreated - aCreated;
-        });
+          // Ordenar deterministicamente por dueDate DESC, createdAt DESC
+          const validPayments = [...paymentsList];
+          validPayments.sort((a, b) => {
+            const aDue = a.dueDate ? new Date(a.dueDate).getTime() : -1;
+            const bDue = b.dueDate ? new Date(b.dueDate).getTime() : -1;
+            if (bDue !== aDue) return bDue - aDue;
+            const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return bCreated - aCreated;
+          });
 
-        if (validPayments.length > 0) {
           const remotePayment = validPayments[0];
           const mappedStatus = mapAsaasPaymentStatus(remotePayment.status);
           const paymentDateStr = remotePayment.paymentDate || remotePayment.clientPaymentDate || null;
@@ -144,17 +167,13 @@ export async function GET() {
             where: { asaasPaymentId: remotePayment.id },
           });
 
-          const expectedSubscriptionId = currentContract.asaasSubscriptionId;
-          const validatedCustomerId =
-            custRecord?.asaasCustomerId || currentContract.asaasCustomerId || remotePayment.customer || null;
-
           if (!existingPayment) {
             latestPayment = await prisma.asaasBillingPayment.create({
               data: {
                 barbershopId,
                 asaasPaymentId: remotePayment.id,
-                asaasSubscriptionId: expectedSubscriptionId,
-                asaasCustomerId: validatedCustomerId,
+                asaasSubscriptionId: remotePayment.subscription,
+                asaasCustomerId: remotePayment.customer,
                 status: mappedStatus,
                 billingType: remotePayment.billingType || null,
                 value: remotePayment.value ?? 0,
@@ -177,8 +196,7 @@ export async function GET() {
 
             if (
               existingPayment.asaasSubscriptionId != null &&
-              expectedSubscriptionId != null &&
-              existingPayment.asaasSubscriptionId !== expectedSubscriptionId
+              existingPayment.asaasSubscriptionId !== remotePayment.subscription
             ) {
               throw new BillingPaymentIdentityConflictError(
                 `Conflito de assinatura para o pagamento ${remotePayment.id}.`
@@ -187,8 +205,7 @@ export async function GET() {
 
             if (
               existingPayment.asaasCustomerId != null &&
-              validatedCustomerId != null &&
-              existingPayment.asaasCustomerId !== validatedCustomerId
+              existingPayment.asaasCustomerId !== remotePayment.customer
             ) {
               throw new BillingPaymentIdentityConflictError(
                 `Conflito de customer para o pagamento ${remotePayment.id}.`
@@ -222,12 +239,12 @@ export async function GET() {
               rawPayload: sanitizeAsaasPayloadForLog(remotePayment) as object,
             };
 
-            if (existingPayment.asaasSubscriptionId == null && expectedSubscriptionId) {
-              updateData.asaasSubscriptionId = expectedSubscriptionId;
+            if (existingPayment.asaasSubscriptionId == null && remotePayment.subscription) {
+              updateData.asaasSubscriptionId = remotePayment.subscription;
             }
 
-            if (existingPayment.asaasCustomerId == null && validatedCustomerId) {
-              updateData.asaasCustomerId = validatedCustomerId;
+            if (existingPayment.asaasCustomerId == null && remotePayment.customer) {
+              updateData.asaasCustomerId = remotePayment.customer;
             }
 
             latestPayment = await prisma.asaasBillingPayment.update({

@@ -1303,13 +1303,6 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
                 dueDate: "2026-08-10",
                 invoiceUrl: "https://www.asaas.com/i/pay_remote_777",
               },
-              {
-                id: "pay_other_customer",
-                customer: "cus_OTHER_CUSTOMER",
-                subscription: "sub_remote_100",
-                status: "PENDING",
-                value: 999,
-              },
             ],
           }),
       });
@@ -1898,6 +1891,90 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
         code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
       });
     });
+
+    it("remote customer missing, externalReference exact, status ACTIVE -> ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED e 0 POST", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_no_cust",
+                  customer: null,
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_pro_monthly",
+                  value: 49.9,
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toMatchObject({
+        code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+      });
+
+      const postCalls = fetchMock.mock.calls.filter(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
+      );
+      expect(postCalls).toHaveLength(0);
+    });
+
+    it("remote customer wrong, externalReference exact, status ACTIVE -> ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED e 0 POST", async () => {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes("/subscriptions?")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [
+                {
+                  id: "sub_remote_wrong_cust",
+                  customer: "cus_WRONG",
+                  status: "ACTIVE",
+                  externalReference: "tb_sub_shop-1_pro_monthly",
+                  value: 49.9,
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "ok", data: [] }),
+        };
+      });
+
+      await expect(
+        createAsaasSubscriptionForBarbershop({
+          barbershopId: "shop-1",
+          planCode: "pro_monthly",
+          billingType: "PIX",
+        })
+      ).rejects.toMatchObject({
+        code: "ASAAS_SUBSCRIPTION_RECONCILIATION_REQUIRED",
+      });
+
+      const postCalls = fetchMock.mock.calls.filter(
+        ([url, opts]) => String(url).includes("/subscriptions") && opts?.method === "POST"
+      );
+      expect(postCalls).toHaveLength(0);
+    });
   });
 
   // =============================================
@@ -2115,6 +2192,157 @@ describe("PR #26 — Criar Cliente + Assinatura Asaas", () => {
 
       const updateCallArgs = prismaMock.asaasBillingPayment.update.mock.calls[0][0];
       expect(updateCallArgs.data.barbershopId).toBeUndefined();
+    });
+
+    it("Missing remote customer: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT, CREATE=0 e UPDATE=0", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_no_cust",
+                customer: null,
+                subscription: "sub_target",
+                status: "PENDING",
+                dueDate: "2026-08-01",
+                value: 49.9,
+              },
+            ],
+          }),
+      });
+
+      prismaMock.asaasBillingPayment.create.mockClear();
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Missing remote subscription: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT, CREATE=0 e UPDATE=0", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_no_sub",
+                customer: "cus_shop_1",
+                subscription: null,
+                status: "PENDING",
+                dueDate: "2026-08-01",
+                value: 49.9,
+              },
+            ],
+          }),
+      });
+
+      prismaMock.asaasBillingPayment.create.mockClear();
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Wrong remote customer: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT e mutation=0", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_wrong_remote_cust",
+                customer: "cus_OTHER",
+                subscription: "sub_target",
+                status: "PENDING",
+                dueDate: "2026-08-01",
+                value: 49.9,
+              },
+            ],
+          }),
+      });
+
+      prismaMock.asaasBillingPayment.create.mockClear();
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Wrong remote subscription: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT e mutation=0", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "pay_wrong_remote_sub",
+                customer: "cus_shop_1",
+                subscription: "sub_OTHER",
+                status: "PENDING",
+                dueDate: "2026-08-01",
+                value: 49.9,
+              },
+            ],
+          }),
+      });
+
+      prismaMock.asaasBillingPayment.create.mockClear();
+      prismaMock.asaasBillingPayment.update.mockClear();
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(prismaMock.asaasBillingPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.asaasBillingPayment.update).not.toHaveBeenCalled();
+    });
+
+    it("Local customer vs contract mismatch: bloqueia com 409 BILLING_PAYMENT_IDENTITY_CONFLICT", async () => {
+      prismaMock.asaasBillingSubscription.findMany.mockResolvedValue([
+        {
+          id: "sub-contract-1",
+          barbershopId: "shop-1",
+          asaasSubscriptionId: "sub_target",
+          asaasCustomerId: "cus_A",
+          status: "ACTIVE",
+          canceledAt: null,
+          createdAt: new Date(),
+        },
+      ] as never);
+
+      prismaMock.asaasBillingCustomer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        barbershopId: "shop-1",
+        asaasCustomerId: "cus_B",
+      });
+
+      const res = await getCurrentPayment();
+      const data = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.error).toBe("BILLING_PAYMENT_IDENTITY_CONFLICT");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
