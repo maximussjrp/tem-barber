@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/purity */
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -27,6 +28,25 @@ export interface TenantSubscription {
   plan?: Plan | null;
 }
 
+export interface TenantAccessGrantItem {
+  id: string;
+  barbershopId: string;
+  startsAt: string;
+  endsAt: string;
+  daysGranted: number;
+  reason: string;
+  idempotencyKey: string;
+  requestHash: string;
+  createdByUserId: string;
+  createdByEmail: string | null;
+  revokedAt: string | null;
+  revokedByUserId: string | null;
+  revokedByEmail: string | null;
+  revocationReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DerivedAccess {
   rawStatus: string | null;
   effectiveStatus:
@@ -37,9 +57,10 @@ export interface DerivedAccess {
     | "SUSPENDED"
     | "CANCELED"
     | "EXPIRED"
-    | "NO_SUBSCRIPTION";
+    | "NO_SUBSCRIPTION"
+    | "COMPLIMENTARY";
   accessAllowed: boolean;
-  accessType: "TRIAL" | "PAID" | "GRACE" | "NONE";
+  accessType: "TRIAL" | "PAID" | "GRACE" | "NONE" | "COMPLIMENTARY";
   validUntil: string | null;
   remainingDays: number;
   remainingLabel: string;
@@ -67,6 +88,7 @@ export interface BarbershopItem {
   createdAt: string;
   subscription: TenantSubscription | null;
   subscriptionCount: number;
+  accessGrants?: TenantAccessGrantItem[];
   members: {
     role: string;
     user: {
@@ -88,7 +110,7 @@ interface Props {
   plans: Plan[];
 }
 
-export function PlatformDashboard({ initialBarbershops, plans }: Props) {
+export function PlatformDashboard({ initialBarbershops }: Props) {
   const router = useRouter();
   const [filter, setFilter] = useState<string>("ALL");
   const [search, setSearch] = useState<string>("");
@@ -96,20 +118,26 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
     barbershopId: string;
     barbershopName: string;
     subscription: TenantSubscription | null;
+    accessGrants: TenantAccessGrantItem[];
   } | null>(null);
 
-  // Form states
-  const [formStatus, setFormStatus] = useState<string>("TRIAL");
-  const [formPlanId, setFormPlanId] = useState<string>("");
-  const [formTrialEndsAt, setFormTrialEndsAt] = useState<string>("");
-  const [formPeriodStart, setFormPeriodStart] = useState<string>("");
-  const [formPeriodEnd, setFormPeriodEnd] = useState<string>("");
-  const [formGracePeriodEndsAt, setFormGracePeriodEndsAt] = useState<string>("");
-  const [formPaymentMethod, setFormPaymentMethod] = useState<string>("");
-  const [formLastPaymentAt, setFormLastPaymentAt] = useState<string>("");
-  const [formInternalNotes, setFormInternalNotes] = useState<string>("");
+  // Form states - Internal Notes
+  const [formInternalNotes, setFormInternalNotes] = useState<string>("" );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Courtesy Grant states
+  const [grantDays, setGrantDays] = useState<number>(30);
+  const [grantReason, setGrantReason] = useState<string>("");
+  const [grantIdempotencyKey, setGrantIdempotencyKey] = useState<string>("");
+  const [isSubmittingGrant, setIsSubmittingGrant] = useState(false);
+  const [grantError, setGrantError] = useState("");
+  const [grantSuccess, setGrantSuccess] = useState("");
+
+  // Courtesy Revocation states
+  const [revokingGrantId, setRevokingGrantId] = useState<string | null>(null);
+  const [revocationReason, setRevocationReason] = useState("");
+  const [isSubmittingRevoke, setIsSubmittingRevoke] = useState(false);
 
   const handleEditClick = (item: BarbershopItem) => {
     const sub = item.subscription;
@@ -117,10 +145,18 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
       barbershopId: item.id,
       barbershopName: item.name,
       subscription: sub,
+      accessGrants: item.accessGrants || [],
     });
 
     setFormInternalNotes(sub?.internalNotes || "");
     setFormError("");
+    setGrantDays(30);
+    setGrantReason("");
+    setGrantIdempotencyKey(crypto.randomUUID());
+    setGrantError("");
+    setGrantSuccess("");
+    setRevokingGrantId(null);
+    setRevocationReason("");
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -156,6 +192,94 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
     }
   };
 
+  const handleGrantSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSub) return;
+    if (!grantReason.trim()) {
+      setGrantError("Motivo é obrigatório.");
+      return;
+    }
+    if (grantDays < 1 || grantDays > 3650) {
+      setGrantError("Dias deve ser entre 1 e 3650.");
+      return;
+    }
+
+    setIsSubmittingGrant(true);
+    setGrantError("");
+    setGrantSuccess("");
+
+    try {
+      const res = await fetch("/api/admin/platform-access-grants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          barbershopId: editingSub.barbershopId,
+          daysGranted: Number(grantDays),
+          reason: grantReason.trim(),
+          idempotencyKey: grantIdempotencyKey,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Erro ao conceder cortesia.");
+      }
+
+      setGrantSuccess(
+        data.alreadyExisted
+          ? "Cortesia já registrada anteriormente."
+          : "Cortesia concedida com sucesso!"
+      );
+      setGrantReason("");
+      setGrantDays(30);
+      setGrantIdempotencyKey(crypto.randomUUID());
+      router.refresh();
+    } catch (err: unknown) {
+      setGrantError(err instanceof Error ? err.message : "Erro desconhecido.");
+    } finally {
+      setIsSubmittingGrant(false);
+    }
+  };
+
+  const handleRevokeSubmit = async (grantId: string) => {
+    if (!revocationReason.trim()) {
+      setGrantError("Motivo da revogação é obrigatório.");
+      return;
+    }
+
+    setIsSubmittingRevoke(true);
+    setGrantError("");
+    setGrantSuccess("");
+
+    try {
+      const res = await fetch(`/api/admin/platform-access-grants/${grantId}/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: revocationReason.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Erro ao revogar cortesia.");
+      }
+
+      setGrantSuccess(
+        data.alreadyRevoked
+          ? "Cortesia já estava revogada."
+          : "Cortesia revogada com sucesso!"
+      );
+      setRevokingGrantId(null);
+      setRevocationReason("");
+      router.refresh();
+    } catch (err: unknown) {
+      setGrantError(err instanceof Error ? err.message : "Erro desconhecido.");
+    } finally {
+      setIsSubmittingRevoke(false);
+    }
+  };
+
   // KPI Calculations using server-derived properties
   const kpis = {
     total: initialBarbershops.length,
@@ -167,6 +291,7 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
     ).length,
     expired: initialBarbershops.filter((i) => i.access.effectiveStatus === "EXPIRED").length,
     noSub: initialBarbershops.filter((i) => i.access.effectiveStatus === "NO_SUBSCRIPTION").length,
+    complimentary: initialBarbershops.filter((i) => i.access.effectiveStatus === "COMPLIMENTARY").length,
     pendingPayments: initialBarbershops.filter((i) => i.billing.billingStatus === "PENDING").length,
     overduePayments: initialBarbershops.filter((i) => i.billing.billingStatus === "OVERDUE").length,
     mrrConfirmed: initialBarbershops.reduce((sum, i) => sum + i.confirmedRevenue, 0),
@@ -180,6 +305,7 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
     if (filter === "TRIAL" && item.access.effectiveStatus !== "TRIAL") return false;
     if (filter === "ACTIVE" && item.access.effectiveStatus !== "ACTIVE") return false;
     if (filter === "GRACE_PERIOD" && item.access.effectiveStatus !== "GRACE_PERIOD") return false;
+    if (filter === "COMPLIMENTARY" && item.access.effectiveStatus !== "COMPLIMENTARY") return false;
     if (
       filter === "PAST_DUE" &&
       item.access.effectiveStatus !== "PAST_DUE" &&
@@ -216,6 +342,12 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
         return (
           <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             Ativo
+          </span>
+        );
+      case "COMPLIMENTARY":
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+            Cortesia
           </span>
         );
       case "GRACE_PERIOD":
@@ -390,6 +522,7 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
             { id: "ALL", label: "Todos" },
             { id: "TRIAL", label: "Trial" },
             { id: "ACTIVE", label: "Ativos" },
+            { id: "COMPLIMENTARY", label: "Cortesia" },
             { id: "GRACE_PERIOD", label: "Tolerância" },
             { id: "PAST_DUE", label: "Bloqueados" },
             { id: "EXPIRED", label: "Expirados" },
@@ -560,24 +693,223 @@ export function PlatformDashboard({ initialBarbershops, plans }: Props) {
               </div>
 
               {/* Actions */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-stone-850">
-                <button
-                  type="button"
-                  onClick={() => setEditingSub(null)}
-                  disabled={isSubmitting}
-                  className="px-4 py-2.5 rounded-xl border border-stone-800 text-stone-300 hover:bg-stone-850 transition-colors text-xs font-semibold disabled:opacity-40"
-                >
-                  Cancelar
-                </button>
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold transition-colors text-xs disabled:opacity-40"
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold transition-colors text-xs disabled:opacity-40"
                 >
-                  {isSubmitting ? "Salvando..." : "Salvar Alterações"}
+                  {isSubmitting ? "Salvando..." : "Salvar Observações"}
                 </button>
               </div>
             </form>
+
+            {/* Separator */}
+            <div className="border-t border-stone-800 pt-4">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-2">
+                Acesso Cortesia (SUPER_ADMIN)
+              </h3>
+              <p className="text-xs text-stone-400 mb-4">
+                Conceder dias de acesso operacional gratuito sem alterar faturamento ou cobranças Asaas.
+              </p>
+
+              {grantError && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-semibold rounded-xl mb-3">
+                  {grantError}
+                </div>
+              )}
+              {grantSuccess && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-xl mb-3">
+                  {grantSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleGrantSubmit} className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 block mb-1.5">
+                    Dias de Cortesia
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {[7, 14, 30, 90, 365].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setGrantDays(preset)}
+                        className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors ${
+                          grantDays === preset
+                            ? "bg-amber-500/20 border-amber-500 text-amber-300"
+                            : "bg-stone-950 border-stone-800 text-stone-400 hover:text-stone-200"
+                        }`}
+                      >
+                        {preset} dias
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={grantDays}
+                    onChange={(e) => setGrantDays(parseInt(e.target.value, 10) || 1)}
+                    className="w-full px-3 py-2 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 block mb-1">
+                    Motivo da Concessão
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={500}
+                    placeholder="Ex: Cortesia comercial, embaixador, teste estendido..."
+                    value={grantReason}
+                    onChange={(e) => setGrantReason(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-stone-950 border border-stone-800 text-stone-100 text-xs font-medium focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmittingGrant}
+                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold transition-colors text-xs disabled:opacity-40"
+                  >
+                    {isSubmittingGrant ? "Processando..." : "Conceder Cortesia"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Grant History */}
+            {editingSub.accessGrants && editingSub.accessGrants.length > 0 && (
+              <div className="border-t border-stone-800 pt-4">
+                <h3 className="text-xs font-bold text-stone-300 uppercase tracking-wider mb-3">
+                  Histórico de Cortesias ({editingSub.accessGrants.length})
+                </h3>
+                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                  {editingSub.accessGrants.map((grant) => {
+                    const nowMs = Date.now();
+                    const startsAtMs = new Date(grant.startsAt).getTime();
+                    const endsAtMs = new Date(grant.endsAt).getTime();
+
+                    let statusLabel = "AGENDADA";
+                    let statusColor = "bg-blue-500/10 text-blue-400 border-blue-500/20";
+                    if (grant.revokedAt) {
+                      statusLabel = "REVOGADA";
+                      statusColor = "bg-stone-500/10 text-stone-400 border-stone-500/20";
+                    } else if (endsAtMs <= nowMs) {
+                      statusLabel = "EXPIRADA";
+                      statusColor = "bg-red-500/10 text-red-400 border-red-500/20";
+                    } else if (startsAtMs <= nowMs && endsAtMs > nowMs) {
+                      statusLabel = "ATIVA";
+                      statusColor = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+                    }
+
+                    const canRevoke = !grant.revokedAt && endsAtMs > nowMs;
+
+                    return (
+                      <div
+                        key={grant.id}
+                        className="p-3 bg-stone-950 border border-stone-850 rounded-xl flex flex-col gap-2 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${statusColor}`}>
+                              {statusLabel}
+                            </span>
+                            <span className="font-semibold text-stone-200">
+                              {grant.daysGranted} dias
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-stone-500">
+                            {new Date(grant.startsAt).toLocaleDateString("pt-BR")} até {new Date(grant.endsAt).toLocaleDateString("pt-BR")}
+                          </span>
+                        </div>
+
+                        <p className="text-stone-300 text-xs leading-normal">
+                          <span className="text-stone-500">Motivo:</span> {grant.reason}
+                        </p>
+
+                        <div className="text-[10px] text-stone-500 flex items-center justify-between pt-1 border-t border-stone-900">
+                          <span>Criado por: {grant.createdByEmail || grant.createdByUserId}</span>
+                          <span>{new Date(grant.createdAt).toLocaleDateString("pt-BR")}</span>
+                        </div>
+
+                        {grant.revokedAt && (
+                          <div className="text-[10px] text-rose-400 bg-rose-500/5 p-2 rounded-lg border border-rose-500/10">
+                            Revogado em {new Date(grant.revokedAt).toLocaleDateString("pt-BR")} por {grant.revokedByEmail || grant.revokedByUserId}.
+                            {grant.revocationReason && <span> Motivo: {grant.revocationReason}</span>}
+                          </div>
+                        )}
+
+                        {canRevoke && (
+                          <div className="pt-1.5 border-t border-stone-850">
+                            {revokingGrantId === grant.id ? (
+                              <div className="flex flex-col gap-2 bg-stone-900 p-2.5 rounded-lg border border-stone-800">
+                                <label className="text-[11px] font-semibold text-stone-300">
+                                  Motivo da revogação:
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="Informe por que está revogando..."
+                                  value={revocationReason}
+                                  onChange={(e) => setRevocationReason(e.target.value)}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-stone-950 border border-stone-700 text-stone-100 text-xs focus:outline-none focus:border-rose-500"
+                                />
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRevokingGrantId(null);
+                                      setRevocationReason("");
+                                    }}
+                                    disabled={isSubmittingRevoke}
+                                    className="px-2.5 py-1 text-[11px] text-stone-400 hover:text-stone-200"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRevokeSubmit(grant.id)}
+                                    disabled={isSubmittingRevoke}
+                                    className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] disabled:opacity-40"
+                                  >
+                                    {isSubmittingRevoke ? "Revogando..." : "Confirmar Revogação"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRevokingGrantId(grant.id);
+                                  setRevocationReason("");
+                                }}
+                                className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold"
+                              >
+                                Revogar Cortesia
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Close Button */}
+            <div className="flex items-center justify-end pt-3 border-t border-stone-850">
+              <button
+                type="button"
+                onClick={() => setEditingSub(null)}
+                className="px-4 py-2 rounded-xl border border-stone-800 text-stone-300 hover:bg-stone-850 transition-colors text-xs font-semibold"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

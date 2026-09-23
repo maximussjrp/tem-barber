@@ -3,15 +3,14 @@ import prisma from "@/lib/prisma";
 import { getActiveBillingPlan } from "@/lib/billing/plans";
 import { assertCommercialConsistency, getActivePlanByCode } from "@/lib/billing/plans-db";
 import {
-  deriveTenantSubscriptionAccess,
   SubscriptionInput,
 } from "@/lib/billing/subscription-access";
+import {
+  deriveTenantEffectiveAccess,
+  AccessGrantInput,
+} from "@/lib/billing/access-grants";
 
 export const TRIAL_DURATION_DAYS = 14;
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") || (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002");
-}
 
 export function isPlatformAdmin(email?: string | null): boolean {
   if (!email) return false;
@@ -25,21 +24,46 @@ export function isPlatformAdmin(email?: string | null): boolean {
   return allowedEmails.includes(email.trim().toLowerCase());
 }
 
-export function isSubscriptionActive(sub: SubscriptionInput | null | undefined): boolean {
-  return deriveTenantSubscriptionAccess(sub).accessAllowed;
+export function isSubscriptionActive(
+  sub: (SubscriptionInput & { accessGrants?: AccessGrantInput[] }) | null | undefined,
+  options?: { now?: Date; timeZone?: string }
+): boolean {
+  if (!sub) return false;
+  const grants = sub.accessGrants ?? [];
+  return deriveTenantEffectiveAccess(sub, grants, options).accessAllowed;
 }
 
 /**
- * Retorna a assinatura do tenant pelo barbershopId.
+ * Retorna a assinatura do tenant pelo barbershopId, enriquecida com grants relevantes (revokedAt=null, endsAt>now).
  */
 export async function getTenantSubscription(barbershopId: string) {
   if (!prisma || !prisma.tenantSubscription) {
     return null;
   }
-  return await prisma.tenantSubscription.findUnique({
+  const sub = await prisma.tenantSubscription.findUnique({
     where: { barbershopId },
     include: { plan: true },
   });
+  if (!sub) {
+    return null;
+  }
+
+  const now = new Date();
+  const accessGrants = prisma.tenantAccessGrant
+    ? await prisma.tenantAccessGrant.findMany({
+        where: {
+          barbershopId,
+          revokedAt: null,
+          endsAt: { gt: now },
+        },
+        orderBy: { startsAt: "asc" },
+      })
+    : [];
+
+  return {
+    ...sub,
+    accessGrants,
+  };
 }
 
 export async function createTrialSubscriptionInTransaction(
@@ -58,7 +82,7 @@ export async function createTrialSubscriptionInTransaction(
   }
 
   const billingPlan = getActiveBillingPlan();
-  const plan = await getActivePlanByCode(tx as any, billingPlan.code);
+  const plan = await getActivePlanByCode(tx, billingPlan.code);
   assertCommercialConsistency(billingPlan, plan);
 
   if (typeof tx.$executeRaw === "function") {

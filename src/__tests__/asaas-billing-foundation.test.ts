@@ -9,6 +9,7 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
     asaasBillingPayment: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasWebhookEvent: { findFirst: vi.fn(), create: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn() },
+    tenantAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
   },
   getAdminSessionMock: vi.fn(),
 }));

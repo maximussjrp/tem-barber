@@ -6,10 +6,10 @@ import { getActiveBillingPlan, ALLOWED_BILLING_TYPES } from "@/lib/billing/plans
 import { serializeBillingProfile } from "@/lib/billing/profile";
 import { sanitizeBillingUrl } from "@/app/api/admin/billing/asaas/current-payment/route";
 import {
-  deriveTenantSubscriptionAccess,
   deriveBillingStatus,
   formatBillingDatePtBr,
 } from "@/lib/billing/subscription-access";
+import { deriveTenantEffectiveAccess } from "@/lib/billing/access-grants";
 import {
   selectCurrentBillableAsaasSubscription,
   selectCurrentPaymentForContract,
@@ -39,29 +39,38 @@ export async function GET() {
 
   const config = getAsaasConfig();
   const plan = getActiveBillingPlan();
+  const now = new Date();
 
-  const [profile, customer, allSubscriptions, recentPayments, tenantSub] = await Promise.all([
-    prisma.barbershopBillingProfile.findUnique({ where: { barbershopId } }),
-    prisma.asaasBillingCustomer.findFirst({
-      where: { barbershopId },
-      select: { id: true },
-    }),
-    prisma.asaasBillingSubscription.findMany({
-      where: { barbershopId },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.asaasBillingPayment.findMany({
-      where: { barbershopId },
-      orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
-      take: 10,
-    }),
-    prisma.tenantSubscription.findUnique({
-      where: { barbershopId },
-    }),
-  ]);
+  const [profile, customer, allSubscriptions, recentPayments, tenantSub, accessGrants] =
+    await Promise.all([
+      prisma.barbershopBillingProfile.findUnique({ where: { barbershopId } }),
+      prisma.asaasBillingCustomer.findFirst({
+        where: { barbershopId },
+        select: { id: true },
+      }),
+      prisma.asaasBillingSubscription.findMany({
+        where: { barbershopId },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.asaasBillingPayment.findMany({
+        where: { barbershopId },
+        orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
+        take: 10,
+      }),
+      prisma.tenantSubscription.findUnique({
+        where: { barbershopId },
+      }),
+      prisma.tenantAccessGrant.findMany({
+        where: {
+          barbershopId,
+          revokedAt: null,
+          endsAt: { gt: now },
+        },
+        orderBy: { startsAt: "asc" },
+      }),
+    ]);
 
   const safeProfile = serializeBillingProfile(profile);
-  const now = new Date();
 
   // Resolução canônica de contrato Asaas
   const contractResolution = selectCurrentBillableAsaasSubscription(allSubscriptions);
@@ -83,8 +92,8 @@ export async function GET() {
     });
   }
 
-  // Validação de acesso do tenant e status de cobrança do contrato atual
-  const access = deriveTenantSubscriptionAccess(tenantSub, { now });
+  // Validação de acesso do tenant (com suporte a cortesia) e status de cobrança do contrato atual
+  const access = deriveTenantEffectiveAccess(tenantSub, accessGrants, { now });
   const billing = deriveBillingStatus(currentPayment);
 
   const warnings: string[] = [...access.synchronizationWarnings, ...billing.warnings];
@@ -144,6 +153,13 @@ export async function GET() {
     remainingLabel: access.remainingLabel,
     validUntil: access.validUntil ? access.validUntil.toISOString() : null,
     formattedValidUntil: access.validUntil ? formatBillingDatePtBr(access.validUntil) : null,
+    complimentary: {
+      active: access.complimentary.active,
+      queued: access.complimentary.queued,
+      activeUntil: access.complimentary.coverageEndsAt ? access.complimentary.coverageEndsAt.toISOString() : null,
+      nextStartsAt: access.complimentary.nextStartsAt ? access.complimentary.nextStartsAt.toISOString() : null,
+      latestEndsAt: access.complimentary.latestEndsAt ? access.complimentary.latestEndsAt.toISOString() : null,
+    },
     // Propriedades padronizadas de cobrança
     billingStatus: billing.billingStatus,
     billingLabel: billing.billingLabel,

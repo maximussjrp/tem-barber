@@ -9,6 +9,7 @@ import {
   deriveBillingStatus,
   formatBillingDatePtBr,
 } from "@/lib/billing/subscription-access";
+import { deriveTenantEffectiveAccess } from "@/lib/billing/access-grants";
 import {
   selectCurrentBillableAsaasSubscription,
   selectCurrentPaymentForContract,
@@ -45,6 +46,9 @@ export default async function PlatformAdminPage() {
       subscriptions: {
         orderBy: { createdAt: "desc" },
         include: { plan: true },
+      },
+      accessGrants: {
+        orderBy: { createdAt: "desc" },
       },
       members: {
         where: { role: "OWNER" },
@@ -83,10 +87,11 @@ export default async function PlatformAdminPage() {
       ? selectCurrentPaymentForContract(shopPayments, currentContract)
       : null;
 
-    const access = deriveTenantSubscriptionAccess(latestSub, { now });
+    const baseAccess = deriveTenantSubscriptionAccess(latestSub, { now });
+    const effectiveAccess = deriveTenantEffectiveAccess(latestSub, shop.accessGrants || [], { now });
     const billing = deriveBillingStatus(relevantPayment);
 
-    const warnings: string[] = [...access.synchronizationWarnings, ...billing.warnings];
+    const warnings: string[] = [...effectiveAccess.synchronizationWarnings, ...billing.warnings];
 
     if (contractResolution.status === "RECONCILIATION_REQUIRED") {
       warnings.push("BILLING_SUBSCRIPTION_RECONCILIATION_REQUIRED");
@@ -118,37 +123,37 @@ export default async function PlatformAdminPage() {
       }
       if (
         relevantPayment.status === "OVERDUE" &&
-        access.effectiveStatus === "ACTIVE" &&
+        baseAccess.effectiveStatus === "ACTIVE" &&
         (!latestSub?.gracePeriodEndsAt || new Date(latestSub.gracePeriodEndsAt).getTime() <= now.getTime())
       ) {
         warnings.push("Cobrança vencida (OVERDUE) com acesso ativo sem tolerância vigente.");
       }
     }
 
-    if (billing.billingStatus === "PAID" && access.effectiveStatus === "EXPIRED") {
+    if (billing.billingStatus === "PAID" && baseAccess.effectiveStatus === "EXPIRED") {
       warnings.push("Cobrança paga mas o acesso está expirado no sistema.");
     }
 
     if (
-      access.effectiveStatus === "ACTIVE" &&
-      access.accessType === "PAID" &&
+      baseAccess.effectiveStatus === "ACTIVE" &&
+      baseAccess.accessType === "PAID" &&
       !latestSub?.lastPaymentAt &&
       !latestSub?.lastAccessPaymentId
     ) {
       warnings.push("Acesso ativo manualmente sem comprovante de pagamento registrado.");
     }
 
-    // Critério estrito para MRR Confirmado (exige contrato atual e nenhum conflito de conciliação)
+    // Critério estrito para MRR Confirmado: SEMPRE usa baseAccess + pagamento Asaas validado (NUNCA cortesia)
     let isMrrConfirmed = false;
     const monthlyPriceNum = latestSub?.monthlyPrice ? Number(latestSub.monthlyPrice) : 0;
 
     if (
       !contractResolution.isReconciliationRequired &&
       currentContract &&
-      access.effectiveStatus === "ACTIVE" &&
-      access.accessType === "PAID" &&
-      access.validUntil &&
-      access.validUntil.getTime() > now.getTime() &&
+      baseAccess.effectiveStatus === "ACTIVE" &&
+      baseAccess.accessType === "PAID" &&
+      baseAccess.validUntil &&
+      baseAccess.validUntil.getTime() > now.getTime() &&
       monthlyPriceNum > 0 &&
       (latestSub?.lastPaymentAt || latestSub?.lastAccessPaymentId) &&
       relevantPayment &&
@@ -163,12 +168,14 @@ export default async function PlatformAdminPage() {
       ...shop,
       subscription: latestSub,
       subscriptionCount,
-      access,
+      access: effectiveAccess,
+      baseAccess,
+      accessGrants: shop.accessGrants || [],
       billing,
       isMrrConfirmed,
       confirmedRevenue: isMrrConfirmed ? monthlyPriceNum : 0,
       synchronizationWarnings: warnings,
-      formattedValidUntil: access.validUntil ? formatBillingDatePtBr(access.validUntil) : null,
+      formattedValidUntil: effectiveAccess.validUntil ? formatBillingDatePtBr(effectiveAccess.validUntil) : null,
       formattedLastPaymentAt: latestSub?.lastPaymentAt ? formatBillingDatePtBr(latestSub.lastPaymentAt) : null,
     };
   });

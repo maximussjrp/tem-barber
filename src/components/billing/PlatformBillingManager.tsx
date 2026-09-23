@@ -58,15 +58,23 @@ interface BillingStatusResponse {
     | "SUSPENDED"
     | "CANCELED"
     | "EXPIRED"
-    | "NO_SUBSCRIPTION";
+    | "NO_SUBSCRIPTION"
+    | "COMPLIMENTARY";
   accessAllowed?: boolean;
-  accessType?: "TRIAL" | "PAID" | "GRACE" | "NONE";
+  accessType?: "TRIAL" | "PAID" | "GRACE" | "NONE" | "COMPLIMENTARY";
   remainingDays?: number;
   remainingLabel?: string;
   formattedValidUntil?: string | null;
   billingStatus?: "NONE" | "PENDING" | "PAID" | "OVERDUE" | "CANCELED" | "REFUNDED";
   billingLabel?: string | null;
   formattedBillingDueDate?: string | null;
+  complimentary?: {
+    active: boolean;
+    queued: boolean;
+    activeUntil?: string | null;
+    nextStartsAt?: string | null;
+    latestEndsAt?: string | null;
+  };
   recentPayments?: RecentPayment[];
   synchronizationWarnings?: string[];
   permissions?: {
@@ -97,6 +105,8 @@ function translatePaymentStatus(status: string | undefined): { label: string; co
 
 function translateAccessBadge(status: string | undefined): { label: string; color: string } {
   switch (status) {
+    case "COMPLIMENTARY":
+      return { label: "ACESSO CORTESIA", color: "bg-cyan-950/60 border-cyan-500/40 text-cyan-300" };
     case "ACTIVE":
       return { label: "PLANO ATIVO", color: "bg-emerald-950/60 border-emerald-500/40 text-emerald-300" };
     case "GRACE_PERIOD":
@@ -388,16 +398,36 @@ export function PlatformBillingManager({
 
       {/* Banner de suspensao se aplicavel */}
       {isSuspendedArea && (
-        <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4 text-sm text-amber-200 flex items-start gap-3 shadow-lg">
-          <span className="text-lg">⚠️</span>
-          <div>
-            <p className="font-bold text-amber-300">Acesso operacional suspenso</p>
-            <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
-              O acesso aos módulos operacionais (agenda, clientes, comandas, financeiro) está suspenso temporariamente.
-              Você pode conferir sua cobrança em aberto, emitir PIX/boleto ou atualizar seus dados fiscais abaixo.
-            </p>
+        statusData?.accessAllowed ? (
+          <div className="mb-6 rounded-xl border border-cyan-500/30 bg-cyan-950/30 p-4 text-sm text-cyan-200 flex items-start gap-3 shadow-lg">
+            <span className="text-lg">🎉</span>
+            <div className="flex-1">
+              <p className="font-bold text-cyan-300">Acesso liberado</p>
+              <p className="text-xs text-cyan-200/80 mt-1 leading-relaxed">
+                Sua barbearia possui acesso cortesia ativo. O acesso aos módulos operacionais está liberado.
+              </p>
+              <div className="mt-3">
+                <Link
+                  href="/admin"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold transition-colors"
+                >
+                  Voltar ao painel operacional →
+                </Link>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4 text-sm text-amber-200 flex items-start gap-3 shadow-lg">
+            <span className="text-lg">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-300">Acesso operacional suspenso</p>
+              <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
+                O acesso aos módulos operacionais (agenda, clientes, comandas, financeiro) está suspenso temporariamente.
+                Você pode conferir sua cobrança em aberto, emitir PIX/boleto ou atualizar seus dados fiscais abaixo.
+              </p>
+            </div>
+          </div>
+        )
       )}
 
       {/* Alertas */}

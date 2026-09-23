@@ -116,6 +116,7 @@ model Barbershop {
   categories                         Category[]
   appointments                       Appointment[]
   subscriptions                      TenantSubscription[]
+  accessGrants                       TenantAccessGrant[]
   idempotencyKeys                    IdempotencyKey[]
   comandas                           Comanda[]
   products                           Product[]
@@ -760,6 +761,38 @@ model TenantSubscription {
 
   @@unique([barbershopId])
   @@map("tenant_subscriptions")
+}
+
+model TenantAccessGrant {
+  id                String   @id @default(uuid())
+  barbershopId      String   @map("barbershop_id")
+
+  startsAt          DateTime @map("starts_at")
+  endsAt            DateTime @map("ends_at")
+  daysGranted       Int      @map("days_granted")
+
+  reason            String
+
+  idempotencyKey    String   @map("idempotency_key")
+  requestHash       String   @map("request_hash")
+
+  createdByUserId   String   @map("created_by_user_id")
+  createdByEmail    String?  @map("created_by_email")
+
+  revokedAt         DateTime? @map("revoked_at")
+  revokedByUserId   String?   @map("revoked_by_user_id")
+  revokedByEmail    String?   @map("revoked_by_email")
+  revocationReason  String?   @map("revocation_reason")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+
+  @@unique([barbershopId, idempotencyKey])
+  @@index([barbershopId, revokedAt, startsAt, endsAt])
+  @@index([barbershopId, createdAt])
+  @@map("tenant_access_grants")
 }
 
 enum PaymentStatus {

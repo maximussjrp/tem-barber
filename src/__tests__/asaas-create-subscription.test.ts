@@ -8,6 +8,7 @@ const { prismaMock, getAdminSessionMock, fetchMock } = vi.hoisted(() => ({
     asaasBillingSubscription: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     asaasBillingPayment: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    tenantAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
     plan: { findUnique: vi.fn(), findFirst: vi.fn() },
     barbershop: { findUniqueOrThrow: vi.fn() },
     barbershopMember: { findFirst: vi.fn() },

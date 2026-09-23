@@ -8,9 +8,10 @@ export type EffectiveAccessStatus =
   | "SUSPENDED"
   | "CANCELED"
   | "EXPIRED"
-  | "NO_SUBSCRIPTION";
+  | "NO_SUBSCRIPTION"
+  | "COMPLIMENTARY";
 
-export type AccessType = "TRIAL" | "PAID" | "GRACE" | "NONE";
+export type AccessType = "TRIAL" | "PAID" | "GRACE" | "NONE" | "COMPLIMENTARY";
 
 export type BillingStatus =
   | "NONE"

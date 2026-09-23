@@ -5,8 +5,10 @@ const { prismaMock, getServerSessionMock, redirectMock } = vi.hoisted(() => ({
   prismaMock: {
     plan: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     tenantSubscription: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    tenantAccessGrant: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     barbershopMember: { findFirst: vi.fn(), findMany: vi.fn() },
     barbershop: { findUnique: vi.fn(), findFirst: vi.fn() },
+    review: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock)),
   },
   getServerSessionMock: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock("next/navigation", () => ({ redirect: redirectMock, notFound: vi.fn() })
 // Import files to test
 import { isPlatformAdmin, isSubscriptionActive } from "@/lib/subscription-utils";
 import { requireAdmin } from "@/lib/admin-guard";
+import { requireMember } from "@/lib/member-guard";
 import { getAdminSession } from "@/lib/api-auth";
 import { PUT as updateSubscriptionApi } from "@/app/api/admin/platform-subscriptions/route";
 import { GET as getBarbershopApi } from "@/app/api/public/barbershop/[slug]/route";
@@ -37,6 +40,7 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
       const member = await prismaMock.barbershopMember.findFirst();
       return member ? [member] : [];
     });
+    prismaMock.tenantAccessGrant.findMany.mockResolvedValue([]);
   });
 
   // 1 & 2. isPlatformAdmin tests
@@ -371,5 +375,93 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
         }),
       })
     );
+  });
+
+  // 18. ADMIN_COURTESY_TEST: admin guard não bloqueia quando tenant SUSPENDED possui cortesia ativa
+  it("ADMIN_COURTESY_TEST: admin guard não redireciona para /assinatura-suspensa quando tenant SUSPENDED tem cortesia ativa", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "owner-courtesy-id", email: "owner@courtesy.com", role: "OWNER" },
+    });
+    prismaMock.barbershopMember.findFirst.mockResolvedValue({
+      id: "member-owner-id",
+      barbershopId: "shop-courtesy-admin",
+      role: "OWNER",
+    });
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+      status: "SUSPENDED",
+    });
+    prismaMock.tenantAccessGrant.findMany.mockResolvedValue([
+      {
+        id: "grant-admin-active",
+        barbershopId: "shop-courtesy-admin",
+        startsAt: new Date(Date.now() - 1000 * 60 * 60),
+        endsAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14),
+        daysGranted: 14,
+        reason: "Cortesia ativa admin guard",
+        revokedAt: null,
+      },
+    ]);
+
+    await requireAdmin();
+    expect(redirectMock).not.toHaveBeenCalledWith("/assinatura-suspensa");
+  });
+
+  // 19. MEMBER_COURTESY_TEST: member guard não bloqueia quando tenant SUSPENDED possui cortesia ativa
+  it("MEMBER_COURTESY_TEST: member guard não redireciona para /assinatura-suspensa quando tenant SUSPENDED tem cortesia ativa", async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: { id: "barber-courtesy-id", email: "barber@courtesy.com", role: "BARBER" },
+    });
+    prismaMock.barbershopMember.findFirst.mockResolvedValue({
+      id: "member-barber-id",
+      barbershopId: "shop-courtesy-member",
+      role: "BARBER",
+    });
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+      status: "SUSPENDED",
+    });
+    prismaMock.tenantAccessGrant.findMany.mockResolvedValue([
+      {
+        id: "grant-member-active",
+        barbershopId: "shop-courtesy-member",
+        startsAt: new Date(Date.now() - 1000 * 60 * 60),
+        endsAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+        daysGranted: 7,
+        reason: "Cortesia ativa member guard",
+        revokedAt: null,
+      },
+    ]);
+
+    await requireMember();
+    expect(redirectMock).not.toHaveBeenCalledWith("/assinatura-suspensa");
+  });
+
+  // 20. PUBLIC_BOOKING_COURTESY_TEST: agenda pública não bloqueia tenant SUSPENDED com cortesia ativa
+  it("PUBLIC_BOOKING_COURTESY_TEST: agenda pública não retorna 403 quando tenant SUSPENDED possui cortesia ativa", async () => {
+    prismaMock.barbershop.findUnique.mockResolvedValue({
+      id: "shop-courtesy-public",
+      slug: "barbearia-courtesy",
+      active: true,
+      categories: [],
+      members: [],
+    });
+    prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+      status: "SUSPENDED",
+    });
+    prismaMock.tenantAccessGrant.findMany.mockResolvedValue([
+      {
+        id: "grant-public-active",
+        barbershopId: "shop-courtesy-public",
+        startsAt: new Date(Date.now() - 1000 * 60 * 60),
+        endsAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+        daysGranted: 7,
+        reason: "Cortesia ativa agenda pública",
+        revokedAt: null,
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/public/barbershop/barbearia-courtesy");
+    const res = await getBarbershopApi(req, { params: Promise.resolve({ slug: "barbearia-courtesy" }) });
+
+    expect(res.status).not.toBe(403);
   });
 });
