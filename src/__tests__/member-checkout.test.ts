@@ -7,7 +7,10 @@ const { ensureComandaMock, recalculateMock, registerPaymentMock, closeComandaMoc
   registerPaymentMock: vi.fn(),
   closeComandaMock: vi.fn(),
   sessionMock: vi.fn(),
-  prismaMock: { appointment: { findFirst: vi.fn(), update: vi.fn() } },
+  prismaMock: {
+    appointment: { findFirst: vi.fn(), update: vi.fn() },
+    memberPermissionOverride: { findMany: vi.fn() },
+  },
 }));
 
 vi.mock("@/lib/operations/comandas", () => ({
@@ -78,8 +81,8 @@ beforeEach(() => {
   ensureComandaMock.mockImplementation(async (_tx: unknown, input: { appointmentId: string }) => ({ id: "comanda-1", appointmentId: input.appointmentId }));
   recalculateMock.mockImplementation(async (_tx: unknown, id: string) => ({ ...currentComanda, id }));
   closeComandaMock.mockResolvedValue({ id: "comanda-1", status: "CLOSED", remainingTotal: "0.00" });
-  registerPaymentMock.mockResolvedValue({ id: "payment-1" });
-  sessionMock.mockResolvedValue({ error: null, data: { userId: "user-1", memberId: "member-1", barbershopId: "shop-1" } });
+  prismaMock.memberPermissionOverride.findMany.mockResolvedValue([]);
+  sessionMock.mockResolvedValue({ error: null, data: { userId: "user-1", memberId: "member-1", barbershopId: "shop-1", role: "BARBER" } });
 });
 
 let currentComanda: ReturnType<typeof makeComanda>;

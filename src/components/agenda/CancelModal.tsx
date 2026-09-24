@@ -6,10 +6,12 @@ import { formatTime, INPUT_CLASS, LABEL_INPUT } from "./utils";
 
 export function CancelModal({
   appointment,
+  mode = "admin",
   onClose,
   onCancelled,
 }: {
   appointment: Appointment;
+  mode?: "admin" | "member";
   onClose: () => void;
   onCancelled: (a: Appointment) => void;
 }) {
@@ -21,7 +23,11 @@ export function CancelModal({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/appointments/${appointment.id}`, {
+      const cancelUrl =
+        mode === "member"
+          ? `/api/member/agenda/${appointment.id}/status`
+          : `/api/admin/appointments/${appointment.id}`;
+      const res = await fetch(cancelUrl, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "CANCELLED", notes: reason || null }),

@@ -29,6 +29,16 @@ export async function POST(
     return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
   }
 
+  if (!member.isActive) {
+    return NextResponse.json(
+      {
+        error: "MEMBER_INACTIVE",
+        message: "Não é possível redefinir o acesso de um colaborador inativo.",
+      },
+      { status: 409 }
+    );
+  }
+
   // Hierarchy check
   if (member.role === "OWNER") {
     return NextResponse.json(
@@ -48,6 +58,7 @@ export async function POST(
 
   const tokenResult = await createStaffAccessToken({
     barbershopId: data!.barbershopId!,
+    memberId: member.id,
     userId: member.userId,
     purpose: StaffAccessTokenPurpose.PASSWORD_RESET,
     createdByUserId: data!.userId,

@@ -7,6 +7,13 @@ import { Prisma, StaffAccessTokenPurpose } from "@prisma/client";
 import { getBrazilianPhoneVariants } from "@/lib/phone/br-phone";
 import { createStaffAccessToken } from "@/lib/auth/staff-tokens";
 
+type StaffInvitePayload = {
+  activationUrl: string;
+  whatsappMessage: string;
+  whatsappLink: string;
+  expiresAt: Date;
+};
+
 export async function GET() {
   const { error, data } = await getAdminSession();
   if (error) return error;
@@ -279,21 +286,20 @@ export async function POST(request: Request) {
       }
 
       // Se o usuário não tinha senha, gerar convite de ativação
-      let inviteInfo: any = null;
-      if (!result.hadPassword && (prisma as any).staffAccessToken) {
+      let inviteInfo: StaffInvitePayload | null = null;
+      if (!result.hadPassword) {
         const tokenResult = await createStaffAccessToken({
           barbershopId: data!.barbershopId!,
+          memberId: result.member.id,
           userId: result.member.userId,
           purpose: StaffAccessTokenPurpose.INVITE,
           createdByUserId: data!.userId,
         });
 
-        const barbershop = (prisma as any).barbershop
-          ? await prisma.barbershop.findUnique({
-              where: { id: data!.barbershopId! },
-              select: { name: true },
-            })
-          : null;
+        const barbershop = await prisma.barbershop.findUnique({
+          where: { id: data!.barbershopId! },
+          select: { name: true },
+        });
 
         const rawUserPhone = result.member.user.phone.replace(/\D/g, "");
         const formattedUserPhone = rawUserPhone.startsWith("55") ? rawUserPhone : `55${rawUserPhone}`;
@@ -346,21 +352,20 @@ export async function POST(request: Request) {
     });
 
     // Se foi criado sem senha, gerar convite de ativação
-    let inviteInfo: any = null;
-    if (!hashedPassword && (prisma as any).staffAccessToken) {
+    let inviteInfo: StaffInvitePayload | null = null;
+    if (!hashedPassword) {
       const tokenResult = await createStaffAccessToken({
         barbershopId: data!.barbershopId!,
+        memberId: member.id,
         userId: member.userId,
         purpose: StaffAccessTokenPurpose.INVITE,
         createdByUserId: data!.userId,
       });
 
-      const barbershop = (prisma as any).barbershop
-        ? await prisma.barbershop.findUnique({
-            where: { id: data!.barbershopId! },
-            select: { name: true },
-          })
-        : null;
+      const barbershop = await prisma.barbershop.findUnique({
+        where: { id: data!.barbershopId! },
+        select: { name: true },
+      });
 
       const rawUserPhone = member.user.phone.replace(/\D/g, "");
       const formattedUserPhone = rawUserPhone.startsWith("55") ? rawUserPhone : `55${rawUserPhone}`;

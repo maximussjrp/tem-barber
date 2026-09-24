@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import prisma from "@/lib/prisma";
-import { canManageWaitlist } from "@/lib/waitlist/permissions";
+import { canViewWaitlist } from "@/lib/waitlist/permissions";
 import { getWaitlistPublicUrl } from "@/lib/public-url";
 
 interface EntryWithMemberRelations {
@@ -25,7 +25,7 @@ function getCalledByMemberName(entry: EntryWithMemberRelations) {
 
 // GET /api/admin/waitlist - get current active or recent waitlist session with summary
 export async function GET(request: NextRequest) {
-  const auth = await getAdminSession();
+  const auth = await getOperationalStaffSession();
   if (auth.error) return auth.error;
   if (!auth.data?.barbershopId) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   const { barbershopId, role } = auth.data;
 
-  if (!canManageWaitlist(role) && role !== "BARBER") {
+  if (!canViewWaitlist(role)) {
     return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   }
 

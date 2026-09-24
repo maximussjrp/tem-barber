@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getMemberSession } from "@/lib/member-api-auth";
-import { Prisma, AppointmentStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { stripMetadataFromNotes, buildNotesWithMetadata } from "@/lib/appointments/notes-metadata";
 import { deriveOperationalState } from "@/lib/operations/member-checkout";
 import { toCents } from "@/lib/operations/money";
-import { localDateToUTCBoundary, shiftDateISO, todayIsoBR, nowBR } from "@/lib/time-utils";
+import { localDateToUTCBoundary, shiftDateISO, todayIsoBR } from "@/lib/time-utils";
 import {
   AppointmentConflictError,
   InvalidServiceSelectionError,
@@ -16,12 +16,14 @@ import {
 import { calculateAppointmentTotals } from "@/lib/appointments/calculate-appointment";
 import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-appointment";
 import { validateProfessionalServiceCapability } from "@/lib/appointments/professional-service-capability";
-import { isRetryableTransactionError } from "@/lib/transactions/is-retryable-transaction-error";
 import { normalizePhone, resolveBarbershopCustomerForBooking } from "@/lib/customers";
-import { validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 import { prepareAppointmentCreatedNotifications } from "@/lib/push/events.server";
 import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { checkMemberPermission } from "@/lib/permissions/engine";
+import {
+  MemberTemporalAvailabilityError,
+  validateMemberTemporalAvailability,
+} from "@/lib/agenda/working-hours-validation";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await getMemberSession();
@@ -59,7 +61,20 @@ export async function GET(request: NextRequest) {
       workingHours: {
         where: { dayOfWeek: targetDate.getUTCDay(), isActive: true },
       },
-      services: { select: { serviceId: true } },
+      services: {
+        select: {
+          serviceId: true,
+          service: {
+            select: {
+              id: true,
+              name: true,
+              durationMin: true,
+              price: true,
+              isActive: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -107,17 +122,17 @@ export async function GET(request: NextRequest) {
     orderBy: { dateTime: "asc" },
   });
 
-  const cleaned = appointments.map((a: any) => {
+  const cleaned = appointments.map((a) => {
     const comanda = a.comandas?.[0];
     const hasOwnPendingService = comanda?.items?.some(
-      (item: any) => item.executorId === data!.memberId && item.status === "PENDING"
+      (item) => item.executorId === data!.memberId && item.status === "PENDING"
     );
     const hasOwnCompletedService = comanda?.items?.some(
-      (item: any) => item.executorId === data!.memberId && item.status === "DONE"
+      (item) => item.executorId === data!.memberId && item.status === "DONE"
     );
     const productionItems =
       comanda?.items?.filter(
-        (item: any) =>
+        (item) =>
           item.type === "SERVICE" &&
           item.status === "DONE" &&
           item.executorId === data!.memberId &&
@@ -127,11 +142,11 @@ export async function GET(request: NextRequest) {
       ) ?? [];
 
     const productionValue =
-      productionItems.reduce((sum: number, item: any) => sum + toCents(item.total), 0) / 100;
+      productionItems.reduce((sum, item) => sum + toCents(item.total), 0) / 100;
 
     const operationalState = deriveOperationalState(
-      a as any,
-      comanda ? (comanda as any) : undefined,
+      a as unknown as Parameters<typeof deriveOperationalState>[0],
+      comanda ? (comanda as unknown as Parameters<typeof deriveOperationalState>[1]) : undefined,
       hasOwnPendingService || false,
       hasOwnCompletedService || false
     );
@@ -149,7 +164,7 @@ export async function GET(request: NextRequest) {
       notes: stripMetadataFromNotes(a.notes),
       customer: a.customer,
       barber: a.barber,
-      services: a.services.map((s: any) => ({
+      services: a.services.map((s) => ({
         serviceId: s.serviceId,
         service: {
           id: s.service.id,
@@ -159,12 +174,12 @@ export async function GET(request: NextRequest) {
         },
         priceApplied: s.priceApplied.toString(),
       })),
-      comandas: a.comandas?.map((c: any) => ({
+      comandas: a.comandas?.map((c) => ({
         id: c.id,
         status: c.status,
         total: c.total.toString(),
         paidTotal: c.paidTotal.toString(),
-        items: c.items.map((i: any) => ({
+        items: c.items.map((i) => ({
           id: i.id,
           type: i.type,
           status: i.status,
@@ -189,6 +204,15 @@ export async function GET(request: NextRequest) {
       : null,
     barbershopName: currentMember?.barbershop?.name || "Tem Barber",
     barbershopSlug: currentMember?.barbershop?.slug || "",
+    services: (currentMember?.services ?? [])
+      .map((s) => s.service)
+      .filter((s) => s && s.isActive)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        durationMin: s.durationMin,
+        price: s.price.toString(),
+      })),
   });
 }
 
@@ -205,7 +229,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: any;
+  let body: {
+    customerId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    serviceIds?: string[];
+    services?: { serviceId?: string; quantity?: number }[];
+    dateTime?: string;
+    bookingMode?: string;
+    memberId?: string;
+    notes?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -219,8 +253,24 @@ export async function POST(request: NextRequest) {
     serviceIds,
     services: bodyServices,
     dateTime,
+    bookingMode,
+    memberId: bodyMemberId,
     notes,
   } = body;
+
+  if (bodyMemberId && bodyMemberId !== data!.memberId) {
+    return NextResponse.json(
+      { error: "FORBIDDEN", message: "Não é permitido criar agendamentos para outro profissional." },
+      { status: 403 }
+    );
+  }
+
+  if (bookingMode === "FIT_IN") {
+    return NextResponse.json(
+      { error: "FIT_IN_NOT_ALLOWED", message: "Somente administradores podem criar encaixes." },
+      { status: 403 }
+    );
+  }
 
   // Regra P0: O barbeiro SEMPRE agenda estritamente na própria agenda.
   const memberId = data!.memberId;
@@ -232,7 +282,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const apptDate = new Date(dateTime);
+  const apptDate = new Date(typeof dateTime === "string" && !dateTime.endsWith("Z") ? dateTime + "Z" : dateTime);
   if (isNaN(apptDate.getTime())) {
     return NextResponse.json({ error: "Data/hora inválida." }, { status: 400 });
   }
@@ -240,7 +290,7 @@ export async function POST(request: NextRequest) {
   // Obter serviços selecionados
   let rawServicesList: { serviceId: string; quantity: number }[] = [];
   if (Array.isArray(bodyServices) && bodyServices.length > 0) {
-    bodyServices.forEach((s: any) => {
+    bodyServices.forEach((s) => {
       if (s.serviceId) {
         const qty = Number(s.quantity) || 1;
         rawServicesList.push({ serviceId: s.serviceId, quantity: Math.min(5, Math.max(1, qty)) });
@@ -276,8 +326,8 @@ export async function POST(request: NextRequest) {
 
         // Apply quantities
         const qtyMap = new Map(normalizedServices.map((s) => [s.serviceId, s.quantity]));
-        services.forEach((s: any) => {
-          s.quantity = qtyMap.get(s.id) ?? 1;
+        services.forEach((s) => {
+          (s as { quantity?: number }).quantity = qtyMap.get(s.id) ?? 1;
         });
 
         let resolvedCustomerId: string;
@@ -308,6 +358,13 @@ export async function POST(request: NextRequest) {
 
         const { totalPrice, durationMin } = calculateAppointmentTotals(services);
 
+        await validateMemberTemporalAvailability(tx, {
+          barbershopId: data!.barbershopId,
+          memberId,
+          dateTime: apptDate,
+          durationMin,
+        });
+
         const cleanUserNotes = stripMetadataFromNotes(notes || "");
         const activeQtyMap: Record<string, number> = {};
         normalizedServices.forEach((s) => {
@@ -337,7 +394,7 @@ export async function POST(request: NextRequest) {
       return result.error;
     }
 
-    const appointment = (result as any).appointment;
+    const appointment = (result as { appointment: Parameters<typeof prepareAppointmentCreatedNotifications>[0]["appointment"] }).appointment;
 
     const preparedNotifications = await prepareAppointmentCreatedNotifications({
       appointment,
@@ -355,7 +412,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(appointment, { status: 201 });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    if (err instanceof MemberTemporalAvailabilityError) {
+      return NextResponse.json({ error: err.code, message: err.message }, { status: err.status });
+    }
     if (err instanceof AppointmentConflictError) {
       return NextResponse.json({ error: err.code, message: err.message }, { status: 409 });
     }

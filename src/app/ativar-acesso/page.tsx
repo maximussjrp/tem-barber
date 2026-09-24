@@ -65,7 +65,6 @@ function AtivarAcessoContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
 
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [tokenData, setTokenData] = useState<{
     purpose: string;

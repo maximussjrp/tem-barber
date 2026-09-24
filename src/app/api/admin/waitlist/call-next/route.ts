@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import { canManageWaitlist } from "@/lib/waitlist/permissions";
 import { callNextWaitlistEntry, CallNextWaitlistError } from "@/lib/waitlist/call-next";
 import { prepareWaitlistCalledNotifications } from "@/lib/push/events.server";
 import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 
 export async function POST(request: NextRequest) {
-  const auth = await getAdminSession();
+  const auth = await getOperationalStaffSession({ requiredPermission: "WAITLIST_MANAGE" });
   if (auth.error) return auth.error;
   if (!auth.data?.barbershopId) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });

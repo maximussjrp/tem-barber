@@ -1,4 +1,4 @@
-﻿import { getAdminSession } from "@/lib/api-auth";
+import { getAdminSession } from "@/lib/api-auth";
 import { PermissionKey } from "@/lib/permissions/types";
 import { ROLE_DEFAULT_PRESETS } from "@/lib/permissions/presets";
 import { checkMemberPermission } from "@/lib/permissions/engine";
@@ -13,7 +13,7 @@ export async function getOperationalStaffSession(options?: {
 }) {
   // 1. Tenta getAdminSession() primeiro (OWNER, MANAGER, SUPER_ADMIN)
   // Em testes unitários que mockam getAdminSession, isso resolve imediatamente
-  let adminResult: any = null;
+  let adminResult: Awaited<ReturnType<typeof getAdminSession>> | null = null;
   try {
     adminResult = await getAdminSession();
   } catch {
@@ -21,31 +21,59 @@ export async function getOperationalStaffSession(options?: {
   }
 
   if (adminResult && !adminResult.error && adminResult.data) {
-    if (options?.requiredPermission && adminResult.data.memberId) {
-      let allowed = true;
-      try {
-        allowed = await checkMemberPermission(
-          adminResult.data.memberId,
-          adminResult.data.role,
-          options.requiredPermission
-        );
-      } catch {
-        const preset = ROLE_DEFAULT_PRESETS[adminResult.data.role];
-        allowed = preset ? Boolean(preset[options.requiredPermission]) : true;
-      }
-
-      if (!allowed) {
-        return {
-          error: NextResponse.json(
-            {
-              error: "PERMISSION_DENIED",
-              message: "Permissão '" + options.requiredPermission + "' necessária para executar esta ação.",
-              requiredPermission: options.requiredPermission,
-            },
-            { status: 403 }
-          ),
-          data: null,
-        };
+    if (options?.requiredPermission) {
+      if (adminResult.data.role === "OWNER" || adminResult.data.role === "SUPER_ADMIN") {
+        // OWNER and SUPER_ADMIN have full permission
+      } else if (adminResult.data.memberId) {
+        try {
+          const allowed = await checkMemberPermission(
+            adminResult.data.memberId,
+            adminResult.data.role,
+            options.requiredPermission
+          );
+          if (!allowed) {
+            return {
+              error: NextResponse.json(
+                {
+                  error: adminResult.data.role === "BARBER" ? "FORBIDDEN" : "PERMISSION_DENIED",
+                  message: "Permissão '" + options.requiredPermission + "' necessária para executar esta ação.",
+                  requiredPermission: options.requiredPermission,
+                },
+                { status: 403 }
+              ),
+              data: null,
+            };
+          }
+        } catch {
+          // FAIL CLOSED: on any exception, deny access immediately
+          return {
+            error: NextResponse.json(
+              {
+                error: "PERMISSION_DENIED",
+                message: "Falha na resolução de permissões de acesso.",
+                requiredPermission: options.requiredPermission,
+              },
+              { status: 403 }
+            ),
+            data: null,
+          };
+        }
+      } else {
+        // Fallback to role presets when memberId is not populated (e.g. test session mocks)
+        const presetAllowed = ROLE_DEFAULT_PRESETS[adminResult.data.role as keyof typeof ROLE_DEFAULT_PRESETS]?.[options.requiredPermission];
+        if (!presetAllowed) {
+          return {
+            error: NextResponse.json(
+              {
+                error: adminResult.data.role === "BARBER" ? "FORBIDDEN" : "PERMISSION_DENIED",
+                message: "Permissão '" + options.requiredPermission + "' necessária para executar esta ação.",
+                requiredPermission: options.requiredPermission,
+              },
+              { status: 403 }
+            ),
+            data: null,
+          };
+        }
       }
     }
     return adminResult;
@@ -122,31 +150,54 @@ export async function getOperationalStaffSession(options?: {
     }
   }
 
-  if (options?.requiredPermission && member) {
-    let allowed = true;
-    try {
-      allowed = await checkMemberPermission(
-        member.id,
-        role,
-        options.requiredPermission
-      );
-    } catch {
-      const preset = ROLE_DEFAULT_PRESETS[role];
-      allowed = preset ? Boolean(preset[options.requiredPermission]) : true;
-    }
-
-    if (!allowed) {
+  if (options?.requiredPermission) {
+    if (role === "OWNER" || role === "SUPER_ADMIN") {
+      // OWNER / SUPER_ADMIN granted
+    } else if (!member) {
       return {
         error: NextResponse.json(
           {
             error: "PERMISSION_DENIED",
-            message: "Permissão '" + options.requiredPermission + "' necessária para executar esta ação.",
-            requiredPermission: options.requiredPermission,
+            message: "Membro não identificado para verificação de permissões.",
           },
           { status: 403 }
         ),
         data: null,
       };
+    } else {
+      try {
+        const allowed = await checkMemberPermission(
+          member.id,
+          role,
+          options.requiredPermission
+        );
+        if (!allowed) {
+          return {
+            error: NextResponse.json(
+              {
+                error: "PERMISSION_DENIED",
+                message: "Permissão '" + options.requiredPermission + "' necessária para executar esta ação.",
+                requiredPermission: options.requiredPermission,
+              },
+              { status: 403 }
+            ),
+            data: null,
+          };
+        }
+      } catch {
+        // FAIL CLOSED: any error during resolution rejects access
+        return {
+          error: NextResponse.json(
+            {
+              error: "PERMISSION_DENIED",
+              message: "Falha na resolução de permissões de acesso.",
+              requiredPermission: options.requiredPermission,
+            },
+            { status: 403 }
+          ),
+          data: null,
+        };
+      }
     }
   }
 

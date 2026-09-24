@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import { canManageWaitlist } from "@/lib/waitlist/permissions";
 import { CallNextWaitlistError, startCalledWaitlistEntry } from "@/lib/waitlist/call-next";
 
 export async function POST(request: NextRequest) {
-  const auth = await getAdminSession();
+  const auth = await getOperationalStaffSession({ requiredPermission: "WAITLIST_MANAGE" });
   if (auth.error) return auth.error;
   if (!auth.data?.barbershopId || !canManageWaitlist(auth.data.role)) {
     return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });

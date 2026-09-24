@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import prisma from "@/lib/prisma";
 import {
   createManualBarbershopClient,
@@ -8,7 +8,7 @@ import {
 } from "@/lib/customers";
 
 export async function GET(request: NextRequest) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "CLIENTS_VIEW" });
   if (error) return error;
 
   const barbershopId = data!.barbershopId;
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "CLIENTS_MANAGE" });
   if (error) return error;
 
   const barbershopId = data!.barbershopId;

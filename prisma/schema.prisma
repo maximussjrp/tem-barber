@@ -262,6 +262,7 @@ model BarbershopMember {
   tipPayouts                        TipPayout[]                         @relation("TipPayoutMember")
   allocatedCheckoutTips             CheckoutAllocation[]                @relation("CheckoutTipMember")
   permissionOverrides               MemberPermissionOverride[]
+  staffAccessTokens                 StaffAccessToken[]
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -3092,6 +3093,7 @@ enum StaffAccessTokenPurpose {
 model StaffAccessToken {
   id              String                   @id @default(uuid())
   barbershopId    String                   @map("barbershop_id")
+  memberId        String                   @map("member_id")
   userId          String                   @map("user_id")
   tokenHash       String                   @unique @map("token_hash")
   purpose         StaffAccessTokenPurpose
@@ -3101,9 +3103,11 @@ model StaffAccessToken {
   createdAt       DateTime                 @default(now()) @map("created_at")
 
   barbershop      Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member          BarbershopMember         @relation(fields: [memberId], references: [id], onDelete: Cascade)
   user            User                     @relation("UserStaffAccessTokens", fields: [userId], references: [id], onDelete: Cascade)
   createdByUser   User?                    @relation("CreatedStaffAccessTokens", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  @@index([barbershopId, memberId])
   @@index([barbershopId, userId])
   @@index([purpose, expiresAt])
   @@map("staff_access_tokens")

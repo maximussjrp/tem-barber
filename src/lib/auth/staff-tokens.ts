@@ -3,6 +3,18 @@ import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { StaffAccessTokenPurpose } from "@prisma/client";
 
+export class StaffTokenError extends Error {
+  code: string;
+  status: number;
+
+  constructor(message: string, code: string, status: number) {
+    super(message);
+    this.name = "StaffTokenError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export const INVITE_EXPIRATION_HOURS = 48;
 export const RESET_EXPIRATION_HOURS = 24;
 
@@ -16,6 +28,7 @@ export function generateRawToken(): string {
 
 export interface CreateStaffTokenParams {
   barbershopId: string;
+  memberId: string;
   userId: string;
   purpose: StaffAccessTokenPurpose;
   createdByUserId?: string | null;
@@ -32,11 +45,12 @@ export interface CreatedStaffTokenResult {
 /**
  * Creates a new staff access token (INVITE or PASSWORD_RESET) and returns the raw unhashed token
  * alongside the activation URL. Only the hash is stored in the database.
+ * Atomic under transaction with lock on memberId + purpose.
  */
 export async function createStaffAccessToken(
   params: CreateStaffTokenParams
 ): Promise<CreatedStaffTokenResult> {
-  const { barbershopId, userId, purpose, createdByUserId } = params;
+  const { barbershopId, memberId, userId, purpose, createdByUserId } = params;
 
   const rawToken = generateRawToken();
   const tokenHash = hashToken(rawToken);
@@ -48,27 +62,57 @@ export async function createStaffAccessToken(
 
   const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000);
 
-  // Invalidate previous unused tokens for the same user and purpose
-  await prisma.staffAccessToken.updateMany({
-    where: {
-      userId,
-      purpose,
-      usedAt: null,
-    },
-    data: {
-      usedAt: new Date(),
-    },
-  });
+  await prisma.$transaction(async (tx) => {
+    // 1. Advisory lock serializes token issuance for this member + purpose
+    const lockKey = `staff_token_issue:${memberId}:${purpose}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
 
-  await prisma.staffAccessToken.create({
-    data: {
-      barbershopId,
-      userId,
-      tokenHash,
-      purpose,
-      expiresAt,
-      createdByUserId: createdByUserId ?? null,
-    },
+    // 2. Validate membership is active and belongs to this tenant and user
+    const member = await tx.barbershopMember.findUnique({
+      where: { id: memberId },
+      select: { id: true, barbershopId: true, userId: true, isActive: true },
+    });
+
+    if (!member) {
+      throw new StaffTokenError("Colaborador não encontrado.", "MEMBER_NOT_FOUND", 404);
+    }
+
+    if (member.barbershopId !== barbershopId) {
+      throw new StaffTokenError("Colaborador não pertence à barbearia especificada.", "TENANT_MISMATCH", 403);
+    }
+
+    if (member.userId !== userId) {
+      throw new StaffTokenError("Identidade de usuário inconsistente.", "USER_MISMATCH", 400);
+    }
+
+    if (!member.isActive) {
+      throw new StaffTokenError("Não é possível gerar link de acesso para colaborador inativo.", "MEMBER_INACTIVE", 409);
+    }
+
+    // 3. Atomically invalidate previous unused tokens for the same member and purpose
+    await tx.staffAccessToken.updateMany({
+      where: {
+        memberId,
+        purpose,
+        usedAt: null,
+      },
+      data: {
+        usedAt: new Date(),
+      },
+    });
+
+    // 4. Create new token
+    await tx.staffAccessToken.create({
+      data: {
+        barbershopId,
+        memberId,
+        userId,
+        tokenHash,
+        purpose,
+        expiresAt,
+        createdByUserId: createdByUserId ?? null,
+      },
+    });
   });
 
   const baseUrl = process.env.NEXTAUTH_URL || "";
@@ -89,9 +133,15 @@ export type ValidateTokenResult =
       token: {
         id: string;
         barbershopId: string;
+        memberId: string;
         userId: string;
         purpose: StaffAccessTokenPurpose;
         expiresAt: Date;
+        member: {
+          id: string;
+          role: string;
+          isActive: boolean;
+        };
         user: {
           id: string;
           name: string;
@@ -108,7 +158,7 @@ export type ValidateTokenResult =
     }
   | {
       valid: false;
-      error: "TOKEN_NOT_FOUND" | "TOKEN_ALREADY_USED" | "TOKEN_EXPIRED";
+      error: "TOKEN_NOT_FOUND" | "TOKEN_ALREADY_USED" | "TOKEN_EXPIRED" | "MEMBER_INACTIVE";
       message: string;
     };
 
@@ -131,6 +181,9 @@ export async function validateStaffAccessToken(
   const tokenRecord = await prisma.staffAccessToken.findUnique({
     where: { tokenHash },
     include: {
+      member: {
+        select: { id: true, role: true, isActive: true },
+      },
       user: {
         select: { id: true, name: true, email: true, phone: true },
       },
@@ -164,6 +217,14 @@ export async function validateStaffAccessToken(
     };
   }
 
+  if (tokenRecord.member && !tokenRecord.member.isActive) {
+    return {
+      valid: false,
+      error: "MEMBER_INACTIVE",
+      message: "O vínculo deste colaborador não está ativo.",
+    };
+  }
+
   return {
     valid: true,
     token: tokenRecord,
@@ -172,6 +233,7 @@ export async function validateStaffAccessToken(
 
 /**
  * Activates an account or resets password using a valid raw token.
+ * Single-use atomic consumption under transaction.
  */
 export async function consumeStaffAccessToken(
   rawToken: string,
@@ -181,51 +243,69 @@ export async function consumeStaffAccessToken(
     throw new Error("A senha deve ter no mínimo 8 caracteres.");
   }
 
-  const validation = await validateStaffAccessToken(rawToken);
-  if (!validation.valid) {
-    throw new Error(validation.message);
+  if (!rawToken || typeof rawToken !== "string" || rawToken.trim().length === 0) {
+    throw new Error("Token inválido ou ausente.");
   }
 
-  const { token } = validation;
+  const tokenHash = hashToken(rawToken.trim());
   const passwordHash = await bcrypt.hash(newPassword, 10);
 
   return await prisma.$transaction(async (tx) => {
-    // Re-verify inside transaction to prevent race conditions
-    const currentToken = await tx.staffAccessToken.findUnique({
-      where: { id: token.id },
+    // 1. Atomic consumption with count guarantee
+    const updated = await tx.staffAccessToken.updateMany({
+      where: {
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: {
+        usedAt: new Date(),
+      },
     });
 
-    if (!currentToken || currentToken.usedAt !== null || currentToken.expiresAt < new Date()) {
-      throw new Error("Token não é mais válido.");
+    if (updated.count === 0) {
+      throw new Error("Token inválido, já utilizado ou expirado.");
     }
 
-    // Mark token as used
-    await tx.staffAccessToken.update({
-      where: { id: token.id },
-      data: { usedAt: new Date() },
-    });
-
-    // Update user password
-    await tx.user.update({
-      where: { id: token.userId },
-      data: { passwordHash },
-    });
-
-    // Find member to determine role and redirect
-    const member = await tx.barbershopMember.findUnique({
-      where: {
-        barbershopId_userId: {
-          barbershopId: token.barbershopId,
-          userId: token.userId,
+    // 2. Fetch fresh token record with member
+    const currentToken = await tx.staffAccessToken.findUnique({
+      where: { tokenHash },
+      include: {
+        member: {
+          select: { id: true, role: true, isActive: true, barbershopId: true, userId: true },
+        },
+        barbershop: {
+          select: { slug: true },
         },
       },
     });
 
+    if (!currentToken || !currentToken.member) {
+      throw new Error("Vínculo do colaborador não encontrado.");
+    }
+
+    if (!currentToken.member.isActive) {
+      throw new Error("Vínculo do colaborador não está ativo. Não é possível alterar a senha.");
+    }
+
+    if (
+      currentToken.member.barbershopId !== currentToken.barbershopId ||
+      currentToken.member.userId !== currentToken.userId
+    ) {
+      throw new Error("Inconsistência de segurança entre token e vínculo.");
+    }
+
+    // 3. Update user password
+    await tx.user.update({
+      where: { id: currentToken.userId },
+      data: { passwordHash },
+    });
+
     return {
       success: true,
-      userId: token.userId,
-      role: member?.role ?? "BARBER",
-      barbershopSlug: token.barbershop.slug,
+      userId: currentToken.userId,
+      role: currentToken.member.role,
+      barbershopSlug: currentToken.barbershop.slug,
     };
   });
 }

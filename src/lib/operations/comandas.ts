@@ -271,10 +271,12 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
   
   const remainingTotal = Math.max(0, total - paidTotal);
 
-  const existingComanda = await tx.comanda.findUnique({
-    where: { id: comandaId },
-    select: { status: true, remainingTotal: true },
-  });
+  const existingComanda = tx.comanda?.findUnique
+    ? await tx.comanda.findUnique({
+        where: { id: comandaId },
+        select: { status: true, remainingTotal: true },
+      })
+    : null;
 
   const updateData: Prisma.ComandaUpdateInput = {
     subtotal: fromCents(subtotal),

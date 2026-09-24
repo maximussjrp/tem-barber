@@ -142,7 +142,10 @@ export function AppointmentModal({
     const timer = window.setTimeout(async () => {
       setSearchingCustomers(true);
       try {
-        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(query)}`, {
+        const searchUrl = isMemberMode
+          ? `/api/member/clients/search?q=${encodeURIComponent(query)}`
+          : `/api/admin/clients/search?q=${encodeURIComponent(query)}`;
+        const res = await fetch(searchUrl, {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error("Erro ao buscar clientes.");
@@ -161,7 +164,7 @@ export function AppointmentModal({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [customerLookupQuery, isEdit]);
+  }, [customerLookupQuery, isEdit, isMemberMode]);
 
   useEffect(() => {
     if (isEdit || selectedCustomer) {
@@ -175,7 +178,10 @@ export function AppointmentModal({
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/admin/clients/search?q=${encodeURIComponent(phoneDigits)}`, {
+        const phoneUrl = isMemberMode
+          ? `/api/member/clients/search?q=${encodeURIComponent(phoneDigits)}`
+          : `/api/admin/clients/search?q=${encodeURIComponent(phoneDigits)}`;
+        const res = await fetch(phoneUrl, {
           signal: controller.signal,
         });
         if (!res.ok) return;
@@ -192,7 +198,7 @@ export function AppointmentModal({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [customerPhone, isEdit, selectedCustomer]);
+  }, [customerPhone, isEdit, isMemberMode, selectedCustomer]);
 
   const chooseCustomer = (customer: CustomerSearchResult) => {
     setSelectedCustomer(customer);
@@ -350,7 +356,10 @@ export function AppointmentModal({
     try {
       let res: Response;
       if (isEdit) {
-        res = await fetch(`/api/admin/appointments/${appointment!.id}`, {
+        const editUrl = isMemberMode
+          ? `/api/member/agenda/${appointment!.id}`
+          : `/api/admin/appointments/${appointment!.id}`;
+        res = await fetch(editUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -361,8 +370,11 @@ export function AppointmentModal({
           }),
         });
       } else {
+        const createUrl = isMemberMode
+          ? "/api/member/agenda"
+          : "/api/admin/appointments";
         const finalBookingMode = isMemberMode ? "NORMAL" : bookingMode;
-        res = await fetch("/api/admin/appointments", {
+        res = await fetch(createUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

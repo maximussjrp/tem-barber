@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { AppointmentStatus, AppointmentBookingMode, ComandaStatus } from "@prisma/client";
 
 // --- Hoisted Mock Declarations to satisfy Vitest hoisting constraints ---
-const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
+const { prismaMock, getOperationalStaffSessionMock } = vi.hoisted(() => ({
   prismaMock: {
     appointment: {
       count: vi.fn(),
@@ -34,11 +34,11 @@ const { prismaMock, getAdminSessionMock } = vi.hoisted(() => ({
       findMany: vi.fn(),
     },
   },
-  getAdminSessionMock: vi.fn(),
+  getOperationalStaffSessionMock: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ default: prismaMock }));
-vi.mock("@/lib/api-auth", () => ({ getAdminSession: getAdminSessionMock }));
+vi.mock("@/lib/operational-session", () => ({ getOperationalStaffSession: getOperationalStaffSessionMock }));
 
 import {
   computeClientMetrics,
@@ -633,13 +633,28 @@ describe("CRM 360 Client Metrics Logic Unit Tests", () => {
 describe("CRM 360 Client API Integration Tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getOperationalStaffSessionMock.mockResolvedValue({
+      error: null,
+      data: {
+        userId: "owner-user-1",
+        memberId: "owner-member-1",
+        barbershopId: "shop-1",
+        role: "OWNER",
+      },
+    });
   });
 
   // Rule 21: tenant A nao enxerga dados tenant B.
   // Rule 22: cliente inexistente/outro tenant retorna resposta segura.
   it("retorna 404 seguro para cliente sem historico ou pertencente a outra barbearia (tenant)", async () => {
-    getAdminSessionMock.mockResolvedValue({
-      data: { barbershopId: "shop-tenant-A" },
+    getOperationalStaffSessionMock.mockResolvedValue({
+      error: null,
+      data: {
+        userId: "owner-user-1",
+        memberId: "owner-member-1",
+        barbershopId: "shop-tenant-A",
+        role: "OWNER",
+      },
     });
 
     // Se o cliente nao tem agendamentos no tenant A
@@ -657,8 +672,14 @@ describe("CRM 360 Client API Integration Tests", () => {
 
   // Rule 23: rebook nao depende de nome/telefone em URL.
   it("nao exige nome ou telefone na URL de rebook/prefill", async () => {
-    getAdminSessionMock.mockResolvedValue({
-      data: { barbershopId: "shop-1" },
+    getOperationalStaffSessionMock.mockResolvedValue({
+      error: null,
+      data: {
+        userId: "owner-user-1",
+        memberId: "owner-member-1",
+        barbershopId: "shop-1",
+        role: "OWNER",
+      },
     });
 
     prismaMock.appointment.count.mockResolvedValue(1);

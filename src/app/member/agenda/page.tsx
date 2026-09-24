@@ -343,7 +343,7 @@ function AgendaContent() {
       const [agendaRes, blocksRes, servicesRes] = await Promise.all([
         fetch(`/api/member/agenda?date=${date}`),
         fetch(`/api/member/schedule-blocks?date=${date}`),
-        fetch("/api/admin/services?activeOnly=true"),
+        fetch("/api/member/services"),
       ]);
 
       if (agendaRes.ok) {
@@ -353,6 +353,7 @@ function AgendaContent() {
         } else {
           setAppointments(data.appointments ?? []);
           if (data.barbershopName) setBarbershopName(data.barbershopName);
+          if (data.services?.length) setServices(data.services);
         }
       }
 
@@ -530,6 +531,7 @@ function AgendaContent() {
       {cancelTarget && (
         <CancelModal
           appointment={cancelTarget}
+          mode="member"
           onClose={() => setCancelTarget(null)}
           onCancelled={(a) => {
             handleStatusChange(a.id, "CANCELLED");

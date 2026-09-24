@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma, MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
 import {
@@ -7,7 +8,7 @@ import {
   type TenantMemberRole,
 } from "@/lib/team/member-management";
 import { isValidCpf } from "@/lib/utils";
-import { getBrazilianPhoneVariants, normalizeBrazilianMobilePhone, validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
+import { getBrazilianPhoneVariants } from "@/lib/phone/br-phone";
 
 async function findMember(id: string, barbershopId: string) {
   const m = await prisma.barbershopMember.findUnique({
@@ -191,13 +192,25 @@ export async function PUT(
       }
     }
 
-    const executeUpdate = async (tx: typeof prisma) => {
-      // Atualizar dados do usuário se algum foi informado
+    if (!member.isActive && (name !== undefined || phone !== undefined || cpf !== undefined || email !== undefined)) {
+      return NextResponse.json(
+        {
+          error: "INACTIVE_MEMBER_IMMUTABLE_USER",
+          message: "Não é permitido alterar dados cadastrais globais de um colaborador inativo.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const executeUpdate = async (tx: Prisma.TransactionClient | typeof prisma) => {
+      // Atualizar dados do usuário se algum foi informado e membro estiver ativo
       const userUpdateData: { name?: string; phone?: string; cpf?: string; email?: string | null } = {};
-      if (name !== undefined) userUpdateData.name = name.trim();
-      if (cleanPhone !== undefined) userUpdateData.phone = cleanPhone;
-      if (cleanCpf !== undefined) userUpdateData.cpf = cleanCpf;
-      if (cleanEmail !== undefined) userUpdateData.email = cleanEmail;
+      if (member.isActive) {
+        if (name !== undefined) userUpdateData.name = name.trim();
+        if (cleanPhone !== undefined) userUpdateData.phone = cleanPhone;
+        if (cleanCpf !== undefined) userUpdateData.cpf = cleanCpf;
+        if (cleanEmail !== undefined) userUpdateData.email = cleanEmail;
+      }
 
       if (Object.keys(userUpdateData).length > 0) {
         await tx.user.update({
@@ -207,7 +220,7 @@ export async function PUT(
       }
 
       // Atualizar dados do member
-      const memberUpdateData: { role?: any; bio?: string | null; careerLevelId?: string | null } = {};
+      const memberUpdateData: { role?: MemberRole; bio?: string | null; careerLevelId?: string | null } = {};
       if (role && member.role !== "OWNER") memberUpdateData.role = role;
       if (bio !== undefined) memberUpdateData.bio = bio?.trim() || null;
       if (updatedCareerLevelId !== undefined) memberUpdateData.careerLevelId = updatedCareerLevelId;
@@ -227,7 +240,7 @@ export async function PUT(
     };
 
     const updated = typeof prisma.$transaction === "function"
-      ? await prisma.$transaction((tx) => executeUpdate(tx as any))
+      ? await prisma.$transaction((tx) => executeUpdate(tx))
       : await executeUpdate(prisma);
 
     return NextResponse.json(updated);
@@ -275,6 +288,42 @@ export async function PATCH(
       { requestedIsActive: body.isActive }
     );
 
+    // Multi-tenant check: if reactivating (false -> true), verify no other active membership exists
+    if (body.isActive === true && !member.isActive) {
+      const result = await prisma.$transaction(async (tx) => {
+        const lockKey = `team-membership:${member.userId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+
+        const activeInOther = await tx.barbershopMember.findFirst({
+          where: {
+            userId: member.userId,
+            barbershopId: { not: data!.barbershopId! },
+            isActive: true,
+          },
+        });
+
+        if (activeInOther) {
+          const conflictErr = Object.assign(
+            new Error("Este profissional já possui um vínculo ativo em outra barbearia."),
+            { code: "ACTIVE_MEMBERSHIP_CONFLICT", status: 409 }
+          );
+          throw conflictErr;
+        }
+
+        return await tx.barbershopMember.update({
+          where: { id },
+          data: { isActive: true },
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+            },
+          },
+        });
+      });
+
+      return NextResponse.json(result);
+    }
+
     const updated = await prisma.barbershopMember.update({
       where: { id },
       data: { isActive: body.isActive },
@@ -286,7 +335,14 @@ export async function PATCH(
     });
 
     return NextResponse.json(updated);
-  } catch (err) {
+  } catch (err: unknown) {
+    const errObj = err as { code?: string; message?: string } | null;
+    if (errObj && typeof errObj === "object" && errObj.code === "ACTIVE_MEMBERSHIP_CONFLICT") {
+      return NextResponse.json(
+        { error: "ACTIVE_MEMBERSHIP_CONFLICT", message: errObj.message },
+        { status: 409 }
+      );
+    }
     if (err instanceof MemberManagementError) {
       return NextResponse.json(
         { error: err.code, message: err.message },

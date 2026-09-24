@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import prisma from "@/lib/prisma";
 import { getPublicAppUrl } from "@/lib/public-url";
 import { computeClientMetrics } from "@/lib/clients/client-metrics";
@@ -23,7 +23,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error: sessionError, data: sessionData } = await getAdminSession();
+  const { error: sessionError, data: sessionData } = await getOperationalStaffSession({
+    requiredPermission: "CLIENTS_VIEW",
+  });
   if (sessionError) return sessionError;
 
   const barbershopId = sessionData!.barbershopId;
@@ -224,7 +226,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error: sessionError, data: sessionData } = await getAdminSession();
+  const { error: sessionError, data: sessionData } = await getOperationalStaffSession({
+    requiredPermission: "CLIENTS_MANAGE",
+  });
   if (sessionError) return sessionError;
 
   const barbershopId = sessionData!.barbershopId;

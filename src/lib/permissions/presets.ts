@@ -81,7 +81,10 @@ export function getDefaultPermissionsForRole(role: string): PermissionMap {
   if (preset) {
     return { ...preset };
   }
-  return { ...ROLE_PRESETS.BARBER };
+  return ALL_PERMISSION_KEYS.reduce((acc, key) => {
+    acc[key] = false;
+    return acc;
+  }, {} as PermissionMap);
 }
 
 export const ROLE_DEFAULT_PRESETS = ROLE_PRESETS;

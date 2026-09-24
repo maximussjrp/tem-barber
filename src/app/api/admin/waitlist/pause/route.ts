@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/api-auth";
+import { NextResponse } from "next/server";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import prisma from "@/lib/prisma";
 import { canManageWaitlist } from "@/lib/waitlist/permissions";
 
 // POST /api/admin/waitlist/pause — pause active OPEN waitlist session
-export async function POST(request: NextRequest) {
-  const auth = await getAdminSession();
+export async function POST(_request?: Request) {
+  void _request;
+  const auth = await getOperationalStaffSession({ requiredPermission: "WAITLIST_MANAGE" });
   if (auth.error) return auth.error;
   if (!auth.data?.barbershopId) {
     return NextResponse.json({ error: "Sem barbearia vinculada." }, { status: 403 });

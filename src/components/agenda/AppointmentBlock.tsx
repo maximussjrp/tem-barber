@@ -178,7 +178,8 @@ export function AppointmentBlock({
   const primaryStatus = getPrimaryStatusPresentation(appointmentWithEffectiveWhatsapp);
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(uiStatus);
   const canConfirmWhatsapp =
-    currentRole === "OWNER" || currentRole === "MANAGER" || currentRole === "RECEPTIONIST";
+    mode !== "member" &&
+    (currentRole === "OWNER" || currentRole === "MANAGER" || currentRole === "RECEPTIONIST");
   const quantitiesMap = extractServiceQuantities(appointment.notes);
   const serviceNames = appointment.services
     ?.map((s) => {
@@ -512,39 +513,41 @@ export function AppointmentBlock({
                   </div>
                 </div>
 
-                {canConfirmWhatsapp ? (
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={whatsappToken}
-                      onChange={(e) => setWhatsappToken(e.target.value)}
-                      placeholder="TB-000000"
-                      title="Código de confirmação WhatsApp"
-                      className={INPUT_CLASS}
-                    />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleConfirmWhatsapp("TOKEN")}
-                        disabled={confirmingWhatsapp}
-                        className="btn-gold px-4 py-3 text-sm whitespace-nowrap disabled:opacity-50"
-                      >
-                        {confirmingWhatsapp ? "Confirmando..." : "Confirmar com código"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowManualConfirmDialog(true)}
-                        disabled={confirmingWhatsapp}
-                        className="px-4 py-3 text-sm rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
-                      >
-                        Confirmar sem código
-                      </button>
+                {mode !== "member" && (
+                  canConfirmWhatsapp ? (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={whatsappToken}
+                        onChange={(e) => setWhatsappToken(e.target.value)}
+                        placeholder="TB-000000"
+                        title="Código de confirmação WhatsApp"
+                        className={INPUT_CLASS}
+                      />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmWhatsapp("TOKEN")}
+                          disabled={confirmingWhatsapp}
+                          className="btn-gold px-4 py-3 text-sm whitespace-nowrap disabled:opacity-50"
+                        >
+                          {confirmingWhatsapp ? "Confirmando..." : "Confirmar com código"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowManualConfirmDialog(true)}
+                          disabled={confirmingWhatsapp}
+                          className="px-4 py-3 text-sm rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)] transition-colors disabled:opacity-50"
+                        >
+                          Confirmar sem código
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-[var(--text-muted)]">
-                    Você não tem permissão para confirmar este agendamento.
-                  </p>
+                  ) : (
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Você não tem permissão para confirmar este agendamento.
+                    </p>
+                  )
                 )}
 
                 {whatsappSuccess && (
