@@ -207,6 +207,7 @@ async function runTenantAccessGrantsRealPgTests() {
     throw new Error(`❌ Esperado um false e um true em alreadyExisted, obtido: ${JSON.stringify(alreadyExistedFlags)}`);
   }
   console.log("✔ Concorrência same-key validada: ROW_COUNT=1, replay consistente!");
+  console.log("✔ SAME_KEY_CONCURRENCY=PASS");
 
   // 4. Different-key mesmo tenant (Sem sobreposição / empilhamento)
   console.log("-> 4. Testando concorrência different-key no mesmo tenant...");
@@ -242,11 +243,12 @@ async function runTenantAccessGrantsRealPgTests() {
     );
   }
   console.log("✔ Concorrência different-key validada: ROW_COUNT=2, sem sobreposição (segundo começa após fim do primeiro)!");
+  console.log("✔ DIFFERENT_KEY_NO_OVERLAP=PASS");
 
   // 5. Tenant isolation
   console.log("-> 5. Testando isolamento entre tenants A e B...");
   const keyTenantB = `tenant-b-grant-${timestamp}`;
-  const resB = await createTenantAccessGrant({
+  const resTenantB = await createTenantAccessGrant({
     barbershopId: barbershopB.id,
     daysGranted: 30,
     reason: "Grant exclusivo do Tenant B",
@@ -260,13 +262,14 @@ async function runTenantAccessGrantsRealPgTests() {
   if (grantsA.some((g) => g.barbershopId === barbershopB.id) || grantsB.some((g) => g.barbershopId === barbershopA.id)) {
     throw new Error("❌ Vazamento de grants entre tenants!");
   }
-  if (!grantsB.some((g) => g.id === resB.grant.id)) {
+  if (!grantsB.some((g) => g.id === resTenantB.grant.id)) {
     throw new Error("❌ Grant de Tenant B não localizado!");
   }
   console.log("✔ Isolamento entre tenants confirmado: nenhum leak de dados!");
+  console.log("✔ TENANT_ISOLATION=PASS");
 
-  // 6. Revocation
-  console.log("-> 6. Testando revogação no banco real...");
+  // 6. Sequential Revocation and Replay
+  console.log("-> 6. Testando revogação sequencial e replay no banco real...");
   const revokeRes = await revokeTenantAccessGrant({
     grantId: resX.grant.id,
     reason: "Revogado comercialmente",
@@ -285,13 +288,13 @@ async function runTenantAccessGrantsRealPgTests() {
 
   // Tenant B continua intacto
   const grantBAfterRevoke = await prisma.tenantAccessGrant.findUniqueOrThrow({
-    where: { id: resB.grant.id },
+    where: { id: resTenantB.grant.id },
   });
   if (grantBAfterRevoke.revokedAt) {
     throw new Error("❌ Grant de Tenant B foi indevidamente revogado!");
   }
 
-  // Replay de revogação
+  // Replay de revogação sequencial
   const replayRevokeRes = await revokeTenantAccessGrant({
     grantId: resX.grant.id,
     reason: "Outro motivo qualquer",
@@ -307,9 +310,106 @@ async function runTenantAccessGrantsRealPgTests() {
     throw new Error("❌ Replay de revogação sobrescreveu auditoria original!");
   }
   console.log("✔ Revogação e replay no banco real validados com sucesso!");
+  console.log("✔ SEQUENTIAL_REVOKE_REPLAY=PASS");
 
-  // 7. Financial Snapshot Immutability
-  console.log("-> 7. Verificando imutabilidade dos campos financeiros de TenantSubscription...");
+  // 7. Concurrent Revocation
+  console.log("-> 7. Testando concorrência de revogação simultânea (CONCURRENT_REVOKE)...");
+  const concurrentGrantKey = `concurrent-revoke-grant-${timestamp}`;
+  const concurrentGrantRes = await createTenantAccessGrant({
+    barbershopId: barbershopA.id,
+    daysGranted: 15,
+    reason: "Grant vigente exclusivo para teste concorrente de revogação",
+    idempotencyKey: concurrentGrantKey,
+    actorUserId: actorId,
+  });
+
+  const concurrentGrantId = concurrentGrantRes.grant.id;
+
+  const actorA = "actor-concurrent-a";
+  const emailA = "actor-a@test.com";
+  const reasonA = "Motivo concorrente A";
+
+  const actorB = "actor-concurrent-b";
+  const emailB = "actor-b@test.com";
+  const reasonB = "Motivo concorrente B";
+
+  const [resA, resB] = await Promise.all([
+    revokeTenantAccessGrant({
+      grantId: concurrentGrantId,
+      reason: reasonA,
+      actorUserId: actorA,
+      actorEmail: emailA,
+    }),
+    revokeTenantAccessGrant({
+      grantId: concurrentGrantId,
+      reason: reasonB,
+      actorUserId: actorB,
+      actorEmail: emailB,
+    }),
+  ]);
+
+  const winnersCount = (resA.alreadyRevoked === false ? 1 : 0) + (resB.alreadyRevoked === false ? 1 : 0);
+  const replaysCount = (resA.alreadyRevoked === true ? 1 : 0) + (resB.alreadyRevoked === true ? 1 : 0);
+
+  if (winnersCount !== 1 || replaysCount !== 1) {
+    throw new Error(
+      `❌ Concorrência de revogação falhou! winners=${winnersCount}, replays=${replaysCount} (resA.alreadyRevoked=${resA.alreadyRevoked}, resB.alreadyRevoked=${resB.alreadyRevoked})`
+    );
+  }
+
+  console.log("✔ CONCURRENT_REVOKE_WINNERS=1");
+  console.log("✔ CONCURRENT_REVOKE_REPLAYS=1");
+
+  // Identificar vencedor e perdedor dinamicamente
+  const winner = resA.alreadyRevoked === false
+    ? { res: resA, actor: actorA, email: emailA, reason: reasonA }
+    : { res: resB, actor: actorB, email: emailB, reason: reasonB };
+
+  const loser = resA.alreadyRevoked === true
+    ? { res: resA, actor: actorA, email: emailA, reason: reasonA }
+    : { res: resB, actor: actorB, email: emailB, reason: reasonB };
+
+  // Consultar banco novamente
+  const finalGrantRow = await prisma.tenantAccessGrant.findUniqueOrThrow({
+    where: { id: concurrentGrantId },
+  });
+
+  if (!finalGrantRow.revokedAt) {
+    throw new Error("❌ finalGrantRow.revokedAt está nulo após revogação!");
+  }
+
+  if (
+    finalGrantRow.revocationReason !== winner.reason ||
+    finalGrantRow.revokedByUserId !== winner.actor ||
+    finalGrantRow.revokedByEmail !== winner.email
+  ) {
+    throw new Error(
+      `❌ Auditoria final não corresponde ao vencedor! Esperado actor=${winner.actor}, reason=${winner.reason}, obtido actor=${finalGrantRow.revokedByUserId}, reason=${finalGrantRow.revocationReason}`
+    );
+  }
+
+  if (
+    finalGrantRow.revocationReason === loser.reason ||
+    finalGrantRow.revokedByUserId === loser.actor ||
+    finalGrantRow.revokedByEmail === loser.email
+  ) {
+    throw new Error("❌ Auditoria do perdedor sobrescreveu o vencedor!");
+  }
+  console.log("✔ LOSER_OVERWROTE_AUDIT=NO");
+
+  if (
+    !winner.res.grant.revokedAt ||
+    finalGrantRow.revokedAt.getTime() !== winner.res.grant.revokedAt.getTime()
+  ) {
+    throw new Error(
+      `❌ Timestamp de revogação divergente! final=${finalGrantRow.revokedAt.toISOString()}, winner=${winner.res.grant.revokedAt?.toISOString()}`
+    );
+  }
+  console.log("✔ REVOCATION_TIMESTAMP_PRESERVED=YES");
+  console.log("✔ CONCURRENT_REVOKE=PASS");
+
+  // 8. Financial Snapshot Immutability
+  console.log("-> 8. Verificando imutabilidade dos campos financeiros de TenantSubscription...");
   const subAfter = await prisma.tenantSubscription.findUniqueOrThrow({
     where: { barbershopId: barbershopA.id },
   });
@@ -333,7 +433,9 @@ async function runTenantAccessGrantsRealPgTests() {
   if (beforeStr !== afterStr) {
     throw new Error(`❌ TenantSubscription foi alterado! Antes: ${beforeStr}, Depois: ${afterStr}`);
   }
-  console.log("✔ Snapshot financeiro de TenantSubscription 100% INTACTO!");
+  console.log("✔ TENANT_SUBSCRIPTION_FINANCIAL_SNAPSHOT=UNCHANGED");
+  console.log("✔ FINANCIAL_SNAPSHOT=PASS");
+  console.log("✔ REAL_PG=PASS");
 
   console.log("=== TODAS AS PROVAS REAL-PG DA ETAPA 2 PASSARAM COM SUCESSO! ===");
 }

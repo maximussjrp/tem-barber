@@ -395,27 +395,37 @@ export async function revokeTenantAccessGrantInTransaction(
     now?: Date;
   }
 ): Promise<{ grant: AccessGrantRecord; alreadyRevoked: boolean }> {
-  const now = params.now ?? new Date();
-
-  const grant = await tx.tenantAccessGrant.findUnique({
+  const initialGrant = await tx.tenantAccessGrant.findUnique({
     where: { id: params.grantId },
   });
 
-  if (!grant) {
+  if (!initialGrant) {
     throw new AccessGrantError("ACCESS_GRANT_NOT_FOUND", "Acesso cortesia não encontrado.", 404);
   }
 
-  // Advisory lock no tenant do grant
-  const lockKey = `tenant-access-grant:${grant.barbershopId}`;
+  // Advisory lock no tenant do grant (leitura inicial para descoberta do lock)
+  const lockKey = `tenant-access-grant:${initialGrant.barbershopId}`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
 
-  // Se já revogado: replay seguro sem sobrescrever auditoria
-  if (grant.revokedAt) {
-    return { grant: grant as AccessGrantRecord, alreadyRevoked: true };
+  // Releitura obrigatória pós-lock para garantir snapshot atualizado
+  const freshGrant = await tx.tenantAccessGrant.findUnique({
+    where: { id: params.grantId },
+  });
+
+  if (!freshGrant) {
+    throw new AccessGrantError("ACCESS_GRANT_NOT_FOUND", "Acesso cortesia não encontrado.", 404);
   }
 
+  // Se já revogado: replay seguro sem sobrescrever auditoria original
+  if (freshGrant.revokedAt) {
+    return { grant: freshGrant as AccessGrantRecord, alreadyRevoked: true };
+  }
+
+  // Timestamp de expiração calculado DEPOIS do lock e da releitura (se não fornecido explicitamente)
+  const effectiveNow = params.now ?? new Date();
+
   // Se grant já encerrou naturalmente e não estava revogado: erro 409
-  if (grant.endsAt.getTime() <= now.getTime()) {
+  if (freshGrant.endsAt.getTime() <= effectiveNow.getTime()) {
     throw new AccessGrantError(
       "ACCESS_GRANT_ALREADY_ENDED",
       "Não é possível revogar uma cortesia cujo período já foi encerrado.",
@@ -433,9 +443,9 @@ export async function revokeTenantAccessGrantInTransaction(
   }
 
   const updated = await tx.tenantAccessGrant.update({
-    where: { id: grant.id },
+    where: { id: freshGrant.id },
     data: {
-      revokedAt: now,
+      revokedAt: effectiveNow,
       revokedByUserId: params.actorUserId,
       revokedByEmail: params.actorEmail ?? null,
       revocationReason,

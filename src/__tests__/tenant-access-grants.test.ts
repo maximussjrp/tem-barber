@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import {
   normalizeReason,
   computeGrantRequestHash,
   calculateGrantWindow,
   deriveTenantEffectiveAccess,
+  revokeTenantAccessGrantInTransaction,
   AccessGrantInput,
 } from "@/lib/billing/access-grants";
 import { SubscriptionInput } from "@/lib/billing/subscription-access";
@@ -434,6 +436,154 @@ describe("Domain B — Tenant Access Grants Pure Logic (tenant-access-grants.tes
       const shouldRedirect = !isSubscriptionActive(subWithCourtesy);
       expect(shouldRedirect).toBe(false);
       expect(isSubscriptionActive(subWithCourtesy)).toBe(true);
+    });
+  });
+
+  describe("5. revokeTenantAccessGrantInTransaction concurrency & post-lock re-read", () => {
+    it("POST_LOCK_REREAD_TEST: re-reads grant post-lock, detects concurrent revocation, preserves winner audit, and avoids update (STALE_SNAPSHOT_NOT_USED)", async () => {
+      const initialGrant = {
+        id: "grant-race-1",
+        barbershopId: "shop-race-1",
+        startsAt: new Date(Date.now() - 3600000),
+        endsAt: new Date(Date.now() + 86400000 * 10),
+        daysGranted: 10,
+        reason: "Concessao comercial",
+        idempotencyKey: "key-race-1",
+        requestHash: "hash-1",
+        createdByUserId: "creator-user",
+        createdByEmail: "creator@barber.com",
+        revokedAt: null,
+        revokedByUserId: null,
+        revokedByEmail: null,
+        revocationReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const winnerRevokedAt = new Date("2026-09-24T12:00:00.000Z");
+      const postLockGrant = {
+        ...initialGrant,
+        revokedAt: winnerRevokedAt,
+        revokedByUserId: "winner",
+        revokedByEmail: "winner@barber.com",
+        revocationReason: "Primeiro motivo",
+      };
+
+      const callOrder: string[] = [];
+      const txMock = {
+        tenantAccessGrant: {
+          findUnique: vi.fn()
+            .mockImplementationOnce(async () => {
+              callOrder.push("findUnique:initial");
+              return initialGrant;
+            })
+            .mockImplementationOnce(async () => {
+              callOrder.push("findUnique:post-lock");
+              return postLockGrant;
+            }),
+          update: vi.fn().mockImplementation(async () => {
+            callOrder.push("update");
+            return postLockGrant;
+          }),
+        },
+        $executeRaw: vi.fn().mockImplementation(async () => {
+          callOrder.push("advisory_lock");
+          return 1;
+        }),
+      };
+
+      const result = await revokeTenantAccessGrantInTransaction(
+        txMock as unknown as Prisma.TransactionClient,
+        {
+          grantId: "grant-race-1",
+          reason: "Segundo motivo concorrente",
+          actorUserId: "loser",
+          actorEmail: "loser@barber.com",
+        }
+      );
+
+      // 1. Replay detectado no post-lock
+      expect(result.alreadyRevoked).toBe(true);
+
+      // 2. tx.tenantAccessGrant.update NÃO foi chamado
+      expect(txMock.tenantAccessGrant.update).not.toHaveBeenCalled();
+
+      // 3. Auditoria original do vencedor preservada (ORIGINAL_REVOCATION_AUDIT_PRESERVED=YES)
+      expect(result.grant.revocationReason).toBe("Primeiro motivo");
+      expect(result.grant.revokedByUserId).toBe("winner");
+      expect(result.grant.revokedByEmail).toBe("winner@barber.com");
+      expect(result.grant.revokedAt).toEqual(winnerRevokedAt);
+
+      // 4. Provar ordem conceitual: findUnique inicial -> advisory lock -> findUnique pós-lock -> decisão
+      expect(callOrder).toEqual([
+        "findUnique:initial",
+        "advisory_lock",
+        "findUnique:post-lock",
+      ]);
+
+      // 5. Chamadas de findUnique >= 2 (TENANT_ACCESS_GRANT_FIND_UNIQUE_CALLS>=2)
+      expect(txMock.tenantAccessGrant.findUnique).toHaveBeenCalledTimes(2);
+    });
+
+    it("executes update when grant remains active post-lock and records caller audit with effectiveNow", async () => {
+      const grantActive = {
+        id: "grant-normal-1",
+        barbershopId: "shop-normal-1",
+        startsAt: new Date(Date.now() - 3600000),
+        endsAt: new Date(Date.now() + 86400000 * 5),
+        daysGranted: 5,
+        reason: "Concessao normal",
+        idempotencyKey: "key-norm-1",
+        requestHash: "hash-norm",
+        createdByUserId: "creator",
+        createdByEmail: "creator@barber.com",
+        revokedAt: null,
+        revokedByUserId: null,
+        revokedByEmail: null,
+        revocationReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const txMock = {
+        tenantAccessGrant: {
+          findUnique: vi.fn()
+            .mockResolvedValueOnce(grantActive)
+            .mockResolvedValueOnce(grantActive),
+          update: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+            ...grantActive,
+            ...data,
+          })),
+        },
+        $executeRaw: vi.fn().mockResolvedValue(1),
+      };
+
+      const customNow = new Date("2026-09-24T12:30:00.000Z");
+      const result = await revokeTenantAccessGrantInTransaction(
+        txMock as unknown as Prisma.TransactionClient,
+        {
+          grantId: "grant-normal-1",
+          reason: "Cancelamento solicitado",
+          actorUserId: "admin-actor",
+          actorEmail: "admin@barber.com",
+          now: customNow,
+        }
+      );
+
+      expect(result.alreadyRevoked).toBe(false);
+      expect(txMock.tenantAccessGrant.findUnique).toHaveBeenCalledTimes(2);
+      expect(txMock.tenantAccessGrant.update).toHaveBeenCalledTimes(1);
+      expect(txMock.tenantAccessGrant.update).toHaveBeenCalledWith({
+        where: { id: "grant-normal-1" },
+        data: {
+          revokedAt: customNow,
+          revokedByUserId: "admin-actor",
+          revokedByEmail: "admin@barber.com",
+          revocationReason: "Cancelamento solicitado",
+        },
+      });
+      expect(result.grant.revocationReason).toBe("Cancelamento solicitado");
+      expect(result.grant.revokedByUserId).toBe("admin-actor");
     });
   });
 });
