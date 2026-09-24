@@ -4,6 +4,7 @@ import { prepareAppointmentCreatedNotifications } from "@/lib/push/events.server
 import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import {
   AppointmentConflictError,
   FitInNotAllowedError,
@@ -86,7 +87,7 @@ async function runSerializableTransaction<T>(
 }
 
 export async function GET(request: NextRequest) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "AGENDA_VIEW_ALL" });
   if (error) return error;
 
   const sp = request.nextUrl.searchParams;
@@ -349,7 +350,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "AGENDA_CREATE_ALL" });
   if (error) return error;
 
   let body: AdminAppointmentBody;

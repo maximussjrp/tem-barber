@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import { deleteScheduleBlock } from "@/lib/schedule-blocks";
 
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "AGENDA_BLOCK_ALL" });
   if (error) return error;
 
   const { id } = await params;
@@ -34,7 +34,7 @@ export async function DELETE(
     );
   }
 
-  await prisma.$transaction((tx) =>
+  await prisma.$transaction((tx: any) =>
     deleteScheduleBlock(tx, {
       barbershopId: data!.barbershopId!,
       timeOffId: id,

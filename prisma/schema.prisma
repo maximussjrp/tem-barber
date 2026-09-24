@@ -78,6 +78,9 @@ model User {
   refundedTipRefunds                  TipRefund[]                         @relation("TipRefundedByUser")
   createdTipPayouts                   TipPayout[]                         @relation("TipPayoutCreatedByUser")
   createdTipPayoutReversals           TipPayoutReversal[]                 @relation("TipPayoutReversalCreatedByUser")
+  staffAccessTokens                   StaffAccessToken[]                  @relation("UserStaffAccessTokens")
+  createdStaffAccessTokens            StaffAccessToken[]                  @relation("CreatedStaffAccessTokens")
+  permissionOverridesUpdated          MemberPermissionOverride[]          @relation("PermissionOverrideUpdatedBy")
 
   @@map("users")
 }
@@ -182,6 +185,8 @@ model Barbershop {
   tipRefunds                         TipRefund[]
   tipPayouts                         TipPayout[]
   tipPayoutReversals                 TipPayoutReversal[]
+  staffAccessTokens                  StaffAccessToken[]
+  memberPermissionOverrides          MemberPermissionOverride[]
 
   @@map("barbershops")
 }
@@ -207,6 +212,7 @@ enum MemberRole {
   OWNER // Dono da barbearia (acesso total administrativo)
   MANAGER // Gerente (acesso operacional e financeiro básico)
   BARBER // Barbeiro / Colaborador (vê apenas a própria agenda)
+  RECEPTIONIST // Recepcionista (agenda global, clientes, comandas)
 }
 
 model BarbershopMember {
@@ -255,6 +261,7 @@ model BarbershopMember {
   receivedTipEntries                TipEntry[]                          @relation("TipMember")
   tipPayouts                        TipPayout[]                         @relation("TipPayoutMember")
   allocatedCheckoutTips             CheckoutAllocation[]                @relation("CheckoutTipMember")
+  permissionOverrides               MemberPermissionOverride[]
 
   careerLevelId String?      @map("career_level_id")
   careerLevel   CareerLevel? @relation(fields: [careerLevelId], references: [id], onDelete: SetNull)
@@ -3071,4 +3078,52 @@ model TipPayoutReversalAllocation {
   @@index([reversalId])
   @@index([tipEntryId])
   @@map("tip_payout_reversal_allocations")
+}
+
+// ----------------------------------------------------
+// 26. STAFF ACCESS TOKENS & MEMBER PERMISSIONS
+// ----------------------------------------------------
+
+enum StaffAccessTokenPurpose {
+  INVITE
+  PASSWORD_RESET
+}
+
+model StaffAccessToken {
+  id              String                   @id @default(uuid())
+  barbershopId    String                   @map("barbershop_id")
+  userId          String                   @map("user_id")
+  tokenHash       String                   @unique @map("token_hash")
+  purpose         StaffAccessTokenPurpose
+  expiresAt       DateTime                 @map("expires_at")
+  usedAt          DateTime?                @map("used_at")
+  createdByUserId String?                  @map("created_by_user_id")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  barbershop      Barbershop               @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  user            User                     @relation("UserStaffAccessTokens", fields: [userId], references: [id], onDelete: Cascade)
+  createdByUser   User?                    @relation("CreatedStaffAccessTokens", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([barbershopId, userId])
+  @@index([purpose, expiresAt])
+  @@map("staff_access_tokens")
+}
+
+model MemberPermissionOverride {
+  id              String           @id @default(uuid())
+  barbershopId    String           @map("barbershop_id")
+  memberId        String           @map("member_id")
+  permissionKey   String           @map("permission_key")
+  allowed         Boolean
+  updatedByUserId String?          @map("updated_by_user_id")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  barbershop      Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member          BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  updatedByUser   User?            @relation("PermissionOverrideUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, permissionKey])
+  @@index([barbershopId, memberId])
+  @@map("member_permission_overrides")
 }

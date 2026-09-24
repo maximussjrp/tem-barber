@@ -4,6 +4,7 @@ import { prepareAppointmentCancelledByStaffNotifications } from "@/lib/push/even
 import { deliverCreatedNotifications } from "@/lib/push/delivery.server";
 import { Prisma } from "@prisma/client";
 import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import {
   AppointmentConflictError,
   InvalidServiceSelectionError,
@@ -84,7 +85,9 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({
+    requiredPermission: "AGENDA_VIEW_ALL",
+  });
   if (error) return error;
 
   const { id } = await params;
@@ -132,7 +135,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({
+    requiredPermission: "AGENDA_EDIT_ALL",
+  });
   if (error) return error;
 
   const { id } = await params;
@@ -331,7 +336,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({
+    requiredPermission: "AGENDA_EDIT_ALL",
+  });
   if (error) return error;
 
   const { id } = await params;

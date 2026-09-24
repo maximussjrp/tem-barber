@@ -2,44 +2,34 @@
 
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { todayIsoBR, formatHeaderDate, formatAppointmentDateTimeForMessage } from "@/lib/time-utils";
-import { formatWhatsAppPhone, generateWhatsAppMessage, generateWhatsAppLink } from "@/lib/whatsapp";
+import { useSession } from "next-auth/react";
+import {
+  todayIsoBR,
+  formatHeaderDate,
+  formatAppointmentDateTimeForMessage,
+} from "@/lib/time-utils";
+import {
+  formatWhatsAppPhone,
+  generateWhatsAppMessage,
+  generateWhatsAppLink,
+} from "@/lib/whatsapp";
 import { extractServiceQuantities } from "@/lib/appointments/notes-metadata";
+import {
+  Appointment,
+  AppointmentModal,
+  CalendarGrid,
+  CancelModal,
+  getTodayStr,
+  getWeekDays,
+  Member,
+  NewAppointmentInitialState,
+  ScheduleBlock,
+  ScheduleBlockDetailsModal,
+  Service,
+} from "@/components/agenda";
 import { CheckoutModal } from "./checkout-modal";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-interface AppointmentService {
-  serviceId?: string;
-  service: { name: string; durationMin: number };
-  priceApplied: string;
-}
-
-interface Appointment {
-  id: string;
-  dateTime: string;
-  totalPrice: string;
-  durationMin: number;
-  status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
-  notes: string | null;
-  customer: { name: string; phone: string };
-  barbershop?: { name: string };
-  services: AppointmentService[];
-  operationalState?: "ACTIVE" | "AWAITING_PAYMENT" | "COMPLETED";
-  productionValue?: number;
-}
-
-interface ScheduleBlock {
-  id: string;
-  startDate: string;
-  endDate: string;
-  reason: string | null;
-  allDay: boolean;
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<Appointment["status"], string> = {
+const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pendente",
   CONFIRMED: "Confirmado",
   COMPLETED: "Concluído",
@@ -47,7 +37,7 @@ const STATUS_LABEL: Record<Appointment["status"], string> = {
   NO_SHOW: "Não compareceu",
 };
 
-const STATUS_CLASS: Record<Appointment["status"], string> = {
+const STATUS_CLASS: Record<string, string> = {
   PENDING: "bg-amber-950/50 text-amber-400 border border-amber-800/60",
   CONFIRMED: "bg-sky-950/50 text-sky-400 border border-sky-800/60",
   COMPLETED: "bg-emerald-950/50 text-emerald-400 border border-emerald-800/60",
@@ -62,7 +52,6 @@ function formatTime(isoString: string) {
 
 function formatDateDisplay(dateStr: string) {
   const todayStr = todayIsoBR();
-
   const [ty, tm, td] = todayStr.split("-").map(Number);
   const todayObj = new Date(Date.UTC(ty, tm - 1, td));
 
@@ -84,11 +73,6 @@ function formatDateDisplay(dateStr: string) {
   return { label: weekday.charAt(0).toUpperCase() + weekday.slice(1), sub: formatted };
 }
 
-function getTodayStr() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
 function shiftDate(dateStr: string, days: number) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d + days));
@@ -100,7 +84,7 @@ function formatBlockPeriod(block: ScheduleBlock) {
   return `${formatTime(block.startDate)} - ${formatTime(block.endDate)}`;
 }
 
-// ─── Appointment Card ─────────────────────────────────────────────────────────
+// ─── Appointment Card (List View) ──────────────────────────────────────────
 
 function AppointmentCard({
   appointment,
@@ -146,9 +130,12 @@ function AppointmentCard({
       if (res.ok) {
         const result = await res.json();
         await onCheckoutSuccess();
-        // Show toast/notification
-        const message = result.message || (mode === "pay_now" ? "Atendimento finalizado e pagamento registrado." : "Atendimento concluído. Pagamento pendente no caixa.");
-        alert(message); // TODO: replace with toast notification
+        const message =
+          result.message ||
+          (mode === "pay_now"
+            ? "Atendimento finalizado e pagamento registrado."
+            : "Atendimento concluído. Pagamento pendente no caixa.");
+        alert(message);
       } else {
         const error = await res.json();
         alert(`Erro: ${error.message || error.error}`);
@@ -159,16 +146,18 @@ function AppointmentCard({
   };
 
   const quantitiesMap = extractServiceQuantities(appointment.notes);
-  const serviceNames = appointment.services.map((s) => {
-    const qty = quantitiesMap[s.serviceId ?? ""] ?? 1;
-    return qty > 1 ? `${s.service.name} x${qty}` : s.service.name;
-  }).join(", ");
+  const serviceNames = (appointment.services || [])
+    .map((s) => {
+      const qty = quantitiesMap[s.serviceId ?? s.service?.id] ?? 1;
+      return qty > 1 ? `${s.service?.name} x${qty}` : s.service?.name;
+    })
+    .join(", ");
   const endTime = (() => {
     const start = new Date(appointment.dateTime);
     start.setUTCMinutes(start.getUTCMinutes() + appointment.durationMin);
     return start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
   })();
-  const price = parseFloat(appointment.totalPrice).toLocaleString("pt-BR", {
+  const price = parseFloat(appointment.totalPrice || "0").toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
   });
@@ -176,39 +165,41 @@ function AppointmentCard({
   const isTerminal = ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(appointment.status);
 
   // Lógica de Lembrete WhatsApp
-  const formattedPhone = formatWhatsAppPhone(appointment.customer.phone);
+  const formattedPhone = formatWhatsAppPhone(appointment.customer?.phone);
   const { date: waDate, time: waTime } = formatAppointmentDateTimeForMessage(appointment.dateTime);
   const message = generateWhatsAppMessage(
-    appointment.customer.name,
+    appointment.customer?.name || "Cliente",
     appointment.barbershop?.name || "Barbearia",
     waDate,
     waTime,
     serviceNames
   );
-  const waLink = formattedPhone ? generateWhatsAppLink(appointment.customer.phone, message) : null;
+  const waLink = formattedPhone ? generateWhatsAppLink(appointment.customer?.phone, message) : null;
 
   return (
     <div
       className={`rounded-xl border p-4 space-y-3 transition-opacity ${
-        isTerminal ? "opacity-60" : "border-stone-800 bg-stone-900/50"
-      } ${isTerminal ? "border-stone-800/50 bg-stone-900/30" : ""}`}
+        isTerminal ? "opacity-60 border-stone-800/50 bg-stone-900/30" : "border-stone-800 bg-stone-900/50"
+      }`}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          {/* Time pill */}
           <div className="shrink-0 text-center bg-stone-800 rounded-lg px-3 py-1.5 min-w-[64px]">
             <p className="text-sm font-bold text-stone-100 tabular-nums">{formatTime(appointment.dateTime)}</p>
             <p className="text-[10px] text-stone-500 tabular-nums">{endTime}</p>
           </div>
-          {/* Client */}
           <div>
-            <p className="text-sm font-semibold text-stone-100">{appointment.customer.name}</p>
-            <p className="text-xs text-stone-500">{appointment.customer.phone}</p>
+            <p className="text-sm font-semibold text-stone-100">{appointment.customer?.name}</p>
+            <p className="text-xs text-stone-500">{appointment.customer?.phone}</p>
           </div>
         </div>
-        <span className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS_CLASS[appointment.status]}`}>
-          {STATUS_LABEL[appointment.status]}
+        <span
+          className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full ${
+            STATUS_CLASS[appointment.status] || "bg-stone-800 text-stone-300"
+          }`}
+        >
+          {STATUS_LABEL[appointment.status] || appointment.status}
         </span>
       </div>
 
@@ -232,9 +223,7 @@ function AppointmentCard({
       {!isTerminal && (
         <div className="pt-2 border-t border-stone-800 space-y-2">
           {!formattedPhone ? (
-            <p className="text-xs text-stone-600 italic">
-              Cliente sem telefone cadastrado
-            </p>
+            <p className="text-xs text-stone-600 italic">Cliente sem telefone cadastrado</p>
           ) : (
             <a
               href={waLink || "#"}
@@ -242,7 +231,9 @@ function AppointmentCard({
               rel="noopener noreferrer"
               className="w-full text-center text-xs font-semibold px-3 py-2 rounded-lg flex items-center justify-center gap-1.5 transition-all bg-transparent text-stone-300 hover:bg-stone-800 border border-stone-800"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.458 5.706 1.459h.008c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.458 5.706 1.459h.008c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+              </svg>
               Enviar Lembrete por WhatsApp
             </a>
           )}
@@ -298,6 +289,7 @@ function AppointmentCard({
           )}
         </div>
       )}
+
       <CheckoutModal
         appointment={appointment}
         isOpen={checkoutOpen}
@@ -308,18 +300,35 @@ function AppointmentCard({
   );
 }
 
-// ─── Agenda Content (needs useSearchParams → wrapped in Suspense) ─────────────
+// ─── Agenda Content ─────────────────────────────────────────────────────────
 
 function AgendaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
   const dateParam = searchParams.get("date");
   const today = getTodayStr();
   const currentDate = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : today;
 
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlock[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [barbershopName, setBarbershopName] = useState("Tem Barber");
   const [loading, setLoading] = useState(true);
+
+  // Modals state
+  const [editTarget, setEditTarget] = useState<Appointment | null | "new">(null);
+  const [newAppointmentInitial, setNewAppointmentInitial] =
+    useState<NewAppointmentInitialState | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+  const [checkoutTarget, setCheckoutTarget] = useState<Appointment | null>(null);
+  const [selectedScheduleBlock, setSelectedScheduleBlock] = useState<{
+    block: ScheduleBlock;
+    memberName: string;
+  } | null>(null);
+
+  // Form de bloqueio rápido da própria agenda
   const [blockAllDay, setBlockAllDay] = useState(false);
   const [blockStartTime, setBlockStartTime] = useState("10:00");
   const [blockEndTime, setBlockEndTime] = useState("11:00");
@@ -331,16 +340,52 @@ function AgendaContent() {
   const fetchAppointments = useCallback(async (date: string) => {
     setLoading(true);
     try {
-      const [agendaRes, blocksRes] = await Promise.all([
+      const [agendaRes, blocksRes, servicesRes] = await Promise.all([
         fetch(`/api/member/agenda?date=${date}`),
         fetch(`/api/member/schedule-blocks?date=${date}`),
+        fetch("/api/admin/services?activeOnly=true"),
       ]);
-      if (agendaRes.ok) setAppointments(await agendaRes.json());
-      if (blocksRes.ok) setScheduleBlocks(await blocksRes.json());
+
+      if (agendaRes.ok) {
+        const data = await agendaRes.json();
+        if (Array.isArray(data)) {
+          setAppointments(data);
+        } else {
+          setAppointments(data.appointments ?? []);
+          if (data.barbershopName) setBarbershopName(data.barbershopName);
+        }
+      }
+
+      if (blocksRes.ok) {
+        const blocksData = await blocksRes.json();
+        setScheduleBlocks(Array.isArray(blocksData) ? blocksData : []);
+      }
+
+      if (servicesRes.ok) {
+        const svcData = await servicesRes.json();
+        setServices(Array.isArray(svcData) ? svcData : (svcData.services ?? []));
+      }
     } finally {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) {
+        fetchAppointments(currentDate);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentDate, fetchAppointments]);
+
+  const navigate = (days: number) => {
+    const newDate = shiftDate(currentDate, days);
+    router.push(`/member/agenda?date=${newDate}`);
+  };
 
   const createScheduleBlock = async (event: FormEvent) => {
     event.preventDefault();
@@ -400,62 +445,236 @@ function AgendaContent() {
     }
   };
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchAppointments(currentDate);
-  }, [currentDate, fetchAppointments]);
-
-  const navigate = (days: number) => {
-    const newDate = shiftDate(currentDate, days);
-    router.push(`/member/agenda?date=${newDate}`);
-  };
-
   const handleStatusChange = (id: string, newStatus: string) => {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: newStatus as Appointment["status"] } : a))
     );
   };
 
-  const dateDisplay = formatDateDisplay(currentDate);
+  const handleOpenComanda = (appointment: Appointment) => {
+    setCheckoutTarget(appointment);
+  };
+
+  const openNewAppointment = (initialState: NewAppointmentInitialState | null = null) => {
+    setNewAppointmentInitial(initialState);
+    setEditTarget("new");
+  };
+
+  const handleSavedAppointment = (saved: Appointment) => {
+    setAppointments((prev) => {
+      const idx = prev.findIndex((a) => a.id === saved.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = saved;
+        return next;
+      }
+      return [...prev, saved];
+    });
+    setEditTarget(null);
+    setNewAppointmentInitial(null);
+  };
+
+  // Derive member identity for scoped single-column view
+  const currentMemberId =
+    appointments[0]?.barber?.id ||
+    scheduleBlocks[0]?.memberId ||
+    (session as { memberId?: string } | null)?.memberId ||
+    (session?.user as { id?: string } | null)?.id ||
+    "current-member";
+
+  const currentMemberName =
+    appointments[0]?.barber?.user?.name ||
+    session?.user?.name ||
+    "Meu Perfil";
+
+  const memberObj: Member = {
+    id: currentMemberId,
+    user: { name: currentMemberName },
+    startTime: "08:00",
+    endTime: "21:00",
+  };
+
+  // Metrics are strictly the member's own numbers (never global shop metrics)
   const confirmed = appointments.filter((a) => a.status === "CONFIRMED").length;
   const pending = appointments.filter((a) => a.status === "PENDING").length;
   const completed = appointments.filter((a) => a.status === "COMPLETED").length;
-  const revenue = appointments.reduce((sum, a) => sum + (a.productionValue ?? 0), 0);
+  const revenue = appointments.reduce((sum, a) => {
+    if (a.status === "CANCELLED") return sum;
+    return sum + (a.productionValue ?? parseFloat(a.totalPrice || "0"));
+  }, 0);
+
+  const dateDisplay = formatDateDisplay(currentDate);
 
   return (
-    <div className="p-4 md:p-8 max-w-2xl mx-auto">
-      {/* Day navigation */}
-      <div className="flex items-center justify-between mb-6">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors"
-          title="Dia anterior"
-        >
-          ←
-        </button>
-        <div className="text-center">
-          <h1 className="text-2xl font-serif font-bold text-stone-100">{dateDisplay.label}</h1>
-          <p className="text-sm text-stone-500 mt-0.5">{dateDisplay.sub}</p>
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+      {/* Modals */}
+      {editTarget !== null && (
+        <AppointmentModal
+          appointment={editTarget === "new" ? null : editTarget}
+          members={[memberObj]}
+          barbershopServices={services}
+          appointments={appointments}
+          currentDate={currentDate}
+          initialState={editTarget === "new" ? newAppointmentInitial : null}
+          initialBookingMode="NORMAL"
+          mode="member"
+          scopedMemberId={currentMemberId}
+          onClose={() => {
+            setEditTarget(null);
+            setNewAppointmentInitial(null);
+          }}
+          onSaved={handleSavedAppointment}
+        />
+      )}
+
+      {cancelTarget && (
+        <CancelModal
+          appointment={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onCancelled={(a) => {
+            handleStatusChange(a.id, "CANCELLED");
+            setCancelTarget(null);
+          }}
+        />
+      )}
+
+      {selectedScheduleBlock && (
+        <ScheduleBlockDetailsModal
+          block={selectedScheduleBlock.block}
+          memberName={selectedScheduleBlock.memberName}
+          mode="member"
+          onClose={() => setSelectedScheduleBlock(null)}
+          onDeleted={(id) => {
+            setScheduleBlocks((prev) => prev.filter((b) => b.id !== id));
+            setSelectedScheduleBlock(null);
+          }}
+        />
+      )}
+
+      {checkoutTarget && (
+        <CheckoutModal
+          appointment={checkoutTarget}
+          isOpen={!!checkoutTarget}
+          onClose={() => setCheckoutTarget(null)}
+          onFinalize={async (mode, method) => {
+            const res = await fetch(`/api/member/agenda/${checkoutTarget.id}/checkout`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mode,
+                method,
+                idempotencyKey: `${checkoutTarget.id}-${Date.now()}`,
+              }),
+            });
+            if (res.ok) {
+              await fetchAppointments(currentDate);
+              setCheckoutTarget(null);
+            } else {
+              const err = await res.json();
+              alert(`Erro: ${err.message || err.error}`);
+            }
+          }}
+        />
+      )}
+
+      {/* Day navigation header */}
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-stone-900/50 border border-stone-800 rounded-2xl p-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors"
+            title="Dia anterior"
+          >
+            ←
+          </button>
+          <div className="text-center md:text-left">
+            <h1 className="text-xl font-serif font-bold text-stone-100">{dateDisplay.label}</h1>
+            <p className="text-xs text-stone-400">{dateDisplay.sub}</p>
+          </div>
+          <button
+            onClick={() => navigate(1)}
+            className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors"
+            title="Próximo dia"
+          >
+            →
+          </button>
           {currentDate !== today && (
             <button
               onClick={() => router.push("/member/agenda")}
-              className="mt-1 text-xs text-amber-500 hover:text-amber-400 transition-colors"
+              className="text-xs text-amber-500 hover:text-amber-400 font-semibold px-2.5 py-1 rounded border border-amber-800/50 hover:border-amber-600/50 ml-2"
             >
-              Voltar a hoje
+              Hoje
             </button>
           )}
         </div>
-        <button
-          onClick={() => navigate(1)}
-          className="p-2 rounded-lg text-stone-400 hover:bg-stone-800 hover:text-stone-100 transition-colors"
-          title="Próximo dia"
-        >
-          →
-        </button>
+
+        {/* Action buttons & View switcher */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => openNewAppointment()}
+            className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs px-3.5 py-2 rounded-lg transition-colors"
+          >
+            + Novo Agendamento
+          </button>
+
+          <div className="flex rounded-lg border border-stone-800 bg-stone-950 p-0.5 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === "grid"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  : "text-stone-400 hover:text-stone-200"
+              }`}
+            >
+              Grade
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === "list"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  : "text-stone-400 hover:text-stone-200"
+              }`}
+            >
+              Lista
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      {/* Week days navigation strip */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+        {getWeekDays(currentDate).map((day) => {
+          const isSelected = day.iso === currentDate;
+          const isDayToday = day.iso === today;
+          return (
+            <button
+              key={day.iso}
+              type="button"
+              onClick={() => router.push(`/member/agenda?date=${day.iso}`)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold shrink-0 transition-all cursor-pointer ${
+                isSelected
+                  ? "bg-amber-500/20 border-amber-500/60 text-amber-200 shadow-sm"
+                  : "bg-stone-900/60 border-stone-800 text-stone-400 hover:text-stone-200 hover:bg-stone-800"
+              }`}
+              title={`${day.weekday}, ${day.dayNum}`}
+            >
+              <span>{day.label}</span>
+              {isDayToday && (
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${isSelected ? "bg-amber-400" : "bg-amber-500/70"}`}
+                  title="Hoje"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Member's Own Daily Stats */}
+      <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Total", value: appointments.length, color: "text-stone-300" },
           { label: "Confirmados", value: confirmed, color: "text-sky-400" },
@@ -473,7 +692,8 @@ function AgendaContent() {
         ))}
       </div>
 
-      <section className="mb-6 rounded-xl border border-stone-800 bg-stone-900/50 p-4 space-y-4">
+      {/* Bloquear própria agenda (form & active blocks) */}
+      <section className="rounded-xl border border-stone-800 bg-stone-900/50 p-4 space-y-4">
         <form onSubmit={createScheduleBlock} className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-bold text-stone-100">Bloquear propria agenda</h2>
@@ -526,10 +746,15 @@ function AgendaContent() {
         {scheduleBlocks.length > 0 && (
           <div className="space-y-2 border-t border-stone-800 pt-3">
             {scheduleBlocks.map((block) => (
-              <div key={block.id} className="flex items-center justify-between gap-3 rounded-lg bg-stone-950/70 px-3 py-2">
+              <div
+                key={block.id}
+                className="flex items-center justify-between gap-3 rounded-lg bg-stone-950/70 px-3 py-2"
+              >
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-amber-300">{formatBlockPeriod(block)}</p>
-                  <p className="truncate text-xs text-stone-500">{block.reason || "Bloqueio de agenda"}</p>
+                  <p className="truncate text-xs text-stone-500">
+                    {block.reason || "Bloqueio de agenda"}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -545,12 +770,35 @@ function AgendaContent() {
         )}
       </section>
 
-      {/* List */}
+      {/* Main Agenda View: Grid or List */}
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-32 rounded-xl bg-stone-900/40 border border-stone-800/50 animate-pulse" />
           ))}
+        </div>
+      ) : viewMode === "grid" ? (
+        <div className="border border-stone-800 rounded-2xl overflow-hidden bg-stone-950 h-[700px] flex flex-col">
+          <CalendarGrid
+            appointments={appointments}
+            scheduleBlocks={scheduleBlocks}
+            members={[memberObj]}
+            filterMember={currentMemberId}
+            onEdit={(a) => setEditTarget(a)}
+            onCancel={(a) => setCancelTarget(a)}
+            onSelectScheduleBlock={(b, memberName) =>
+              setSelectedScheduleBlock({ block: b, memberName })
+            }
+            onStatusChange={handleStatusChange}
+            onAppointmentUpdated={(a) => {
+              setAppointments((prev) => prev.map((x) => (x.id === a.id ? a : x)));
+            }}
+            onOpenComanda={handleOpenComanda}
+            currentDate={currentDate}
+            onEmptySlotClick={openNewAppointment}
+            barbershopName={barbershopName}
+            mode="member"
+          />
         </div>
       ) : appointments.length === 0 ? (
         <div className="text-center py-16">
@@ -560,11 +808,16 @@ function AgendaContent() {
         </div>
       ) : (
         <div className="space-y-3">
-          {/* Active first */}
+          {/* Active appointments */}
           {appointments
             .filter((a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
             .map((a) => (
-              <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} onCheckoutSuccess={() => fetchAppointments(currentDate)} />
+              <AppointmentCard
+                key={a.id}
+                appointment={a}
+                onStatusChange={handleStatusChange}
+                onCheckoutSuccess={() => fetchAppointments(currentDate)}
+              />
             ))}
           {/* Completed / terminal */}
           {appointments.filter((a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
@@ -577,7 +830,12 @@ function AgendaContent() {
                 {appointments
                   .filter((a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status))
                   .map((a) => (
-                    <AppointmentCard key={a.id} appointment={a} onStatusChange={handleStatusChange} onCheckoutSuccess={() => fetchAppointments(currentDate)} />
+                    <AppointmentCard
+                      key={a.id}
+                      appointment={a}
+                      onStatusChange={handleStatusChange}
+                      onCheckoutSuccess={() => fetchAppointments(currentDate)}
+                    />
                   ))}
               </div>
             </div>
@@ -588,7 +846,7 @@ function AgendaContent() {
   );
 }
 
-// ─── Page export ──────────────────────────────────────────────────────────────
+// ─── Page export ────────────────────────────────────────────────────────────
 
 export default function AgendaPage() {
   return (

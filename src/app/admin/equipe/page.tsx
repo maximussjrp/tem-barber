@@ -32,12 +32,14 @@ interface Member {
 const ROLE_LABELS: Record<string, string> = {
   OWNER: "Proprietário",
   MANAGER: "Gerente",
+  RECEPTIONIST: "Recepcionista",
   BARBER: "Barbeiro",
 };
 
 const ROLE_COLORS: Record<string, string> = {
   OWNER: "bg-amber-500/15 text-amber-400 border-amber-500/20",
   MANAGER: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+  RECEPTIONIST: "bg-purple-500/15 text-purple-400 border-purple-500/20",
   BARBER: "bg-stone-700/50 text-stone-300 border-stone-700",
 };
 
@@ -66,6 +68,13 @@ export default function EquipePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+
+  // Invite modal state
+  const [inviteModalData, setInviteModalData] = useState<{
+    memberName: string;
+    activationUrl: string;
+    whatsappLink: string;
+  } | null>(null);
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -120,11 +129,13 @@ export default function EquipePage() {
       formatted = `${digits.substring(0, 3)}.${digits.substring(3, 6)}.${digits.substring(6)}`;
     } else if (digits.length > 3) {
       formatted = `${digits.substring(0, 3)}.${digits.substring(3)}`;
+    } else {
+      formatted = digits;
     }
     setForm((f) => ({ ...f, cpf: formatted }));
   }
 
-  async function handleInvite(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
@@ -135,11 +146,20 @@ export default function EquipePage() {
         body: JSON.stringify(form),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.message || data.error);
+
       setMembers((prev) => [...prev, data]);
       setModalOpen(false);
       setForm(emptyForm);
-      showSuccess("Colaborador adicionado com sucesso!");
+      showSuccess("Colaborador cadastrado com sucesso!");
+
+      if (data.invite) {
+        setInviteModalData({
+          memberName: data.user.name,
+          activationUrl: data.invite.activationUrl,
+          whatsappLink: data.invite.whatsappLink,
+        });
+      }
     } catch (e) {
       setError(getErrorMessage(e, "Erro ao cadastrar."));
     } finally {
@@ -148,6 +168,7 @@ export default function EquipePage() {
   }
 
   async function handleToggle(member: Member) {
+    if (member.role === "OWNER") return;
     setTogglingId(member.id);
     setError(null);
     try {
@@ -172,7 +193,7 @@ export default function EquipePage() {
         <div>
           <h1 className="text-2xl font-bold text-stone-100">Equipe</h1>
           <p className="text-stone-400 text-sm mt-1">
-            Gerencie os colaboradores da barbearia.
+            Gerencie os colaboradores, acessos e cargos da barbearia.
           </p>
         </div>
         <button
@@ -272,151 +293,203 @@ export default function EquipePage() {
         </div>
       )}
 
-      {/* Invite Modal */}
+      {/* Modal Convidar */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-stone-950 border border-stone-800 rounded-2xl w-full max-w-lg shadow-2xl relative overflow-hidden my-4">
-            <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent" />
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-bold text-stone-100">Convidar Colaborador</h2>
-                <button
-                  onClick={() => setModalOpen(false)}
-                  className="text-stone-600 hover:text-stone-300 text-xl leading-none"
-                  aria-label="Fechar modal"
-                >
-                  ✕
-                </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-100">Convidar Colaborador</h2>
+              <button
+                onClick={() => setModalOpen(false)}
+                className="text-stone-500 hover:text-stone-300 text-sm p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className={labelClass}>Nome Completo *</label>
+                <input
+                  type="text"
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="Ex: Carlos Silva"
+                  className={inputClass}
+                />
               </div>
 
-              {error && (
-                <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-xs px-3 py-2 rounded-lg mb-4">
-                  ⚠️ {error}
-                </div>
-              )}
-
-              <form onSubmit={handleInvite} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Nome Completo *</label>
+                  <label className={labelClass}>Telefone (WhatsApp) *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={form.phone}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder="(11) 99999-9999"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>CPF *</label>
                   <input
                     type="text"
                     required
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="Ex: Carlos Santos"
+                    value={form.cpf}
+                    onChange={(e) => handleCpfChange(e.target.value)}
+                    placeholder="000.000.000-00"
                     className={inputClass}
                   />
                 </div>
+              </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelClass}>Telefone *</label>
-                    <input
-                      type="tel"
-                      required
-                      value={form.phone}
-                      onChange={(e) => handlePhoneChange(e.target.value)}
-                      placeholder="(11) 99999-9999"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>CPF *</label>
-                    <input
-                      type="text"
-                      required
-                      value={form.cpf}
-                      onChange={(e) => handleCpfChange(e.target.value)}
-                      placeholder="000.000.000-00"
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
+              <div>
+                <label className={labelClass}>E-mail</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                  placeholder="Ex: carlos@email.com"
+                  className={inputClass}
+                />
+              </div>
 
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>E-mail</label>
+                  <label className={labelClass}>Senha (Opcional)</label>
                   <input
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="Ex: carlos@email.com"
+                    type="password"
+                    minLength={8}
+                    value={form.password}
+                    onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                    placeholder="Mínimo 8 caracteres (ou convite)"
                     className={inputClass}
                   />
+                  <p className="text-[10px] text-stone-500 mt-1">
+                    Se em branco, um link de ativação será gerado.
+                  </p>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelClass}>Senha provisória *</label>
-                    <input
-                      type="password"
-                      required
-                      minLength={6}
-                      value={form.password}
-                      onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                      placeholder="Mín. 6 caracteres"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Cargo *</label>
-                    <select
-                      title="Cargo do colaborador"
-                      required
-                      value={form.role}
-                      onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-                      className={inputClass}
-                    >
-                      <option value="BARBER">Barbeiro</option>
-                      <option value="MANAGER">Gerente</option>
-                    </select>
-                  </div>
-                </div>
-
                 <div>
-                  <label className={labelClass}>Nível de Carreira</label>
+                  <label className={labelClass}>Cargo *</label>
                   <select
-                    title="Nível de carreira do colaborador"
-                    value={form.careerLevelId}
-                    onChange={(e) => setForm((f) => ({ ...f, careerLevelId: e.target.value }))}
+                    title="Cargo do colaborador"
+                    required
+                    value={form.role}
+                    onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
                     className={inputClass}
                   >
-                    <option value="">Sem nível atribuído</option>
-                    {careerLevels.map((lvl) => (
-                      <option key={lvl.id} value={lvl.id}>
-                        {lvl.name}
-                      </option>
-                    ))}
+                    <option value="BARBER">Barbeiro</option>
+                    <option value="MANAGER">Gerente</option>
+                    <option value="RECEPTIONIST">Recepcionista</option>
                   </select>
                 </div>
+              </div>
 
-                <div>
-                  <label className={labelClass}>Bio / Especialidade</label>
-                  <textarea
-                    rows={2}
-                    value={form.bio}
-                    onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
-                    placeholder="Ex: Especialista em degradê e barba..."
-                    className={`${inputClass} resize-none`}
-                  />
-                </div>
+              <div>
+                <label className={labelClass}>Nível de Carreira</label>
+                <select
+                  title="Nível de carreira do colaborador"
+                  value={form.careerLevelId}
+                  onChange={(e) => setForm((f) => ({ ...f, careerLevelId: e.target.value }))}
+                  className={inputClass}
+                >
+                  <option value="">Sem nível atribuído</option>
+                  {careerLevels.map((lvl) => (
+                    <option key={lvl.id} value={lvl.id}>
+                      {lvl.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold py-3 rounded-lg text-sm transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {saving ? "Cadastrando..." : "Cadastrar Colaborador"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModalOpen(false)}
-                    className="px-5 border border-stone-700 text-stone-400 hover:text-stone-200 rounded-lg text-sm transition-all cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </form>
+              <div>
+                <label className={labelClass}>Bio / Especialidade</label>
+                <textarea
+                  rows={2}
+                  value={form.bio}
+                  onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
+                  placeholder="Ex: Especialista em degradê e barba..."
+                  className={`${inputClass} resize-none`}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold py-3 rounded-lg text-sm transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {saving ? "Salvando..." : "Convidar Colaborador"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-5 py-3 rounded-lg text-sm text-stone-400 hover:text-stone-200 border border-stone-800 transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Link de Convite Gerado */}
+      {inviteModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-stone-100 flex items-center gap-2">
+                <span>✉️</span> Convite Gerado para {inviteModalData.memberName}
+              </h3>
+              <button
+                onClick={() => setInviteModalData(null)}
+                className="text-stone-500 hover:text-stone-300 text-sm p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-400">
+              O colaborador foi adicionado à equipe. Envie o link abaixo para que ele ative a conta e crie a própria senha.
+            </p>
+
+            <div className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2">
+              <p className="text-[11px] font-mono text-amber-400 break-all select-all">
+                {inviteModalData.activationUrl}
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteModalData.activationUrl);
+                  showSuccess("Link de convite copiado!");
+                }}
+                className="flex-1 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold py-2.5 px-4 rounded-lg border border-stone-700 transition-all"
+              >
+                📋 Copiar Link
+              </button>
+
+              <a
+                href={inviteModalData.whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 px-4 rounded-lg text-center transition-all flex items-center justify-center gap-2"
+              >
+                <span>💬</span> Enviar via WhatsApp
+              </a>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setInviteModalData(null)}
+                className="text-xs text-stone-400 hover:text-stone-200 px-4 py-2"
+              >
+                Concluir
+              </button>
             </div>
           </div>
         </div>

@@ -40,6 +40,13 @@ export default function PerfilPage() {
   const [bio, setBio] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,8 +71,7 @@ export default function PerfilPage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("type", "avatar");
-      const res = await fetch("/api/admin/upload", { method: "POST", body: form });
+      const res = await fetch("/api/member/avatar", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Erro no upload.");
       setAvatarUrl(data.url);
@@ -111,6 +117,45 @@ export default function PerfilPage() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 8) {
+      setPasswordError("A nova senha deve ter no mínimo 8 caracteres.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("As senhas não coincidem.");
+      return;
+    }
+    setChangingPassword(true);
+    setPasswordError("");
+    setPasswordSuccess(false);
+    try {
+      const res = await fetch("/api/user/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao alterar senha.");
+      }
+      setPasswordSuccess(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => setPasswordSuccess(false), 4000);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setPasswordError(err.message);
+      } else {
+        setPasswordError("Erro ao alterar senha.");
+      }
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -257,6 +302,68 @@ export default function PerfilPage() {
           {saving ? "Salvando..." : "Salvar alterações"}
         </button>
       </form>
+
+      {/* Alterar Senha */}
+      <div className="mt-8 border-t border-stone-800 pt-6">
+        <h2 className="text-base font-semibold text-stone-100 mb-4">Segurança e Senha</h2>
+        <form onSubmit={handlePasswordSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">Senha atual</label>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="Digite sua senha atual"
+              className="w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">Nova senha (mínimo 8 dígitos)</label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Mínimo 8 caracteres"
+                className="w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">Confirmar nova senha</label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repita a nova senha"
+                className="w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
+              />
+            </div>
+          </div>
+
+          {passwordError && (
+            <div className="bg-red-950/40 border border-red-800/50 rounded-lg px-4 py-3 text-sm text-red-400">
+              {passwordError}
+            </div>
+          )}
+          {passwordSuccess && (
+            <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-lg px-4 py-3 text-sm text-emerald-400">
+              ✓ Senha alterada com sucesso!
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={changingPassword}
+            className="w-full sm:w-auto px-6 py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-100 font-semibold rounded-lg text-sm transition-colors disabled:opacity-50"
+          >
+            {changingPassword ? "Alterando..." : "Atualizar senha"}
+          </button>
+        </form>
+      </div>
 
       <div className="mt-8 border-t border-stone-800 pt-6">
         <h2 className="text-base font-semibold text-stone-100 mb-4">

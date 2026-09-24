@@ -3,8 +3,12 @@ import { authOptions } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
 import { resolveSingleActiveMembership } from "@/lib/tenant-context";
+const STRICT_ADMIN_ROLES = ["SUPER_ADMIN", "OWNER", "MANAGER"];
 
-async function resolveAdminSessionInternal(options: { checkSubscription: boolean }) {
+async function resolveSessionInternal(options: {
+  checkSubscription: boolean;
+  allowedRoles: string[];
+}) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {
@@ -21,7 +25,7 @@ async function resolveAdminSessionInternal(options: { checkSubscription: boolean
 
   const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(sessionRole) && !isPlatform) {
+  if (!options.allowedRoles.includes(sessionRole) && !isPlatform) {
     return {
       error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
       data: null,
@@ -54,7 +58,7 @@ async function resolveAdminSessionInternal(options: { checkSubscription: boolean
 
   const role = member?.role ?? "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
+  if (!options.allowedRoles.includes(role) && !isPlatform) {
     return {
       error: NextResponse.json({ error: "Acesso negado." }, { status: 403 }),
       data: null,
@@ -86,13 +90,30 @@ async function resolveAdminSessionInternal(options: { checkSubscription: boolean
   };
 }
 
+/**
+ * Standard admin session guard. Strictly limited to SUPER_ADMIN, OWNER, and MANAGER.
+ * RECEPTIONIST is explicitly NOT allowed here.
+ */
 export async function getAdminSession() {
-  return resolveAdminSessionInternal({ checkSubscription: true });
+  return resolveSessionInternal({
+    checkSubscription: true,
+    allowedRoles: STRICT_ADMIN_ROLES,
+  });
 }
 
 export async function getBillingAdminSession() {
-  return resolveAdminSessionInternal({ checkSubscription: false });
+  return resolveSessionInternal({
+    checkSubscription: false,
+    allowedRoles: STRICT_ADMIN_ROLES,
+  });
 }
+
+/**
+ * Operational staff session guard for shared operational resources
+ * (Appointments, Customers, Comandas, Waitlist).
+ * Allows RECEPTIONIST alongside OWNER and MANAGER, with optional granular permission check.
+ */
+export { getOperationalStaffSession } from "./operational-session";
 
 export async function requireOperationalSession() {
   const { error, data } = await getAdminSession();

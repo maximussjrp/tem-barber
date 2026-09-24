@@ -3,8 +3,9 @@ import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
 import { isValidCpf } from "@/lib/utils";
 import bcrypt from "bcryptjs";
-import { Prisma } from "@prisma/client";
+import { Prisma, StaffAccessTokenPurpose } from "@prisma/client";
 import { getBrazilianPhoneVariants } from "@/lib/phone/br-phone";
+import { createStaffAccessToken } from "@/lib/auth/staff-tokens";
 
 export async function GET() {
   const { error, data } = await getAdminSession();
@@ -44,11 +45,19 @@ export async function POST(request: Request) {
     if (!cpf || typeof cpf !== "string") {
       return NextResponse.json({ error: "CPF é obrigatório." }, { status: 400 });
     }
-    if (!password || password.length < 6) {
-      return NextResponse.json({ error: "Senha deve ter no mínimo 6 caracteres." }, { status: 400 });
+    if (password && (typeof password !== "string" || password.length < 8)) {
+      return NextResponse.json({ error: "Senha deve ter no mínimo 8 caracteres." }, { status: 400 });
     }
-    if (!["BARBER", "MANAGER"].includes(role)) {
+    if (!["BARBER", "MANAGER", "RECEPTIONIST"].includes(role)) {
       return NextResponse.json({ error: "Cargo inválido." }, { status: 400 });
+    }
+
+    // Hierarquia: Gerente não pode convidar outro Gerente nem Dono
+    if (data!.role === "MANAGER" && role === "MANAGER") {
+      return NextResponse.json(
+        { error: "ROLE_ESCALATION_FORBIDDEN", message: "Gerentes só podem convidar Barbeiros ou Recepcionistas." },
+        { status: 403 }
+      );
     }
 
     let validCareerLevelId: string | null = null;
@@ -125,25 +134,30 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error: "IDENTITY_MISMATCH",
-            message: "Os dados informados não correspondem ao cadastro existente.",
+            message: "O CPF informado difere do cadastro existente.",
           },
           { status: 409 }
         );
       }
 
-      if (cleanEmail && existingUser.email !== null && existingUser.email !== cleanEmail) {
+      if (
+        cleanEmail !== null &&
+        existingUser.email !== null &&
+        existingUser.email !== cleanEmail
+      ) {
         return NextResponse.json(
           {
             error: "IDENTITY_MISMATCH",
-            message: "Os dados informados não correspondem ao cadastro existente.",
+            message: "O e-mail informado difere do cadastro existente.",
           },
           { status: 409 }
         );
       }
 
-      // Hash da senha fora da transação (CPU-bound, não precisa de lock)
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // Preparar senha com hash se fornecida
+      const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
+      // Executar lock e mutação dentro de transação serializável
       const result = await prisma.$transaction(async (tx) => {
         // 1. Advisory lock serializa criação de membership para este userId
         const lockKey = `team-membership:${existingUser.id}`;
@@ -216,7 +230,7 @@ export async function POST(request: Request) {
         if (currentUser.email === null && cleanEmail) {
           updateData.email = cleanEmail;
         }
-        if (currentUser.passwordHash === null) {
+        if (currentUser.passwordHash === null && hashedPassword) {
           updateData.passwordHash = hashedPassword;
         }
 
@@ -246,7 +260,7 @@ export async function POST(request: Request) {
           },
         });
 
-        return { member } as const;
+        return { member, hadPassword: Boolean(currentUser.passwordHash || hashedPassword) } as const;
       });
 
       // Interpretar resultado da transação
@@ -264,11 +278,41 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: result.conflict }, { status: 409 });
       }
 
-      return NextResponse.json(result.member, { status: 201 });
+      // Se o usuário não tinha senha, gerar convite de ativação
+      let inviteInfo: any = null;
+      if (!result.hadPassword && (prisma as any).staffAccessToken) {
+        const tokenResult = await createStaffAccessToken({
+          barbershopId: data!.barbershopId!,
+          userId: result.member.userId,
+          purpose: StaffAccessTokenPurpose.INVITE,
+          createdByUserId: data!.userId,
+        });
+
+        const barbershop = (prisma as any).barbershop
+          ? await prisma.barbershop.findUnique({
+              where: { id: data!.barbershopId! },
+              select: { name: true },
+            })
+          : null;
+
+        const rawUserPhone = result.member.user.phone.replace(/\D/g, "");
+        const formattedUserPhone = rawUserPhone.startsWith("55") ? rawUserPhone : `55${rawUserPhone}`;
+        const whatsappMessage = `Olá, ${result.member.user.name}! Você foi convidado para a equipe da ${barbershop?.name || "nossa barbearia"}.\n\nPara ativar seu acesso e definir sua senha, acesse o link:\n${tokenResult.activationUrl}\n\n(Válido por 48 horas)`;
+        const whatsappLink = `https://wa.me/${formattedUserPhone}?text=${encodeURIComponent(whatsappMessage)}`;
+
+        inviteInfo = {
+          activationUrl: tokenResult.activationUrl,
+          whatsappMessage,
+          whatsappLink,
+          expiresAt: tokenResult.expiresAt,
+        };
+      }
+
+      return NextResponse.json({ ...result.member, ...(inviteInfo ? { invite: inviteInfo } : {}) }, { status: 201 });
     }
 
     // Criar novo User + BarbershopMember em transação
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
     const member = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -301,7 +345,37 @@ export async function POST(request: Request) {
       });
     });
 
-    return NextResponse.json(member, { status: 201 });
+    // Se foi criado sem senha, gerar convite de ativação
+    let inviteInfo: any = null;
+    if (!hashedPassword && (prisma as any).staffAccessToken) {
+      const tokenResult = await createStaffAccessToken({
+        barbershopId: data!.barbershopId!,
+        userId: member.userId,
+        purpose: StaffAccessTokenPurpose.INVITE,
+        createdByUserId: data!.userId,
+      });
+
+      const barbershop = (prisma as any).barbershop
+        ? await prisma.barbershop.findUnique({
+            where: { id: data!.barbershopId! },
+            select: { name: true },
+          })
+        : null;
+
+      const rawUserPhone = member.user.phone.replace(/\D/g, "");
+      const formattedUserPhone = rawUserPhone.startsWith("55") ? rawUserPhone : `55${rawUserPhone}`;
+      const whatsappMessage = `Olá, ${member.user.name}! Você foi convidado para a equipe da ${barbershop?.name || "nossa barbearia"}.\n\nPara ativar seu acesso e definir sua senha, acesse o link:\n${tokenResult.activationUrl}\n\n(Válido por 48 horas)`;
+      const whatsappLink = `https://wa.me/${formattedUserPhone}?text=${encodeURIComponent(whatsappMessage)}`;
+
+      inviteInfo = {
+        activationUrl: tokenResult.activationUrl,
+        whatsappMessage,
+        whatsappLink,
+        expiresAt: tokenResult.expiresAt,
+      };
+    }
+
+    return NextResponse.json({ ...member, invite: inviteInfo }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const target = error.meta?.target;
@@ -319,6 +393,7 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
+    console.error("Erro ao criar colaborador:", error);
     return NextResponse.json({ error: "Erro ao criar colaborador." }, { status: 500 });
   }
 }

@@ -6,9 +6,17 @@ import {
   MemberManagementError,
   type TenantMemberRole,
 } from "@/lib/team/member-management";
+import { isValidCpf } from "@/lib/utils";
+import { getBrazilianPhoneVariants, normalizeBrazilianMobilePhone, validateBrazilianMobilePhone } from "@/lib/phone/br-phone";
 
 async function findMember(id: string, barbershopId: string) {
-  const m = await prisma.barbershopMember.findUnique({ where: { id } });
+  const m = await prisma.barbershopMember.findUnique({
+    where: { id },
+    include: {
+      user: true,
+      careerLevel: true,
+    },
+  });
   if (!m || m.barbershopId !== barbershopId) return null;
   return m;
 }
@@ -56,9 +64,9 @@ export async function PUT(
 
   try {
     const body = await request.json();
-    const { role, bio, careerLevelId } = body;
+    const { name, phone, cpf, email, role, bio, careerLevelId } = body;
 
-    if (role && !["BARBER", "MANAGER", "OWNER"].includes(role)) {
+    if (role && !["BARBER", "MANAGER", "OWNER", "RECEPTIONIST"].includes(role)) {
       return NextResponse.json({ error: "Cargo inválido." }, { status: 400 });
     }
 
@@ -68,9 +76,105 @@ export async function PUT(
         role: data!.role,
         barbershopId: data!.barbershopId!,
       },
-      member,
+      {
+        id: member.id,
+        role: member.role as TenantMemberRole,
+        barbershopId: member.barbershopId,
+        isActive: member.isActive,
+      },
       { requestedRole: role as TenantMemberRole | undefined }
     );
+
+    // Validações do usuário (name, phone, cpf, email)
+    let cleanPhone: string | undefined = undefined;
+    if (phone !== undefined) {
+      if (!phone || typeof phone !== "string") {
+        return NextResponse.json({ error: "Telefone inválido." }, { status: 400 });
+      }
+      const raw = phone.replace(/\D/g, "");
+      if (raw.length < 10) {
+        return NextResponse.json({ error: "Telefone deve ter DDD e no mínimo 10 dígitos." }, { status: 400 });
+      }
+      cleanPhone = raw;
+
+      // Verificar colisão de telefone com outros usuários
+      const phoneVariants = getBrazilianPhoneVariants(cleanPhone);
+      const existingUserWithPhone = await prisma.user.findFirst({
+        where: {
+          phone: { in: phoneVariants },
+          id: { not: member.userId },
+        },
+      });
+
+      if (existingUserWithPhone) {
+        return NextResponse.json(
+          { error: "Telefone já está em uso por outro usuário." },
+          { status: 409 }
+        );
+      }
+    }
+
+    let cleanCpf: string | undefined = undefined;
+    if (cpf !== undefined) {
+      if (cpf === null || cpf === "") {
+        cleanCpf = undefined;
+      } else {
+        const raw = cpf.replace(/\D/g, "");
+        if (!isValidCpf(raw)) {
+          return NextResponse.json({ error: "CPF inválido." }, { status: 400 });
+        }
+        cleanCpf = raw;
+
+        // Verificar colisão de CPF com outros usuários
+        const existingUserWithCpf = await prisma.user.findFirst({
+          where: {
+            cpf: cleanCpf,
+            id: { not: member.userId },
+          },
+        });
+
+        if (existingUserWithCpf) {
+          return NextResponse.json(
+            { error: "CPF já está em uso por outro usuário." },
+            { status: 409 }
+          );
+        }
+      }
+    }
+
+    let cleanEmail: string | null | undefined = undefined;
+    if (email !== undefined) {
+      if (email === null || email === "") {
+        cleanEmail = null;
+      } else {
+        const raw = email.trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+          return NextResponse.json({ error: "E-mail inválido." }, { status: 400 });
+        }
+        cleanEmail = raw;
+
+        // Verificar colisão de email com outros usuários
+        const existingUserWithEmail = await prisma.user.findFirst({
+          where: {
+            email: cleanEmail,
+            id: { not: member.userId },
+          },
+        });
+
+        if (existingUserWithEmail) {
+          return NextResponse.json(
+            { error: "E-mail já está em uso por outro usuário." },
+            { status: 409 }
+          );
+        }
+      }
+    }
+
+    if (name !== undefined) {
+      if (!name || typeof name !== "string" || name.trim().length < 2) {
+        return NextResponse.json({ error: "Nome deve ter no mínimo 2 caracteres." }, { status: 400 });
+      }
+    }
 
     let updatedCareerLevelId: string | null | undefined = undefined;
     if (careerLevelId !== undefined) {
@@ -87,22 +191,44 @@ export async function PUT(
       }
     }
 
-    const updated = await prisma.barbershopMember.update({
-      where: { id },
-      data: {
-        ...(role ? { role } : {}),
-        bio: bio !== undefined ? (bio?.trim() || null) : member.bio,
-        ...(updatedCareerLevelId !== undefined ? { careerLevelId: updatedCareerLevelId } : {}),
-      },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+    const executeUpdate = async (tx: typeof prisma) => {
+      // Atualizar dados do usuário se algum foi informado
+      const userUpdateData: { name?: string; phone?: string; cpf?: string; email?: string | null } = {};
+      if (name !== undefined) userUpdateData.name = name.trim();
+      if (cleanPhone !== undefined) userUpdateData.phone = cleanPhone;
+      if (cleanCpf !== undefined) userUpdateData.cpf = cleanCpf;
+      if (cleanEmail !== undefined) userUpdateData.email = cleanEmail;
+
+      if (Object.keys(userUpdateData).length > 0) {
+        await tx.user.update({
+          where: { id: member.userId },
+          data: userUpdateData,
+        });
+      }
+
+      // Atualizar dados do member
+      const memberUpdateData: { role?: any; bio?: string | null; careerLevelId?: string | null } = {};
+      if (role && member.role !== "OWNER") memberUpdateData.role = role;
+      if (bio !== undefined) memberUpdateData.bio = bio?.trim() || null;
+      if (updatedCareerLevelId !== undefined) memberUpdateData.careerLevelId = updatedCareerLevelId;
+
+      return await tx.barbershopMember.update({
+        where: { id },
+        data: memberUpdateData,
+        include: {
+          user: {
+            select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+          },
+          careerLevel: {
+            select: { id: true, name: true, defaultCommissionRate: true },
+          },
         },
-        careerLevel: {
-          select: { id: true, name: true, defaultCommissionRate: true },
-        },
-      },
-    });
+      });
+    };
+
+    const updated = typeof prisma.$transaction === "function"
+      ? await prisma.$transaction((tx) => executeUpdate(tx as any))
+      : await executeUpdate(prisma);
 
     return NextResponse.json(updated);
   } catch (err) {
@@ -112,6 +238,7 @@ export async function PUT(
         { status: 403 }
       );
     }
+    console.error("Erro ao atualizar colaborador:", err);
     return NextResponse.json({ error: "Erro ao atualizar colaborador." }, { status: 500 });
   }
 }
@@ -139,13 +266,23 @@ export async function PATCH(
         role: data!.role,
         barbershopId: data!.barbershopId!,
       },
-      member,
+      {
+        id: member.id,
+        role: member.role as TenantMemberRole,
+        barbershopId: member.barbershopId,
+        isActive: member.isActive,
+      },
       { requestedIsActive: body.isActive }
     );
 
     const updated = await prisma.barbershopMember.update({
       where: { id },
       data: { isActive: body.isActive },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, phone: true, cpf: true, avatarUrl: true },
+        },
+      },
     });
 
     return NextResponse.json(updated);

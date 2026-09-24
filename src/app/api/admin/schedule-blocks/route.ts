@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 import {
   createScheduleBlockWithLock,
   parseScheduleBlockInterval,
@@ -10,7 +10,7 @@ import {
 } from "@/lib/schedule-blocks";
 
 export async function POST(request: NextRequest) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession({ requiredPermission: "AGENDA_BLOCK_ALL" });
   if (error) return error;
 
   if (!data!.barbershopId) {
@@ -49,14 +49,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // BARBER só pode criar bloqueio na própria agenda
-  if (data!.role === "BARBER" && data!.memberId !== memberId) {
-    return NextResponse.json(
-      { error: "Você só pode criar bloqueios na sua própria agenda." },
-      { status: 403 }
-    );
-  }
-
   const { start, end } = parseScheduleBlockInterval(startDate, endDate, allDay);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
@@ -72,16 +64,15 @@ export async function POST(request: NextRequest) {
 
   try {
     const block = await prisma.$transaction(
-      async (tx) => {
-        return createScheduleBlockWithLock(tx, {
+      (tx) =>
+        createScheduleBlockWithLock(tx, {
           barbershopId,
           memberId,
           startDate: start,
           endDate: end,
           reason: trimmedReason,
           allDay: Boolean(allDay),
-        });
-      },
+        }),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
 
@@ -89,22 +80,15 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     if (err instanceof ScheduleBlockAppointmentConflictError) {
       return NextResponse.json(
-        {
-          error: err.code,
-          message: err.message,
-          conflicts: err.conflicts,
-        },
+        { error: err.code, message: err.message, conflicts: err.conflicts },
         { status: err.status }
       );
     }
     if (err instanceof ScheduleBlockConflictError) {
-      return NextResponse.json(
-        { error: err.code, message: err.message },
-        { status: err.status }
-      );
+      return NextResponse.json({ error: err.code, message: err.message }, { status: err.status });
     }
     if (err instanceof Error && err.message === "MEMBER_NOT_FOUND") {
-      return NextResponse.json({ error: "Profissional não encontrado nesta barbearia." }, { status: 404 });
+      return NextResponse.json({ error: "Profissional não encontrado." }, { status: 404 });
     }
     throw err;
   }

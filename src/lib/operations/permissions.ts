@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMemberSession } from "@/lib/member-api-auth";
 
-export type OperationalRole = "OWNER" | "MANAGER" | "BARBER";
+export type OperationalRole = "OWNER" | "MANAGER" | "BARBER" | "RECEPTIONIST";
 
 export interface OperationalSession {
   userId: string;
@@ -28,7 +28,7 @@ export async function requireOperationalSession() {
 }
 
 export function canManageComandas(role: string) {
-  return role === "OWNER" || role === "MANAGER" || role === "BARBER";
+  return role === "OWNER" || role === "MANAGER" || role === "BARBER" || role === "RECEPTIONIST";
 }
 
 /**

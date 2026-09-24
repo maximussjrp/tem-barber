@@ -22,6 +22,7 @@ const ROLE_LABELS: Record<string, string> = {
   BARBER: "Barbeiro",
   MANAGER: "Gerente",
   OWNER: "Proprietário",
+  RECEPTIONIST: "Recepcionista",
 };
 
 const navItems = [
@@ -112,9 +113,9 @@ export function MemberNav({ barbershopName, barbershopLogo, subtitle, memberName
 
       {/* Footer */}
       <div className="px-3 py-4 border-t border-border-subtle space-y-1">
-        {(role === "OWNER" || role === "MANAGER") && (
+        {(role === "OWNER" || role === "MANAGER" || role === "RECEPTIONIST") && (
           <Link
-            href="/admin/dashboard"
+            href={role === "RECEPTIONIST" ? "/admin/agendamentos" : "/admin/dashboard"}
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-text-muted hover:bg-surface-hover hover:text-text-primary transition-colors"
           >
             <span>⚙️</span>

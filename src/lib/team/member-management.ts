@@ -1,4 +1,4 @@
-export type TenantMemberRole = "OWNER" | "MANAGER" | "BARBER";
+export type TenantMemberRole = "OWNER" | "MANAGER" | "BARBER" | "RECEPTIONIST";
 
 interface MemberActor {
   memberId: string | null;
@@ -29,8 +29,8 @@ export class MemberManagementError extends Error {
 }
 
 /**
- * Structural safety rules for the legacy role model.
- * This is intentionally small and must not evolve into the permission engine.
+ * Structural safety rules for team member management.
+ * Enforces strict hierarchy between OWNER, MANAGER, BARBER, RECEPTIONIST.
  */
 export function assertCanManageMember(
   actor: MemberActor,
@@ -45,6 +45,7 @@ export function assertCanManageMember(
     mutation.requestedRole !== undefined && mutation.requestedRole !== target.role;
   const deactivatesTarget = mutation.requestedIsActive === false && target.isActive;
 
+  // 1. Proteger OWNER incondicionalmente contra demotion, deativação ou edição por terceiros
   if (target.role === "OWNER") {
     if (actor.role !== "OWNER" || changesRole || deactivatesTarget) {
       throw new MemberManagementError(
@@ -54,10 +55,28 @@ export function assertCanManageMember(
     }
   }
 
+  // 2. Não permitir promoção para OWNER através de edição de membro
   if (mutation.requestedRole === "OWNER" && target.role !== "OWNER") {
     throw new MemberManagementError(
       actor.role === "MANAGER" ? "ROLE_ESCALATION_FORBIDDEN" : "OWNER_PROTECTED",
       "A transferência de propriedade não está disponível nesta operação."
     );
+  }
+
+  // 3. Hierarquia do MANAGER: não pode gerenciar outro MANAGER nem OWNER
+  if (actor.role === "MANAGER") {
+    if (target.role === "MANAGER" && actor.memberId !== target.id) {
+      throw new MemberManagementError(
+        "ROLE_ESCALATION_FORBIDDEN",
+        "Gerentes não possuem permissão para alterar outros gerentes."
+      );
+    }
+
+    if (mutation.requestedRole === "MANAGER" && target.role !== "MANAGER") {
+      throw new MemberManagementError(
+        "ROLE_ESCALATION_FORBIDDEN",
+        "Gerentes não possuem permissão para promover colaboradores a Gerente."
+      );
+    }
   }
 }

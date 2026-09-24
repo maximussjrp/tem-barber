@@ -15,13 +15,30 @@ export default withAuth(
     // 1. Proteger rotas de gerência/administração do estabelecimento
     if (path.startsWith("/admin")) {
       const hasAdminAccess =
-        role === "SUPER_ADMIN" || role === "OWNER" || role === "MANAGER";
+        role === "SUPER_ADMIN" || role === "OWNER" || role === "MANAGER" || role === "RECEPTIONIST";
 
       if (!hasAdminAccess) {
         if (role === "BARBER") {
           return NextResponse.redirect(new URL("/member/agenda", req.url));
         }
         return NextResponse.redirect(new URL("/acesso-negado", req.url));
+      }
+
+      // Restrições de páginas puramente administrativas para recepcionista
+      if (role === "RECEPTIONIST") {
+        const restrictedAdminPrefixes = [
+          "/admin/equipe",
+          "/admin/financeiro",
+          "/admin/comissoes",
+          "/admin/configuracoes",
+          "/admin/relatorios",
+          "/admin/assinatura",
+          "/admin/servicos",
+          "/admin/dashboard",
+        ];
+        if (restrictedAdminPrefixes.some((prefix) => path.startsWith(prefix))) {
+          return NextResponse.redirect(new URL("/admin/agendamentos", req.url));
+        }
       }
     }
 

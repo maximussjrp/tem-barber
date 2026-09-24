@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
+import { PERMISSION_DEFINITIONS, PermissionCategory } from "@/lib/permissions/types";
 
 // ─────────── Types ───────────
 interface Service { id: string; name: string; price: string; category: { name: string } }
@@ -17,7 +18,14 @@ interface Member {
   id: string; role: string; bio: string | null; isActive: boolean; ratingAvg: number;
   careerLevelId?: string | null;
   careerLevel?: { id: string; name: string } | null;
-  user: { id: string; name: string; email: string | null; phone: string; avatarUrl: string | null };
+  user: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string;
+    cpf?: string | null;
+    avatarUrl: string | null;
+  };
   workingHours: WorkingHour[];
   services: { service: { id: string; name: string; price: string } }[];
   timeOffs: TimeOff[];
@@ -30,11 +38,21 @@ const DAYS = [
   { value: 4, label: "Quinta-feira" }, { value: 5, label: "Sexta-feira" },
   { value: 6, label: "Sábado" },
 ];
+
 const ROLE_OPTIONS = [
   { value: "BARBER", label: "Barbeiro" },
   { value: "MANAGER", label: "Gerente" },
-  { value: "OWNER", label: "Proprietário" },
+  { value: "RECEPTIONIST", label: "Recepcionista" },
 ];
+
+const CATEGORY_LABELS: Record<PermissionCategory, string> = {
+  agenda: "Agenda & Calendário",
+  clientes: "Clientes & Atendimentos",
+  comandas: "Comandas & Pagamentos",
+  financeiro: "Financeiro & Comissões",
+  gestao: "Gestão do Estabelecimento",
+};
+
 const inputClass = "w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500/80 focus:ring-1 focus:ring-amber-500/80 transition-all text-sm";
 const labelClass = "block text-xs font-semibold uppercase tracking-wider text-stone-400 mb-1.5";
 
@@ -57,7 +75,7 @@ function defaultHours(existing: WorkingHour[]): WorkingHour[] {
 }
 
 // ─────────── Component ───────────
-type Tab = "perfil" | "servicos" | "horarios" | "folgas";
+type Tab = "perfil" | "acesso" | "servicos" | "horarios" | "folgas";
 
 export default function MemberDetailPage() {
   const params = useParams<{ id: string }>();
@@ -73,10 +91,29 @@ export default function MemberDetailPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   // Perfil state
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
   const [bio, setBio] = useState("");
   const [careerLevelId, setCareerLevelId] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Reset Access Modal state
+  const [resettingAccess, setResettingAccess] = useState(false);
+  const [resetModalData, setResetModalData] = useState<{
+    activationUrl: string;
+    whatsappLink: string;
+    whatsappMessage: string;
+    expiresAt: string;
+  } | null>(null);
+
+  // Permissões state
+  const [permissionsMap, setPermissionsMap] = useState<Record<string, boolean>>({});
+  const [loadingPermissions, setLoadingPermissions] = useState(false);
+  const [savingPermissions, setSavingPermissions] = useState(false);
+  const [canEditPermissions, setCanEditPermissions] = useState(true);
 
   // Serviços state
   const [selectedServices, setSelectedServices] = useState<Set<string>>(new Set());
@@ -114,6 +151,10 @@ export default function MemberDetailPage() {
       }
       setMember(m);
       setAllServices(s);
+      setName(m.user.name);
+      setPhone(m.user.phone);
+      setCpf(m.user.cpf ?? "");
+      setEmail(m.user.email ?? "");
       setRole(m.role);
       setBio(m.bio ?? "");
       setCareerLevelId(m.careerLevelId ?? "");
@@ -126,8 +167,31 @@ export default function MemberDetailPage() {
     }
   }, [memberId, router]);
 
+  const loadPermissions = useCallback(async () => {
+    setLoadingPermissions(true);
+    try {
+      const res = await fetch(`/api/admin/team/${memberId}/permissions`);
+      if (res.ok) {
+        const data = await res.json();
+        setPermissionsMap(data.effective || {});
+        setCanEditPermissions(!data.isOwner);
+      } else {
+        setCanEditPermissions(false);
+      }
+    } catch {
+      // Ignorar se não tiver acesso
+    } finally {
+      setLoadingPermissions(false);
+    }
+  }, [memberId]);
+
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (activeTab === "acesso") {
+      loadPermissions();
+    }
+  }, [activeTab, loadPermissions]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   function getErrorMessage(error: unknown, fallback = "Erro.") {
@@ -142,14 +206,78 @@ export default function MemberDetailPage() {
       const res = await fetch(`/api/admin/team/${memberId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, bio, careerLevelId: careerLevelId || null }),
+        body: JSON.stringify({
+          name: name.trim(),
+          phone: phone.trim(),
+          cpf: cpf.trim() || null,
+          email: email.trim() || null,
+          role: member?.role === "OWNER" ? undefined : role,
+          bio,
+          careerLevelId: careerLevelId || null,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setMember((prev) => prev ? { ...prev, role: data.role, bio: data.bio, careerLevelId: data.careerLevelId, careerLevel: data.careerLevel } : prev);
-      showSuccess("Perfil atualizado!");
+      if (!res.ok) throw new Error(data.message || data.error);
+      setMember((prev) =>
+        prev
+          ? {
+              ...prev,
+              role: data.role,
+              bio: data.bio,
+              careerLevelId: data.careerLevelId,
+              careerLevel: data.careerLevel,
+              user: {
+                ...prev.user,
+                name: data.user.name,
+                phone: data.user.phone,
+                cpf: data.user.cpf,
+                email: data.user.email,
+              },
+            }
+          : prev
+      );
+      showSuccess("Perfil atualizado com sucesso!");
     } catch (e) { setError(getErrorMessage(e)); }
     finally { setSavingProfile(false); }
+  }
+
+  // ── Reset Access ──
+  async function handleResetAccess() {
+    setResettingAccess(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/team/${memberId}/reset-access`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error);
+      setResetModalData(data);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setResettingAccess(false);
+    }
+  }
+
+  // ── Permissões ──
+  async function savePermissions() {
+    setSavingPermissions(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/team/${memberId}/permissions`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overrides: permissionsMap }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error);
+      if (data.effective) setPermissionsMap(data.effective);
+      showSuccess("Permissões atualizadas com sucesso!");
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setSavingPermissions(false);
+    }
   }
 
   // ── Serviços ──
@@ -245,28 +373,50 @@ export default function MemberDetailPage() {
 
   if (!member) return null;
 
+  const isOwner = member.role === "OWNER";
+
   const tabs: { key: Tab; label: string }[] = [
     { key: "perfil", label: "Perfil" },
+    { key: "acesso", label: "Acesso" },
     { key: "servicos", label: "Serviços" },
     { key: "horarios", label: "Horários" },
     { key: "folgas", label: "Folgas" },
   ];
 
   return (
-    <div className="p-6 md:p-8 max-w-3xl">
+    <div className="p-6 md:p-8 max-w-4xl">
       {/* Back + header */}
       <div className="mb-6">
         <Link href="/admin/equipe" className="text-stone-500 hover:text-stone-300 text-xs font-medium transition-all mb-4 inline-block">
           ← Voltar para Equipe
         </Link>
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0">
-            <Avatar src={member.user.avatarUrl} alt={member.user.name} size="xl" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-full border border-stone-700 overflow-hidden flex items-center justify-center shrink-0">
+              <Avatar src={member.user.avatarUrl} alt={member.user.name} size="xl" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold text-stone-100">{member.user.name}</h1>
+                {isOwner && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    Proprietário
+                  </span>
+                )}
+              </div>
+              <p className="text-stone-400 text-sm font-medium">{member.user.email ?? member.user.phone}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-stone-100">{member.user.name}</h1>
-            <p className="text-stone-400 text-sm font-medium">{member.user.email ?? member.user.phone}</p>
-          </div>
+
+          {!isOwner && (
+            <button
+              onClick={handleResetAccess}
+              disabled={resettingAccess}
+              className="bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-bold px-4 py-2.5 rounded-lg transition-all disabled:opacity-50"
+            >
+              {resettingAccess ? "Gerando link..." : "🔑 Redefinir Senha"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -292,21 +442,75 @@ export default function MemberDetailPage() {
       {activeTab === "perfil" && (
         <form onSubmit={saveProfile} className="space-y-6">
           <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-stone-400">Dados Pessoais & Cadastrais</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Nome Completo *</label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Telefone / WhatsApp *</label>
+                <input
+                  type="text"
+                  required
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Ex: (11) 98765-4321"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>CPF</label>
+                <input
+                  type="text"
+                  value={cpf}
+                  onChange={(e) => setCpf(e.target.value)}
+                  placeholder="000.000.000-00"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>E-mail</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="colaborador@email.com"
+                  className={inputClass}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4">
             <h2 className="text-sm font-bold uppercase tracking-wider text-stone-400">Informações Profissionais</h2>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Cargo</label>
-                  <select
-                    title="Cargo do colaborador"
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    className={inputClass}
-                  >
-                    {ROLE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                  <label className={labelClass}>Cargo Operacional</label>
+                  {isOwner ? (
+                    <div className="bg-stone-950/50 border border-stone-800 rounded-lg px-4 py-3 text-stone-400 text-sm flex items-center justify-between">
+                      <span>Proprietário</span>
+                      <span className="text-[10px] text-stone-500 uppercase tracking-wider">(Imutável)</span>
+                    </div>
+                  ) : (
+                    <select
+                      title="Cargo do colaborador"
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      className={inputClass}
+                    >
+                      {ROLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className={labelClass}>Nível de Carreira</label>
@@ -335,6 +539,7 @@ export default function MemberDetailPage() {
               </div>
             </div>
           </div>
+
           <div className="flex justify-end">
             <button
               type="submit"
@@ -345,6 +550,99 @@ export default function MemberDetailPage() {
             </button>
           </div>
         </form>
+      )}
+
+      {/* ── Tab: Acesso (Permissões) ── */}
+      {activeTab === "acesso" && (
+        <div className="space-y-6">
+          {isOwner ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-6 text-center">
+              <span className="text-2xl mb-2 inline-block">👑</span>
+              <h3 className="text-base font-bold text-amber-400">Acesso Total de Proprietário</h3>
+              <p className="text-sm text-stone-300 mt-1 max-w-md mx-auto">
+                O proprietário possui acesso irrestrito a todas as operações, módulos financeiros, agenda e configurações do estabelecimento.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-stone-300">
+                    Controle de Permissões Granulares
+                  </h2>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Defina o que este colaborador pode visualizar ou executar na plataforma.
+                  </p>
+                </div>
+                {canEditPermissions && (
+                  <button
+                    onClick={savePermissions}
+                    disabled={savingPermissions}
+                    className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-6 py-2.5 rounded-lg text-sm transition-all disabled:opacity-50"
+                  >
+                    {savingPermissions ? "Salvando..." : "Salvar Permissões"}
+                  </button>
+                )}
+              </div>
+
+              {loadingPermissions ? (
+                <div className="p-8 text-center text-stone-500">Carregando permissões...</div>
+              ) : (
+                <div className="space-y-6">
+                  {(["agenda", "clientes", "comandas", "financeiro", "gestao"] as PermissionCategory[]).map(
+                    (cat) => {
+                      const items = PERMISSION_DEFINITIONS.filter((d) => d.category === cat);
+                      return (
+                        <div key={cat} className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+                          <div className="px-5 py-3 border-b border-stone-800 bg-stone-950/40">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500/90">
+                              {CATEGORY_LABELS[cat]}
+                            </h3>
+                          </div>
+                          <div className="divide-y divide-stone-800/60">
+                            {items.map((item) => {
+                              const isAllowed = Boolean(permissionsMap[item.key]);
+                              return (
+                                <div
+                                  key={item.key}
+                                  className="px-5 py-3.5 flex items-center justify-between gap-4"
+                                >
+                                  <div>
+                                    <p className="text-sm font-medium text-stone-200">{item.label}</p>
+                                    <p className="text-xs text-stone-500">{item.description}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={!canEditPermissions}
+                                    onClick={() =>
+                                      setPermissionsMap((prev) => ({
+                                        ...prev,
+                                        [item.key]: !prev[item.key],
+                                      }))
+                                    }
+                                    className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
+                                      isAllowed ? "bg-amber-500" : "bg-stone-700"
+                                    } ${!canEditPermissions ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                                  >
+                                    <span
+                                      className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                                        isAllowed ? "translate-x-6" : "translate-x-1"
+                                      }`}
+                                    />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {/* ── Tab: Serviços ── */}
@@ -535,6 +833,65 @@ export default function MemberDetailPage() {
                 ))}
               </ul>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Redefinir Senha ── */}
+      {resetModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-stone-100 flex items-center gap-2">
+                <span>🔑</span> Link de Redefinição de Acesso
+              </h3>
+              <button
+                onClick={() => setResetModalData(null)}
+                className="text-stone-500 hover:text-stone-300 text-sm p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-400">
+              Um link seguro foi gerado para este colaborador cadastrar uma nova senha. O link expira em 24 horas.
+            </p>
+
+            <div className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2">
+              <p className="text-[11px] font-mono text-amber-400 break-all select-all">
+                {resetModalData.activationUrl}
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(resetModalData.activationUrl);
+                  showSuccess("Link copiado para a área de transferência!");
+                }}
+                className="flex-1 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold py-2.5 px-4 rounded-lg border border-stone-700 transition-all"
+              >
+                📋 Copiar Link
+              </button>
+
+              <a
+                href={resetModalData.whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 px-4 rounded-lg text-center transition-all flex items-center justify-center gap-2"
+              >
+                <span>💬</span> Enviar pelo WhatsApp
+              </a>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setResetModalData(null)}
+                className="text-xs text-stone-400 hover:text-stone-200 px-4 py-2"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

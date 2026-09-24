@@ -18,7 +18,7 @@ async function resolveAdminGuardInternal(options: { checkSubscription: boolean }
 
   const isPlatform = isPlatformAdmin(email) || sessionRole === "SUPER_ADMIN";
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(sessionRole) && !isPlatform) {
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER", "RECEPTIONIST"].includes(sessionRole) && !isPlatform) {
     redirect("/acesso-negado");
   }
 
@@ -36,7 +36,7 @@ async function resolveAdminGuardInternal(options: { checkSubscription: boolean }
 
   const role = isPlatform ? (member?.role ?? "SUPER_ADMIN") : (member?.role ?? sessionRole);
 
-  if (!["SUPER_ADMIN", "OWNER", "MANAGER"].includes(role) && !isPlatform) {
+  if (!["SUPER_ADMIN", "OWNER", "MANAGER", "RECEPTIONIST"].includes(role) && !isPlatform) {
     redirect("/acesso-negado");
   }
 

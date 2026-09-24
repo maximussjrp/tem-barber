@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
+import { getOperationalStaffSession } from "@/lib/operational-session";
 
 export async function GET(request: Request) {
-  const { error, data } = await getAdminSession();
+  const { error, data } = await getOperationalStaffSession();
   if (error) return error;
 
   const url = new URL(request.url);
@@ -58,13 +59,14 @@ export async function POST(request: Request) {
         description: description?.trim() || null,
         price: Number(price),
         durationMin: Number(durationMin),
-        isActive: isActive !== false,
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
       },
       include: { category: { select: { id: true, name: true } } },
     });
 
     return NextResponse.json(service, { status: 201 });
-  } catch {
+  } catch (err) {
+    console.error("Erro ao criar serviço:", err);
     return NextResponse.json({ error: "Erro ao criar serviço." }, { status: 500 });
   }
 }

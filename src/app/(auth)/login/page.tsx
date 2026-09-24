@@ -244,6 +244,8 @@ function LoginContent() {
 
         if (role === "BARBER") {
           router.push("/member/agenda");
+        } else if (role === "RECEPTIONIST") {
+          router.push("/admin/agendamentos");
         } else {
           router.push("/admin/dashboard");
         }

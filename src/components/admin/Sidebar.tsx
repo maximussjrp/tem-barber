@@ -202,8 +202,25 @@ function getInitials(name: string): string {
 }
 
 export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userName, userRole, isPlatformAdmin = false }: SidebarProps) {
+  const isReceptionist = userRole === "RECEPTIONIST";
   const canSeeClub = userRole === "OWNER" || userRole === "MANAGER" || userRole === "SUPER_ADMIN";
-  const visibleNavItems = navItems.filter((item) => !item.ownerOnly || canSeeClub);
+
+  const visibleNavItems = navItems
+    .filter((item) => {
+      if (isReceptionist) {
+        return ["/admin/agendamentos", "/admin/fila", "/admin/comandas", "/admin/clientes"].includes(item.href);
+      }
+      return !item.ownerOnly || canSeeClub;
+    })
+    .map((item) => {
+      if (isReceptionist && item.children.length > 0) {
+        return {
+          ...item,
+          children: item.children.filter((c: { href: string }) => c.href === "/admin/clientes"),
+        };
+      }
+      return item;
+    });
 
   if (isPlatformAdmin) {
     visibleNavItems.unshift({
@@ -351,7 +368,17 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
           </div>
           <div className="min-w-0">
             <p className="text-xs font-semibold text-text-secondary truncate">{userName}</p>
-            <p className="text-[10px] text-text-muted">Administrador</p>
+            <p className="text-[10px] text-text-muted">
+              {userRole === "OWNER"
+                ? "Proprietário"
+                : userRole === "MANAGER"
+                ? "Gerente"
+                : userRole === "RECEPTIONIST"
+                ? "Recepcionista"
+                : isPlatformAdmin
+                ? "Super Admin"
+                : "Colaborador"}
+            </p>
           </div>
         </div>
         <button

@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { isPlatformAdmin, isSubscriptionActive, getTenantSubscription } from "@/lib/subscription-utils";
 import { resolveSingleActiveMembership } from "@/lib/tenant-context";
 
-const MEMBER_ROLES = ["OWNER", "MANAGER", "BARBER"];
+const MEMBER_ROLES = ["OWNER", "MANAGER", "BARBER", "RECEPTIONIST"];
 
 export async function requireMember() {
   const session = await getServerSession(authOptions);
