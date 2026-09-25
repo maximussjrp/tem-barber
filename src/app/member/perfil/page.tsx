@@ -39,6 +39,7 @@ export default function PerfilPage() {
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -48,6 +49,19 @@ export default function PerfilPage() {
   const [changingPassword, setChangingPassword] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    previewUrlRef.current = previewUrl;
+  }, [previewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     fetch("/api/member/perfil")
@@ -61,28 +75,96 @@ export default function PerfilPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleAvatarUpload = async (file: File) => {
+  const handleAvatarSelected = (file: File) => {
+    const validMimes = ["image/jpeg", "image/png", "image/webp"];
+    if (!validMimes.includes(file.type)) {
+      setError("Tipo de arquivo inválido. Use JPEG, PNG ou WebP.");
+      return;
+    }
+
     if (file.size > 5 * 1024 * 1024) {
       setError("Imagem deve ter no máximo 5MB.");
       return;
     }
-    setUploading(true);
+
+    // Revoga preview anterior se existente
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      setPreviewUrl(null);
+    }
+
+    // 1. Preview local imediato
+    const objectUrl = URL.createObjectURL(file);
+    previewUrlRef.current = objectUrl;
+    setPreviewUrl(objectUrl);
     setError("");
+
+    // 2. Upload em background
+    runBackgroundUpload(file, objectUrl);
+  };
+
+  const runBackgroundUpload = async (file: File, objectUrl: string) => {
+    setUploading(true);
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/member/avatar", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Erro no upload.");
+
+      // Upload PASS: substitui preview pela URL persistida
       setAvatarUrl(data.url);
+      if (previewUrlRef.current === objectUrl) {
+        setPreviewUrl(null);
+        previewUrlRef.current = null;
+      }
+      URL.revokeObjectURL(objectUrl);
     } catch (e: unknown) {
+      // Upload FAIL: revoga preview, restaura avatar anterior, exibe erro
+      if (previewUrlRef.current === objectUrl) {
+        setPreviewUrl(null);
+        previewUrlRef.current = null;
+      }
+      URL.revokeObjectURL(objectUrl);
+
       if (e instanceof Error) {
         setError(e.message);
       } else {
-        setError("Erro desconhecido.");
+        setError("Erro ao enviar imagem.");
       }
     } finally {
       setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setError("");
+    try {
+      const res = await fetch("/api/member/avatar", { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Erro ao remover foto.");
+      }
+
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+        setPreviewUrl(null);
+      }
+
+      setAvatarUrl(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Erro ao remover foto.");
+      }
     }
   };
 
@@ -169,6 +251,8 @@ export default function PerfilPage() {
     );
   }
 
+  const currentDisplayAvatar = previewUrl || avatarUrl;
+
   return (
     <div className="p-4 md:p-8 max-w-xl mx-auto">
       {/* Page header */}
@@ -184,7 +268,7 @@ export default function PerfilPage() {
         <div className="flex flex-col items-center gap-4">
           <div className="relative group">
             <div className="w-24 h-24 rounded-full border-2 border-stone-700 flex items-center justify-center relative">
-              <Avatar src={avatarUrl} alt={name} size="2xl" fallbackText={name} />
+              <Avatar src={currentDisplayAvatar} alt={name} size="2xl" fallbackText={name} />
               {uploading && (
                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-full z-10">
                   <span className="text-white text-xs font-bold">...</span>
@@ -209,14 +293,15 @@ export default function PerfilPage() {
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) handleAvatarUpload(file);
+              if (file) handleAvatarSelected(file);
             }}
           />
-          {avatarUrl && (
+          {Boolean(avatarUrl || previewUrl) && (
             <button
               type="button"
-              onClick={() => setAvatarUrl(null)}
-              className="text-xs text-stone-500 hover:text-red-400 transition-colors"
+              onClick={handleRemoveAvatar}
+              disabled={uploading}
+              className="text-xs text-stone-500 hover:text-red-400 transition-colors disabled:opacity-50"
             >
               Remover foto
             </button>

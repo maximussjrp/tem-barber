@@ -20,7 +20,13 @@ const sizeClasses = {
 };
 
 export function Avatar({ src, alt = "", size = "md", className = "", fallbackText }: AvatarProps) {
+  const [prevSrc, setPrevSrc] = useState(src);
   const [error, setError] = useState(false);
+
+  if (src !== prevSrc) {
+    setPrevSrc(src);
+    setError(false);
+  }
 
   // Extrair iniciais
   const initials = (fallbackText || alt)
