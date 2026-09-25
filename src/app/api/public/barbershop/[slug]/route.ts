@@ -29,7 +29,7 @@ export async function GET(
         orderBy: { name: "asc" },
       },
       members: {
-        where: { isActive: true },
+        where: { isActive: true, role: { in: ["BARBER", "MANAGER", "OWNER"] } },
         include: {
           user: { select: { name: true, avatarUrl: true } },
           services: { include: { service: { select: { id: true, name: true } } } },

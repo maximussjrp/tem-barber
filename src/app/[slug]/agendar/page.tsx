@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { formatHeaderDate } from "@/lib/time-utils";
@@ -59,6 +60,54 @@ function isPublicClientAuthLevel(authLevel: string | undefined) {
   );
 }
 
+function generateNextDays(count = 14) {
+  const days: { dateStr: string; dayOfWeek: string; dayNumber: string; monthStr: string; label: string }[] = [];
+  const now = new Date();
+  const dayNamesShort = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const monthNamesShort = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
+    let label = "";
+    if (i === 0) label = "Hoje";
+    else if (i === 1) label = "Amanhã";
+    else label = dayNamesShort[d.getDay()];
+
+    days.push({
+      dateStr,
+      dayOfWeek: dayNamesShort[d.getDay()],
+      dayNumber: dd,
+      monthStr: monthNamesShort[d.getMonth()],
+      label,
+    });
+  }
+  return days;
+}
+
+function groupSlotsByPeriod(slots: string[]) {
+  const morning: string[] = [];
+  const afternoon: string[] = [];
+  const evening: string[] = [];
+
+  for (const s of slots) {
+    const [h] = s.split(":").map(Number);
+    if (h < 12) {
+      morning.push(s);
+    } else if (h < 18) {
+      afternoon.push(s);
+    } else {
+      evening.push(s);
+    }
+  }
+
+  return { morning, afternoon, evening };
+}
+
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 const STEPS = ["Serviço", "Barbeiro", "Horário", "Dados", "Confirmar"];
@@ -72,10 +121,10 @@ function StepIndicator({ current }: { current: number }) {
             <div
               className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-all ${
                 i < current
-                  ? "bg-[var(--gold)] text-[#111113]"
+                  ? "bg-[#c9a84c] text-[#111113]"
                   : i === current
-                  ? "border-2 border-[var(--gold)] text-[var(--gold)] bg-[var(--gold-surface)]"
-                  : "bg-[var(--surface-2)] text-[var(--text-muted)]"
+                  ? "border-2 border-[#c9a84c] text-[#f2d78d] bg-[#c9a84c]/20"
+                  : "bg-zinc-800 text-zinc-500"
               }`}
             >
               {i < current ? "✓" : i + 1}
@@ -84,9 +133,7 @@ function StepIndicator({ current }: { current: number }) {
           {i < STEPS.length - 1 && (
             <div
               className={`w-8 h-px mx-1 transition-all ${
-                i < current
-                  ? "bg-[var(--gold)]"
-                  : "bg-[var(--border-subtle)]"
+                i < current ? "bg-[#c9a84c]" : "bg-zinc-800"
               }`}
             />
           )}
@@ -108,6 +155,7 @@ function BookingWizard() {
   const [step, setStep] = useState(0);
 
   // Data
+  const [barbershopName, setBarbershopName] = useState("");
   const [categories, setCategories] = useState<PublicCategory[]>([]);
   const [members, setMembers] = useState<PublicMember[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(Boolean(safeSlug));
@@ -124,9 +172,10 @@ function BookingWizard() {
   const [selectedSlot, setSelectedSlot] = useState<{ memberId: string; time: string } | null>(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
-  // Customer data (if not logged in)
+  // Customer data
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerNotes, setCustomerNotes] = useState("");
   const [loginStep, setLoginStep] = useState<"fill" | "logging-in">("fill");
   const [clientLoggedOut, setClientLoggedOut] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -155,11 +204,11 @@ function BookingWizard() {
   const [subscriptionSuspended, setSubscriptionSuspended] = useState(false);
   const [notFoundError, setNotFoundError] = useState(false);
 
-  useEffect(() => {
-    if (!safeSlug) {
-      return;
-    }
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef<number>(0);
 
+  useEffect(() => {
+    if (!safeSlug) return;
     localStorage.setItem("lastBarbershopSlug", safeSlug);
     document.cookie = `lastBarbershopSlug=${safeSlug}; Path=/; Max-Age=2592000; SameSite=Lax`;
   }, [safeSlug]);
@@ -167,9 +216,7 @@ function BookingWizard() {
   // ─── Load profile ────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!safeSlug) {
-      return;
-    }
+    if (!safeSlug) return;
 
     fetch(`/api/public/barbershop/${safeSlug}`)
       .then(async (r) => {
@@ -186,6 +233,7 @@ function BookingWizard() {
       })
       .then((d) => {
         if (!d) return;
+        setBarbershopName(d.barbershop?.name ?? "");
         setCategories(d.categories ?? []);
         setMembers(d.members ?? []);
       })
@@ -194,6 +242,30 @@ function BookingWizard() {
       })
       .finally(() => setLoadingProfile(false));
   }, [safeSlug]);
+
+  // Handle deep-link ?service=<id>
+  useEffect(() => {
+    if (typeof window === "undefined" || categories.length === 0) return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const preselectedServiceId = sp.get("service");
+      if (preselectedServiceId) {
+        const exists = categories.some((c) =>
+          c.services.some((s) => s.id === preselectedServiceId)
+        );
+        if (exists) {
+          setServiceQuantities((prev) => {
+            if (Object.keys(prev).length === 0) {
+              return { [preselectedServiceId]: 1 };
+            }
+            return prev;
+          });
+        }
+      }
+    } catch {
+      // Ignore if URLSearchParams is not available
+    }
+  }, [categories]);
 
   // ─── Computed ────────────────────────────────────────────────────────────
 
@@ -221,22 +293,38 @@ function BookingWizard() {
   }, [sessionPhone]);
 
   const selectedServices = allServices.filter((s) => selectedServiceIds.includes(s.id));
-  const totalPrice = selectedServices.reduce((s, svc) => s + Number(svc.price) * (serviceQuantities[svc.id] ?? 1), 0);
-  const totalDuration = selectedServices.reduce((s, svc) => s + svc.durationMin * (serviceQuantities[svc.id] ?? 1), 0);
+  const totalPrice = selectedServices.reduce(
+    (s, svc) => s + Number(svc.price) * (serviceQuantities[svc.id] ?? 1),
+    0
+  );
+  const totalDuration = selectedServices.reduce(
+    (s, svc) => s + svc.durationMin * (serviceQuantities[svc.id] ?? 1),
+    0
+  );
 
-  // Eligible members: perform ALL selected services
-  // BarberService links are the source of truth for online booking eligibility.
+  // Eligible members: execute ALL selected services
   const eligibleMembers = members.filter(
     (m) =>
       selectedServiceIds.length === 0 ||
-      selectedServiceIds.every((id) => m.serviceIds.includes(id))
+      selectedServiceIds.every((id) => (m.serviceIds ?? []).includes(id))
   );
+
+  const nextDays = useMemo(() => generateNextDays(14), []);
+  const activeDate = selectedDate || (nextDays[0]?.dateStr ?? "");
 
   // ─── Availability ─────────────────────────────────────────────────────────
 
   const fetchAvailability = useCallback(
     async (date: string) => {
       if (!date || selectedServiceIds.length === 0) return;
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const currentSeq = ++requestSeqRef.current;
+
       setLoadingSlots(true);
       setAvailabilityResults([]);
       setSelectedSlot(null);
@@ -246,23 +334,30 @@ function BookingWizard() {
         .map(([serviceId, qty]) => `${serviceId}:${qty}`)
         .join(",");
 
-      const params = new URLSearchParams({ date, services: servicesParam });
-      if (memberId) params.set("memberId", memberId);
+      const qParams = new URLSearchParams({ date, services: servicesParam });
+      if (memberId) qParams.set("memberId", memberId);
 
       try {
-        const res = await fetch(`/api/public/barbershop/${slug}/availability?${params}`);
+        const res = await fetch(`/api/public/barbershop/${slug}/availability?${qParams}`, {
+          signal: controller.signal,
+        });
+        if (currentSeq !== requestSeqRef.current) return;
         const data = await res.json();
+        if (currentSeq !== requestSeqRef.current) return;
         setAvailabilityResults(data.results ?? []);
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name === "AbortError") return;
       } finally {
-        setLoadingSlots(false);
+        if (currentSeq === requestSeqRef.current) {
+          setLoadingSlots(false);
+        }
       }
     },
     [slug, selectedServiceIds, serviceQuantities, selectedMemberId]
   );
 
   useEffect(() => {
-    if (step === 2 && selectedDate) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    if ((step === 1 || step === 2) && selectedDate) {
       fetchAvailability(selectedDate);
     }
   }, [step, selectedDate, fetchAvailability]);
@@ -271,6 +366,28 @@ function BookingWizard() {
     setBookingAttemptKey(null);
     setBookingError("");
   };
+
+  const handleSelectSlot = (time: string) => {
+    let memberId = selectedMemberId;
+    if (memberId === "any") {
+      const candidate = availabilityResults.find((r) => r.slots.includes(time));
+      memberId = candidate ? candidate.memberId : "any";
+    }
+    setSelectedSlot({ memberId, time });
+    resetBookingAttempt();
+  };
+
+  // Compute slots to show
+  const displaySlots = useMemo(() => {
+    if (selectedMemberId === "any") {
+      return Array.from(new Set(availabilityResults.flatMap((r) => r.slots))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+    }
+    return availabilityResults.find((r) => r.memberId === selectedMemberId)?.slots ?? [];
+  }, [availabilityResults, selectedMemberId]);
+
+  const groupedSlots = useMemo(() => groupSlotsByPeriod(displaySlots), [displaySlots]);
 
   // ─── Step 0: Services ─────────────────────────────────────────────────────
 
@@ -286,7 +403,6 @@ function BookingWizard() {
       }
     });
     setSelectedMemberId("any");
-    setSelectedDate("");
     setSelectedSlot(null);
     setAvailabilityResults([]);
     resetBookingAttempt();
@@ -301,7 +417,6 @@ function BookingWizard() {
       return prev;
     });
     setSelectedMemberId("any");
-    setSelectedDate("");
     setSelectedSlot(null);
     setAvailabilityResults([]);
     resetBookingAttempt();
@@ -319,15 +434,10 @@ function BookingWizard() {
       }
     });
     setSelectedMemberId("any");
-    setSelectedDate("");
     setSelectedSlot(null);
     setAvailabilityResults([]);
     resetBookingAttempt();
   };
-
-  // ─── Step 1: Barber ───────────────────────────────────────────────────────
-
-  // ─── Step 2: Date + Slot ─────────────────────────────────────────────────
 
   const minDate = () => {
     const d = new Date();
@@ -367,9 +477,7 @@ function BookingWizard() {
     if (res?.ok) {
       setClientLoggedOut(false);
       setStep(4);
-    }
-    // Even if sign-in fails (shouldn't), proceed — book API will handle session-less
-    else {
+    } else {
       setStep(4);
     }
   };
@@ -391,7 +499,7 @@ function BookingWizard() {
       await updateSession?.();
       router.refresh();
     } catch {
-      setLogoutError("Nao foi possivel sair agora. Tente novamente.");
+      setLogoutError("Não foi possível sair agora. Tente novamente.");
     } finally {
       setLoggingOut(false);
     }
@@ -406,8 +514,8 @@ function BookingWizard() {
     const idempotencyKey = bookingAttemptKey ?? crypto.randomUUID();
     setBookingAttemptKey(idempotencyKey);
 
-    // Build dateTime from selectedDate + selectedSlot.time
-    const [year, month, day] = selectedDate.split("-").map(Number);
+    const targetDate = selectedDate || activeDate;
+    const [year, month, day] = targetDate.split("-").map(Number);
     const [hours, minutes] = selectedSlot.time.split(":").map(Number);
     const dt = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0));
 
@@ -419,7 +527,8 @@ function BookingWizard() {
           "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify({
-          memberId: selectedSlot.memberId,
+          memberId: selectedSlot.memberId || (selectedMemberId === "any" ? "any" : selectedMemberId),
+          professionalPreference: selectedMemberId === "any" ? "ANY" : "SPECIFIC",
           services: Object.entries(serviceQuantities).map(([serviceId, quantity]) => ({
             serviceId,
             quantity,
@@ -427,12 +536,13 @@ function BookingWizard() {
           dateTime: dt.toISOString(),
           customerName: customerName.trim() || undefined,
           customerPhone: effectiveCustomerPhone || undefined,
+          notes: customerNotes.trim() ? customerNotes.trim().slice(0, 500) : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const errorData = data as BookingErrorResponse;
-        if (errorData.error === "SLOT_UNAVAILABLE") {
+        if (errorData.error === "SLOT_UNAVAILABLE" || errorData.error === "APPOINTMENT_CONFLICT") {
           setSelectedSlot(null);
           setBookingAttemptKey(null);
           await fetchAvailability(selectedDate);
@@ -462,42 +572,41 @@ function BookingWizard() {
   if (confirmed) {
     const dt = new Date(confirmed.dateTime);
     return (
-      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center p-6">
-        <div className="max-w-sm w-full text-center space-y-6">
-          {/* Check circle */}
-          <div className="relative mx-auto w-24 h-24">
-            <div className="absolute inset-0 rounded-full bg-[var(--gold-surface)] animate-ping opacity-30" />
-            <div className="relative w-24 h-24 rounded-full border-2 border-[var(--gold)] bg-[var(--surface-1)] flex items-center justify-center glow-gold">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <div className="min-h-screen bg-[#0b0b0d] text-zinc-100 flex items-center justify-center p-4 sm:p-6">
+        <div className="max-w-md w-full text-center space-y-6">
+          <div className="relative mx-auto w-20 h-20">
+            <div className="absolute inset-0 rounded-full bg-[#c9a84c]/20 animate-ping opacity-30" />
+            <div className="relative w-20 h-20 rounded-full border-2 border-[#c9a84c] bg-zinc-900 flex items-center justify-center shadow-[0_0_24px_rgba(201,168,76,0.3)]">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
           </div>
 
           <div>
-            <h1 className="font-serif text-3xl font-bold text-[var(--text-primary)]">Agendado!</h1>
-            <p className="text-[var(--text-secondary)] text-sm mt-2">
+            <h1 className="text-3xl font-bold text-zinc-100">Agendado!</h1>
+            <p className="text-zinc-400 text-sm mt-2">
               {confirmed.whatsappConfirmation
-                ? "Envie o codigo pelo WhatsApp para finalizar a confirmacao."
-                : "Seu horario esta confirmado."}
+                ? "Envie o código pelo WhatsApp para finalizar a confirmação."
+                : "Seu horário está confirmado."}
             </p>
           </div>
 
-          <div className="bg-[var(--surface-1)] border border-[var(--gold-border)] rounded-2xl p-5 text-left space-y-0 divide-y divide-[var(--border-subtle)]">
+          <div className="bg-[#121317] border border-white/10 rounded-2xl p-5 text-left divide-y divide-white/10">
             {[
               { label: "Data", value: formatHeaderDate(confirmed.dateTime.split("T")[0]) },
               { label: "Horário", value: dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) },
-              { label: "Barbeiro", value: confirmed.barberName },
+              { label: "Profissional", value: confirmed.barberName },
               { label: "Serviços", value: confirmed.services.join(", ") },
             ].map(({ label, value }) => (
               <div key={label} className="flex justify-between py-3 text-sm">
-                <span className="text-[var(--text-muted)]">{label}</span>
-                <span className="text-[var(--text-primary)] font-medium text-right max-w-[180px]">{value}</span>
+                <span className="text-zinc-400">{label}</span>
+                <span className="text-zinc-100 font-medium text-right max-w-[200px]">{value}</span>
               </div>
             ))}
             <div className="flex justify-between pt-4 pb-1">
-              <span className="text-[var(--text-muted)] text-sm">Total</span>
-              <span className="text-[var(--gold)] font-bold text-lg font-serif">
+              <span className="text-zinc-400 text-sm">Total</span>
+              <span className="text-[#f2d78d] font-bold text-lg">
                 {Number(confirmed.totalPrice).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </span>
             </div>
@@ -509,13 +618,13 @@ function BookingWizard() {
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
                   Confirmação WhatsApp
                 </p>
-                <p className="text-sm text-[var(--text-secondary)] mt-1">
+                <p className="text-sm text-zinc-300 mt-1">
                   Código:{" "}
-                  <span className="font-mono text-lg font-bold text-[var(--text-primary)]">
+                  <span className="font-mono text-lg font-bold text-zinc-100">
                     {confirmed.whatsappConfirmation.token}
                   </span>
                 </p>
-                <p className="text-xs text-[var(--text-muted)] mt-2">
+                <p className="text-xs text-zinc-400 mt-2">
                   Envie esta mensagem para a barbearia confirmar que este número é seu.
                 </p>
               </div>
@@ -523,15 +632,15 @@ function BookingWizard() {
                 href={confirmed.whatsappConfirmation.link}
                 target="_blank"
                 rel="noreferrer"
-                className="block w-full text-center rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold py-3.5 transition-colors text-sm"
+                className="block w-full text-center rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-3.5 transition-colors text-sm"
               >
                 Enviar código para a barbearia
               </a>
             </div>
           ) : (
-            <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-2xl p-4 text-center space-y-1">
+            <div className="bg-[#121317] border border-white/10 rounded-2xl p-4 text-center space-y-1">
               <p className="text-sm font-semibold text-emerald-400">✓ WhatsApp já verificado</p>
-              <p className="text-xs text-[var(--text-muted)]">
+              <p className="text-xs text-zinc-400">
                 Você pode acompanhar seus agendamentos em Meus agendamentos.
               </p>
             </div>
@@ -543,9 +652,9 @@ function BookingWizard() {
                 type="button"
                 onClick={handleClientLogout}
                 disabled={loggingOut}
-                className="w-full rounded-xl border border-[var(--border-medium)] px-4 py-3 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
+                className="w-full rounded-xl border border-white/15 px-4 py-3 text-sm font-semibold text-zinc-300 transition-colors hover:bg-white/5 disabled:opacity-50"
               >
-                {loggingOut ? "Saindo..." : "Nao e voce? Sair"}
+                {loggingOut ? "Saindo..." : "Não é você? Sair"}
               </button>
               {logoutError && <p className="text-xs text-red-400">{logoutError}</p>}
             </div>
@@ -554,13 +663,13 @@ function BookingWizard() {
           <div className="flex gap-3">
             <button
               onClick={() => router.push(`/${slug}`)}
-              className="flex-1 py-3.5 rounded-xl border border-[var(--border-medium)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors text-sm font-semibold"
+              className="flex-1 py-3.5 rounded-xl border border-white/15 text-zinc-300 hover:bg-white/5 transition-colors text-sm font-semibold"
             >
               Voltar
             </button>
             <button
               onClick={() => router.push(`/minha-conta?barbershop=${slug}`)}
-              className="btn-gold flex-1"
+              className="flex-1 py-3.5 rounded-xl bg-[#c9a84c] text-black font-semibold hover:bg-[#d8b760] transition-colors text-sm"
             >
               Meus agendamentos
             </button>
@@ -570,14 +679,14 @@ function BookingWizard() {
     );
   }
 
-  // ─── Loading ──────────────────────────────────────────────────────────────
+  // ─── Loading / Errors ─────────────────────────────────────────────────────
 
   if (loadingProfile) {
     return (
-      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center">
+      <div className="min-h-screen bg-[#0b0b0d] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
-          <p className="text-[var(--text-muted)] text-sm">Carregando...</p>
+          <div className="w-8 h-8 rounded-full border-2 border-[#c9a84c] border-t-transparent animate-spin" />
+          <p className="text-zinc-400 text-sm">Carregando...</p>
         </div>
       </div>
     );
@@ -585,34 +694,17 @@ function BookingWizard() {
 
   if (notFoundError || !safeSlug) {
     return (
-      <div className="min-h-screen bg-stone-950 flex items-center justify-center p-6 text-stone-100 relative overflow-hidden">
-        <div className="absolute w-[500px] h-[500px] rounded-full bg-amber-500/5 blur-[120px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
-        <div className="relative max-w-md w-full bg-stone-900/60 backdrop-blur-xl border border-stone-800 rounded-3xl p-8 md:p-10 text-center shadow-2xl">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 mx-auto mb-6">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-8 h-8"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"
-              />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight mb-4 bg-gradient-to-r from-stone-100 to-stone-300 bg-clip-text text-transparent">
+      <div className="min-h-screen bg-[#0b0b0d] flex items-center justify-center p-6 text-zinc-100">
+        <div className="max-w-md w-full bg-[#121317] border border-white/10 rounded-3xl p-8 text-center shadow-2xl">
+          <h1 className="text-2xl font-bold tracking-tight mb-4 text-zinc-100">
             Barbearia Não Encontrada
           </h1>
-          <p className="text-stone-400 text-sm leading-relaxed mb-6">
+          <p className="text-zinc-400 text-sm leading-relaxed mb-6">
             Esta barbearia não foi encontrada ou não está disponível para agendamento online.
           </p>
           <button
             onClick={() => router.push("/")}
-            className="w-full px-5 py-3 rounded-xl bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-750 transition-colors border border-stone-700/50"
+            className="w-full px-5 py-3 rounded-xl bg-zinc-800 text-zinc-200 text-sm font-semibold hover:bg-zinc-700 transition-colors border border-white/10"
           >
             Voltar para o Início
           </button>
@@ -623,36 +715,19 @@ function BookingWizard() {
 
   if (subscriptionSuspended) {
     return (
-      <div className="min-h-screen bg-stone-950 flex items-center justify-center p-6 text-stone-100 relative overflow-hidden">
-        <div className="absolute w-[500px] h-[500px] rounded-full bg-amber-500/5 blur-[120px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
-        <div className="relative max-w-md w-full bg-stone-900/60 backdrop-blur-xl border border-stone-800 rounded-3xl p-8 md:p-10 text-center shadow-2xl">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-500 mx-auto mb-6">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-8 h-8"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"
-              />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight mb-4 bg-gradient-to-r from-stone-100 to-stone-300 bg-clip-text text-transparent">
+      <div className="min-h-screen bg-[#0b0b0d] flex items-center justify-center p-6 text-zinc-100">
+        <div className="max-w-md w-full bg-[#121317] border border-white/10 rounded-3xl p-8 text-center shadow-2xl">
+          <h1 className="text-2xl font-bold tracking-tight mb-4 text-zinc-100">
             Agendamentos Indisponíveis
           </h1>
-          <p className="text-stone-400 text-sm leading-relaxed mb-6">
+          <p className="text-zinc-400 text-sm leading-relaxed mb-6">
             Esta barbearia está temporariamente indisponível para agendamentos.
           </p>
           <button
             onClick={() => router.push(`/${slug}`)}
-            className="w-full px-5 py-3 rounded-xl bg-stone-800 text-stone-300 text-sm font-semibold hover:bg-stone-750 transition-colors border border-stone-700/50"
+            className="w-full px-5 py-3 rounded-xl bg-zinc-800 text-zinc-200 text-sm font-semibold hover:bg-zinc-700 transition-colors border border-white/10"
           >
-            Voltar para o Perfil
+            Voltar para a Barbearia
           </button>
         </div>
       </div>
@@ -662,124 +737,142 @@ function BookingWizard() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)]">
+    <div className="min-h-screen bg-[#0b0b0d] text-zinc-100">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-[var(--bg)]/90 backdrop-blur border-b border-[var(--border-subtle)] px-4 py-3 flex items-center gap-3">
+      <div className="sticky top-0 z-40 bg-[#0b0b0d]/90 backdrop-blur border-b border-white/10 px-4 py-3 flex items-center gap-3">
         {step > 0 ? (
           <button
-            onClick={() => setStep((s) => s - 1)}
-            className="w-9 h-9 flex items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            onClick={() => setStep((s) => (s === 2 ? 0 : s - 1))}
+            className="w-9 h-9 flex items-center justify-center rounded-xl bg-zinc-900 border border-white/10 text-zinc-300 hover:text-white transition-colors"
             title="Voltar"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
           </button>
         ) : (
-          <div className="w-9 h-9 rounded-xl bg-[var(--gold-surface)] border border-[var(--gold-border)] flex items-center justify-center">
-            <span className="font-serif font-bold text-[var(--gold)] text-sm">MB</span>
+          <div className="w-9 h-9 rounded-xl bg-[#c9a84c]/15 border border-[#c9a84c]/40 flex items-center justify-center">
+            <span className="font-bold text-[#c9a84c] text-xs">TB</span>
           </div>
         )}
-        <div className="flex-1">
-          <p className="text-xs text-[var(--text-muted)] font-medium uppercase tracking-widest">{STEPS[step]}</p>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] text-zinc-400 font-medium uppercase tracking-widest truncate">
+            {barbershopName || "Tem Barber"}
+          </p>
+          <p className="text-xs text-[#c9a84c] font-semibold">
+            {step === 0 ? "Escolha o Serviço" : (step === 1 || step === 2) ? "Data, Profissional & Horário" : step === 3 ? "Seus Dados" : "Confirmar"}
+          </p>
         </div>
         {clientSessionActive && (
           <button
             type="button"
             onClick={handleClientLogout}
             disabled={loggingOut}
-            className="px-3 h-9 rounded-xl bg-[var(--surface-2)] text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-50"
+            className="px-3 h-8 rounded-lg bg-zinc-900 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
           >
             {loggingOut ? "Saindo..." : "Sair"}
           </button>
         )}
         <button
           onClick={() => router.push(`/${slug}`)}
-          className="w-9 h-9 flex items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-zinc-900 border border-white/10 text-zinc-400 hover:text-white transition-colors"
           title="Cancelar"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
 
-      <div className="max-w-lg mx-auto px-4 pt-8 pb-24">
+      <div className="max-w-xl mx-auto px-4 pt-6 pb-28">
         <StepIndicator current={step} />
 
         {/* ── Step 0: Choose services ────────────────────────────────────── */}
         {step === 0 && (
-          <div className="space-y-5">
-            <h2 className="text-xl font-serif font-bold text-stone-100">Escolha o serviço</h2>
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-xl font-semibold text-zinc-100">O que você deseja fazer?</h2>
+              <p className="text-xs text-zinc-400 mt-1">Selecione os serviços desejados para o seu agendamento.</p>
+            </div>
+
             {categories.filter((c) => c.services.length > 0).length === 0 && (
-              <div className="py-12 text-center border border-[var(--border-subtle)] rounded-xl bg-[var(--surface-1)]">
-                <div className="w-16 h-16 bg-[var(--surface-3)] rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl leading-none">✂️</span>
+              <div className="py-12 text-center border border-white/10 rounded-2xl bg-[#121317]">
+                <div className="w-14 h-14 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl">
+                  ✂️
                 </div>
-                <p className="font-bold text-[var(--text-primary)] mb-1">Nenhum serviço disponível</p>
-                <p className="text-sm text-[var(--text-muted)] max-w-sm mx-auto">
+                <p className="font-semibold text-zinc-200 mb-1">Nenhum serviço disponível</p>
+                <p className="text-xs text-zinc-400 max-w-sm mx-auto">
                   Esta barbearia ainda não possui serviços disponíveis para agendamento online.
                 </p>
               </div>
             )}
+
             {categories.filter((c) => c.services.length > 0).map((cat) => (
-              <div key={cat.id}>
-                <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-wider mb-2">
+              <div key={cat.id} className="space-y-2">
+                <p className="text-xs font-semibold text-[#c9a84c] uppercase tracking-wider">
                   {cat.name}
                 </p>
-                <div className="bg-stone-900 border border-stone-800 rounded-xl divide-y divide-stone-800">
+                <div className="bg-[#121317] border border-white/10 rounded-2xl divide-y divide-white/5 overflow-hidden">
                   {cat.services.map((svc) => {
                     const qty = serviceQuantities[svc.id] ?? 0;
                     const checked = qty > 0;
                     return (
                       <label
                         key={svc.id}
-                        className={`flex items-center justify-between gap-4 px-4 py-3 cursor-pointer transition-colors ${
-                          checked ? "bg-amber-500/5" : "hover:bg-stone-800/40"
+                        className={`flex items-center justify-between gap-4 px-4 py-3.5 cursor-pointer transition-colors ${
+                          checked ? "bg-[#c9a84c]/10" : "hover:bg-white/[0.03]"
                         }`}
                       >
-                        <div className="flex items-center gap-4 min-w-0 flex-1">
+                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
                           <input
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleService(svc.id)}
                             title={svc.name}
-                            className="accent-amber-500 w-4 h-4 cursor-pointer"
+                            aria-label={svc.name}
+                            className="accent-[#c9a84c] w-4 h-4 cursor-pointer rounded"
                           />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-stone-200 truncate">{svc.name}</p>
+                            <p className="text-sm font-medium text-zinc-200 truncate">{svc.name}</p>
                             {svc.description && (
-                              <p className="text-xs text-stone-500 mt-0.5 line-clamp-1">{svc.description}</p>
+                              <p className="text-xs text-zinc-400 mt-0.5 line-clamp-1">{svc.description}</p>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-4 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
                           {checked && (
-                            <div className="flex items-center bg-stone-950 border border-stone-800 rounded-lg px-1.5 py-0.5" onClick={(e) => e.preventDefault()}>
+                            <div className="flex items-center bg-black/60 border border-white/15 rounded-lg px-1.5 py-0.5" onClick={(e) => e.preventDefault()}>
                               <button
                                 type="button"
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); decrementService(svc.id); }}
-                                className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                                className="text-zinc-400 hover:text-white px-1.5 py-0.5 font-bold text-xs"
+                                aria-label="Diminuir quantidade"
                               >
                                 -
                               </button>
-                              <span className="text-xs text-stone-200 font-semibold px-1 min-w-[12px] text-center">
+                              <span className="text-xs text-zinc-200 font-semibold px-1 min-w-[14px] text-center">
                                 {qty}
                               </span>
                               <button
                                 type="button"
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); incrementService(svc.id); }}
-                                className="text-stone-400 hover:text-white px-1.5 py-0.5 font-bold"
+                                className="text-zinc-400 hover:text-white px-1.5 py-0.5 font-bold text-xs"
+                                aria-label="Aumentar quantidade"
                               >
                                 +
                               </button>
                             </div>
                           )}
-                          <div className="text-right min-w-[80px]">
-                            <p className="text-sm font-bold text-amber-400">
+                          <div className="text-right min-w-[76px]">
+                            <p className="text-sm font-semibold text-[#f2d78d]">
                               {Number(svc.price).toLocaleString("pt-BR", {
                                 style: "currency",
                                 currency: "BRL",
                               })}
                             </p>
-                            <p className="text-xs text-stone-600">{svc.durationMin}min</p>
+                            <p className="text-[11px] text-zinc-400">{svc.durationMin} min</p>
                           </div>
                         </div>
                       </label>
@@ -791,139 +884,188 @@ function BookingWizard() {
           </div>
         )}
 
-        {/* ── Step 1: Choose barber ──────────────────────────────────────── */}
-        {step === 1 && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-serif font-bold text-stone-100">Escolha o barbeiro</h2>
-            <div className="space-y-3">
-              {/* Any available */}
-              <label
-                className={`flex items-center gap-4 bg-stone-900 border rounded-xl px-4 py-3 cursor-pointer transition-colors ${
-                  selectedMemberId === "any"
-                    ? "border-amber-500/60 bg-amber-500/5"
-                    : "border-stone-800 hover:bg-stone-800/40"
-                }`}
+        {/* ── Step 1 & 2: Single Screen for Date + Professional + Slots ──── */}
+        {(step === 1 || step === 2) && (
+          <div className="space-y-6">
+            {/* Selected Service Compact Banner */}
+            <div className="flex items-center justify-between bg-[#121317] border border-white/10 rounded-2xl px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-zinc-400">Serviço selecionado:</p>
+                <p className="text-sm font-medium text-zinc-100 truncate">
+                  {selectedServices.map((s) => `${s.name}${serviceQuantities[s.id] > 1 ? ` (${serviceQuantities[s.id]}x)` : ""}`).join(", ")}
+                </p>
+                <p className="text-xs text-[#c9a84c] font-semibold mt-0.5">
+                  {totalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} · {totalDuration} min
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStep(0)}
+                className="ml-3 px-3 py-1.5 rounded-lg border border-white/15 text-xs text-zinc-300 hover:text-white hover:border-[#c9a84c]/50 transition-colors"
               >
+                Alterar
+              </button>
+            </div>
+
+            {/* Date Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  Data do atendimento
+                </label>
+                {selectedDate && (
+                  <span className="text-xs text-[#c9a84c] font-medium">
+                    {formatHeaderDate(selectedDate)}
+                  </span>
+                )}
+              </div>
+
+              {/* Horizontal Date Strip */}
+              <div className="flex flex-row flex-nowrap overflow-x-auto gap-2.5 pb-2 pt-1 scrollbar-none" data-testid="date-strip">
+                {nextDays.map((d) => {
+                  const isSelected = selectedDate === d.dateStr;
+                  return (
+                    <button
+                      key={d.dateStr}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDate(d.dateStr);
+                        setSelectedSlot(null);
+                        resetBookingAttempt();
+                      }}
+                      className={`min-w-[70px] py-2.5 px-2 rounded-2xl border text-center shrink-0 transition-all ${
+                        isSelected
+                          ? "border-[#c9a84c] bg-[#c9a84c]/15 text-[#f2d78d] shadow-sm shadow-[#c9a84c]/10"
+                          : "border-white/10 bg-[#121317] text-zinc-300 hover:border-white/20 hover:bg-[#15161c]"
+                      }`}
+                    >
+                      <p className="text-[11px] font-medium uppercase tracking-wider opacity-80">{d.label}</p>
+                      <p className="text-lg font-bold my-0.5">{d.dayNumber}</p>
+                      <p className="text-[10px] uppercase tracking-wider opacity-70">{d.monthStr}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Accessible Native Date Input */}
+              <div className="pt-1">
                 <input
-                  type="radio"
-                  name="member"
-                  value="any"
-                  checked={selectedMemberId === "any"}
-                  onChange={() => {
+                  type="date"
+                  value={selectedDate}
+                  min={minDate()}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setSelectedSlot(null);
+                    resetBookingAttempt();
+                  }}
+                  title="Data do agendamento"
+                  aria-label="Data do agendamento"
+                  className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-2.5 text-zinc-200 text-xs focus:border-[#c9a84c] focus:outline-none transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Professional Horizontal Strip */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Profissional
+              </label>
+
+              <div className="flex flex-row flex-nowrap overflow-x-auto gap-3 pb-2 pt-1 scrollbar-none" data-testid="professional-strip">
+                {/* Option 1: Qualquer disponível */}
+                <button
+                  type="button"
+                  onClick={() => {
                     setSelectedMemberId("any");
                     setSelectedSlot(null);
                     resetBookingAttempt();
                   }}
-                  title="Qualquer barbeiro disponível"
-                  className="accent-amber-500"
-                />
-                <div className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center text-stone-400">
-                  ✂️
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-stone-200">Qualquer disponível</p>
-                  <p className="text-xs text-stone-500">Mostrar todos os horários</p>
-                </div>
-              </label>
-
-              {eligibleMembers.map((m) => (
-                <label
-                  key={m.id}
-                  className={`flex items-center gap-4 bg-stone-900 border rounded-xl px-4 py-3 cursor-pointer transition-colors ${
-                    selectedMemberId === m.id
-                      ? "border-amber-500/60 bg-amber-500/5"
-                      : "border-stone-800 hover:bg-stone-800/40"
+                  className={`min-w-[96px] max-w-[110px] p-3 rounded-2xl border text-center flex flex-col items-center justify-center shrink-0 transition-all cursor-pointer ${
+                    selectedMemberId === "any"
+                      ? "border-[#c9a84c] bg-[#c9a84c]/15 text-[#f2d78d] shadow-sm shadow-[#c9a84c]/10"
+                      : "border-white/10 bg-[#121317] text-zinc-300 hover:border-white/20 hover:bg-[#15161c]"
                   }`}
                 >
-                  <input
-                    type="radio"
-                    name="member"
-                    value={m.id}
-                    checked={selectedMemberId === m.id}
-                    onChange={() => {
-                      setSelectedMemberId(m.id);
-                      setSelectedSlot(null);
-                      resetBookingAttempt();
-                    }}
-                    title={m.name}
-                    className="accent-amber-500"
-                  />
-                  <div className="w-10 h-10 rounded-full border border-[var(--border-subtle)] overflow-hidden flex items-center justify-center shrink-0 relative">
-                    <Avatar src={m.avatarUrl} alt={m.name} size="md" fallbackText={m.name} />
+                  <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-lg mb-1.5">
+                    👥
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-stone-200">{m.name}</p>
-                    {m.ratingAvg > 0 && (
-                      <p className="text-xs text-amber-400">★ {m.ratingAvg.toFixed(1)}</p>
-                    )}
-                    {m.bio && <p className="text-xs text-stone-500 mt-0.5 line-clamp-1">{m.bio}</p>}
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
+                  <p className="text-xs font-semibold leading-tight line-clamp-2">Qualquer disponível</p>
+                  <p className="text-[10px] text-zinc-400 mt-1">Todos horários</p>
+                </button>
 
-        {/* ── Step 2: Date + Time ────────────────────────────────────────── */}
-        {step === 2 && (
-          <div className="space-y-5">
-            <h2 className="text-xl font-serif font-bold text-stone-100">Escolha o horário</h2>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">
-                Data
-              </label>
-              <input
-                type="date"
-                value={selectedDate}
-                min={minDate()}
-                onChange={(e) => {
-                  setSelectedDate(e.target.value);
-                  setSelectedSlot(null);
-                  resetBookingAttempt();
-                }}
-                title="Data do agendamento"
-                className="w-full bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-3 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors"
-              />
-            </div>
-
-            {selectedDate && (
-              <div className="space-y-3">
-                {loadingSlots ? (
-                  <div className="space-y-2">
-                    {[1, 2].map((i) => (
-                      <div key={i} className="h-16 rounded-xl bg-stone-900/40 animate-pulse" />
-                    ))}
-                  </div>
-                ) : availabilityResults.length === 0 ? (
-                  <div className="text-center py-8">
-                    <p className="text-stone-400">Nenhum horário disponível neste dia.</p>
-                    <p className="text-stone-600 text-sm mt-1">Tente outra data.</p>
-                  </div>
-                ) : (
-                  availabilityResults.map((result) => (
-                    <div key={result.memberId}>
-                      {availabilityResults.length > 1 && (
-                        <p className="text-xs text-stone-500 font-semibold uppercase tracking-wider mb-2">
-                          {result.memberName}
-                        </p>
+                {/* Eligible Professionals */}
+                {eligibleMembers.map((m) => {
+                  const isSelected = selectedMemberId === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMemberId(m.id);
+                        setSelectedSlot(null);
+                        resetBookingAttempt();
+                      }}
+                      className={`min-w-[96px] max-w-[110px] p-3 rounded-2xl border text-center flex flex-col items-center justify-center shrink-0 transition-all cursor-pointer ${
+                        isSelected
+                          ? "border-[#c9a84c] bg-[#c9a84c]/15 text-[#f2d78d] shadow-sm shadow-[#c9a84c]/10"
+                          : "border-white/10 bg-[#121317] text-zinc-300 hover:border-white/20 hover:bg-[#15161c]"
+                      }`}
+                    >
+                      <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center shrink-0 relative mb-1.5 border border-white/10">
+                        <Avatar src={m.avatarUrl} alt={m.name} size="md" fallbackText={m.name} />
+                      </div>
+                      <p className="text-xs font-semibold leading-tight line-clamp-2">{m.name}</p>
+                      {m.ratingAvg > 0 ? (
+                        <p className="text-[10px] text-[#f2d78d] mt-1">★ {m.ratingAvg.toFixed(1)}</p>
+                      ) : (
+                        <p className="text-[10px] text-zinc-500 mt-1">Barbeiro</p>
                       )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Time Slots */}
+            <div className="space-y-3 pt-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Horários disponíveis
+              </label>
+
+              {!selectedDate ? (
+                <div className="bg-[#121317] border border-white/10 rounded-2xl p-6 text-center text-zinc-400 text-xs">
+                  Selecione uma data acima para visualizar os horários.
+                </div>
+              ) : loadingSlots ? (
+                <div className="space-y-2">
+                  <div className="h-10 rounded-xl bg-zinc-900/60 animate-pulse" />
+                  <div className="h-20 rounded-xl bg-zinc-900/40 animate-pulse" />
+                </div>
+              ) : displaySlots.length === 0 ? (
+                <div className="bg-[#121317] border border-white/10 rounded-2xl p-6 text-center text-zinc-400">
+                  <p className="text-sm font-medium text-zinc-300">Nenhum horário disponível neste dia.</p>
+                  <p className="text-xs text-zinc-500 mt-1">Escolha outra data ou outro profissional para conferir horários.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Manhã */}
+                  {groupedSlots.morning.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>☀️</span> Manhã
+                      </p>
                       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {result.slots.map((time) => {
-                          const isSelected =
-                            selectedSlot?.memberId === result.memberId &&
-                            selectedSlot?.time === time;
+                        {groupedSlots.morning.map((time) => {
+                          const isSelected = selectedSlot?.time === time;
                           return (
                             <button
                               key={time}
-                              onClick={() => {
-                                setSelectedSlot({ memberId: result.memberId, time });
-                                resetBookingAttempt();
-                              }}
-                              className={`py-3 rounded-xl text-sm font-semibold transition-colors min-h-[48px] ${
+                              type="button"
+                              onClick={() => handleSelectSlot(time)}
+                              className={`py-3 rounded-xl text-sm font-semibold transition-all min-h-[48px] ${
                                 isSelected
-                                  ? "bg-amber-500 text-stone-950"
-                                  : "bg-stone-900 border border-stone-800 text-stone-300 hover:border-amber-500/50 hover:text-amber-400"
+                                  ? "bg-[#c9a84c] text-black font-bold shadow-md shadow-[#c9a84c]/20"
+                                  : "bg-[#121317] border border-white/10 text-zinc-200 hover:border-[#c9a84c]/50 hover:text-[#f8e4a5]"
                               }`}
                             >
                               {time}
@@ -932,20 +1074,100 @@ function BookingWizard() {
                         })}
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-            )}
+                  )}
+
+                  {/* Tarde */}
+                  {groupedSlots.afternoon.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>🌤️</span> Tarde
+                      </p>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {groupedSlots.afternoon.map((time) => {
+                          const isSelected = selectedSlot?.time === time;
+                          return (
+                            <button
+                              key={time}
+                              type="button"
+                              onClick={() => handleSelectSlot(time)}
+                              className={`py-3 rounded-xl text-sm font-semibold transition-all min-h-[48px] ${
+                                isSelected
+                                  ? "bg-[#c9a84c] text-black font-bold shadow-md shadow-[#c9a84c]/20"
+                                  : "bg-[#121317] border border-white/10 text-zinc-200 hover:border-[#c9a84c]/50 hover:text-[#f8e4a5]"
+                              }`}
+                            >
+                              {time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Noite */}
+                  {groupedSlots.evening.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>🌙</span> Noite
+                      </p>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {groupedSlots.evening.map((time) => {
+                          const isSelected = selectedSlot?.time === time;
+                          return (
+                            <button
+                              key={time}
+                              type="button"
+                              onClick={() => handleSelectSlot(time)}
+                              className={`py-3 rounded-xl text-sm font-semibold transition-all min-h-[48px] ${
+                                isSelected
+                                  ? "bg-[#c9a84c] text-black font-bold shadow-md shadow-[#c9a84c]/20"
+                                  : "bg-[#121317] border border-white/10 text-zinc-200 hover:border-[#c9a84c]/50 hover:text-[#f8e4a5]"
+                              }`}
+                            >
+                              {time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ── Step 3: Customer data ─────────────────────────────────────── */}
+        {/* ── Step 3: Customer data + Notes + Summary ────────────────────── */}
         {step === 3 && (
           <div className="space-y-5">
-            <h2 className="text-xl font-serif font-bold text-stone-100">Seus dados</h2>
+            <h2 className="text-xl font-semibold text-zinc-100">Seus dados</h2>
+
+            {/* Quick summary of the booking */}
+            <div className="bg-[#121317] border border-white/10 rounded-2xl p-4 space-y-2 text-xs">
+              <div className="flex justify-between text-zinc-400">
+                <span>Data & Horário:</span>
+                <span className="text-zinc-200 font-medium">
+                  {formatHeaderDate(selectedDate)} às {selectedSlot?.time}
+                </span>
+              </div>
+              <div className="flex justify-between text-zinc-400">
+                <span>Profissional:</span>
+                <span className="text-zinc-200 font-medium">
+                  {selectedMemberId === "any"
+                    ? "Qualquer disponível"
+                    : members.find((m) => m.id === selectedMemberId)?.name ?? "Profissional"}
+                </span>
+              </div>
+              <div className="flex justify-between text-zinc-400">
+                <span>Total:</span>
+                <span className="text-[#f2d78d] font-bold">
+                  {totalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({totalDuration} min)
+                </span>
+              </div>
+            </div>
 
             {clientSessionActive && hasValidSessionPhone ? (
-              <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-xl px-4 py-3">
+              <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-2xl px-4 py-3.5">
                 <p className="text-sm text-emerald-400">
                   ✓ Você está logado como <span className="font-semibold">{session?.user?.name}</span>.
                 </p>
@@ -958,9 +1180,9 @@ function BookingWizard() {
                   disabled={loggingOut}
                   className="mt-3 text-xs font-semibold text-emerald-200 underline-offset-4 hover:underline disabled:opacity-50"
                 >
-                  {loggingOut ? "Saindo..." : "Nao e voce? Sair"}
+                  {loggingOut ? "Saindo..." : "Não é você? Sair"}
                 </button>
-                {logoutError && <p className="mt-2 text-xs text-red-400">{logoutError}</p>}
+                {logoutError && <p className="text-xs text-red-400">{logoutError}</p>}
               </div>
             ) : (
               <div className="space-y-4">
@@ -969,24 +1191,24 @@ function BookingWizard() {
                     Sua conta precisa de um WhatsApp válido para concluir o agendamento. Informe abaixo:
                   </div>
                 )}
-                <p className="text-sm text-stone-400">
-                  Informe seu telefone para confirmar. Se você não tiver conta, criamos automaticamente.
+                <p className="text-xs text-zinc-400">
+                  Informe seus dados para confirmar. Se você não tiver conta, criamos automaticamente.
                 </p>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                     Nome
                   </label>
                   <input
                     type="text"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Seu nome"
+                    placeholder="Seu nome completo"
                     title="Seu nome"
-                    className="w-full bg-stone-950/70 border border-stone-800 rounded-xl px-4 py-3.5 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-base"
+                    className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-3.5 text-zinc-100 placeholder-zinc-500 focus:border-[#c9a84c] focus:outline-none transition-colors text-sm"
                   />
                 </div>
-                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-stone-400">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                     Telefone (WhatsApp) *
                   </label>
                   <input
@@ -1011,7 +1233,7 @@ function BookingWizard() {
                     }}
                     placeholder="(11) 99999-9999"
                     title="Seu telefone"
-                    className="w-full bg-stone-950/70 border border-stone-800 rounded-xl px-4 py-3.5 text-stone-100 focus:border-amber-500/80 focus:outline-none transition-colors text-base"
+                    className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-3.5 text-zinc-100 placeholder-zinc-500 focus:border-[#c9a84c] focus:outline-none transition-colors text-sm"
                   />
                   {bookingError && step === 3 && (
                     <p className="text-xs text-red-400 mt-1">{bookingError}</p>
@@ -1019,43 +1241,62 @@ function BookingWizard() {
                 </div>
               </div>
             )}
+
+            {/* Notes input */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <label
+                  htmlFor="customer-notes"
+                  className="text-xs font-semibold uppercase tracking-wider text-zinc-400"
+                >
+                  Observações (opcional)
+                </label>
+                <span className="text-[11px] text-zinc-500">{customerNotes.length}/500</span>
+              </div>
+              <textarea
+                id="customer-notes"
+                value={customerNotes}
+                onChange={(e) => setCustomerNotes(e.target.value.slice(0, 500))}
+                maxLength={500}
+                placeholder="Ex: Prefiro acabamento na navalha, corte baixo nas laterais..."
+                className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:border-[#c9a84c] focus:outline-none transition-colors text-sm min-h-[72px] resize-none"
+              />
+            </div>
           </div>
         )}
 
         {/* ── Step 4: Summary + Confirm ─────────────────────────────────── */}
         {step === 4 && selectedSlot && (
           <div className="space-y-5">
-            <h2 className="text-xl font-serif font-bold text-stone-100">Confirmar agendamento</h2>
+            <h2 className="text-xl font-semibold text-zinc-100">Confirmar agendamento</h2>
 
-            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800">
+            <div className="bg-[#121317] border border-white/10 rounded-2xl divide-y divide-white/10 overflow-hidden">
               {[
-                {
-                  label: "Data",
-                  value: formatHeaderDate(selectedDate),
-                },
+                { label: "Data", value: formatHeaderDate(selectedDate) },
                 { label: "Horário", value: selectedSlot.time },
                 {
                   label: "Barbeiro",
                   value:
-                    availabilityResults.find((r) => r.memberId === selectedSlot.memberId)
-                      ?.memberName ?? "—",
+                    selectedMemberId === "any"
+                      ? "Qualquer disponível"
+                      : members.find((m) => m.id === selectedSlot.memberId)?.name ??
+                        availabilityResults.find((r) => r.memberId === selectedSlot.memberId)?.memberName ?? "—",
                 },
                 {
                   label: "Serviços",
-                  value: selectedServices.map((s) => s.name).join(", "),
+                  value: selectedServices.map((s) => `${s.name}${serviceQuantities[s.id] > 1 ? ` (${serviceQuantities[s.id]}x)` : ""}`).join(", "),
                 },
                 { label: "Duração", value: `${totalDuration} min` },
+                ...(customerNotes.trim() ? [{ label: "Observações", value: customerNotes.trim() }] : []),
               ].map(({ label, value }) => (
-                <div key={label} className="flex justify-between px-4 py-3 text-sm">
-                  <span className="text-stone-500">{label}</span>
-                  <span className="text-stone-200 font-medium text-right max-w-[200px]">
-                    {value}
-                  </span>
+                <div key={label} className="flex justify-between px-4 py-3.5 text-sm">
+                  <span className="text-zinc-400">{label}</span>
+                  <span className="text-zinc-100 font-medium text-right max-w-[220px]">{value}</span>
                 </div>
               ))}
-              <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-stone-500">Total</span>
-                <span className="text-amber-400 font-bold text-base">
+              <div className="flex justify-between px-4 py-3.5 text-sm">
+                <span className="text-zinc-400">Total</span>
+                <span className="text-[#f2d78d] font-bold text-base">
                   {totalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </span>
               </div>
@@ -1070,7 +1311,7 @@ function BookingWizard() {
             <button
               onClick={handleBook}
               disabled={booking}
-              className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-stone-950 font-bold py-4 rounded-xl transition-colors text-base"
+              className="w-full bg-[#c9a84c] hover:bg-[#d8b760] disabled:opacity-50 text-black font-bold py-4 rounded-xl transition-colors text-base uppercase tracking-wider"
             >
               {booking ? "Confirmando..." : "Confirmar agendamento"}
             </button>
@@ -1078,13 +1319,12 @@ function BookingWizard() {
         )}
 
         {/* ── Bottom navigation ─────────────────────────────────────────── */}
-        <div className="fixed bottom-0 left-0 right-0 bg-stone-950/90 backdrop-blur border-t border-stone-800 px-4 py-4">
-          <div className="max-w-lg mx-auto">
-            {/* Summary bar */}
-            {selectedServiceIds.length > 0 && (
-              <div className="flex items-center justify-between mb-3 text-sm">
-                <span className="text-stone-500">{totalDuration}min</span>
-                <span className="text-amber-400 font-bold">
+        <div className="fixed bottom-0 left-0 right-0 bg-[#0b0b0d]/95 backdrop-blur border-t border-white/10 px-4 py-3.5 z-40">
+          <div className="max-w-xl mx-auto">
+            {selectedServiceIds.length > 0 && step < 4 && (
+              <div className="flex items-center justify-between mb-2.5 text-xs">
+                <span className="text-zinc-400">{totalDuration} min</span>
+                <span className="text-[#f2d78d] font-bold text-sm">
                   {totalPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </span>
               </div>
@@ -1094,24 +1334,22 @@ function BookingWizard() {
               <button
                 onClick={() => setStep(1)}
                 disabled={selectedServiceIds.length === 0}
-                className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-bold py-4 rounded-xl transition-colors"
+                className="w-full bg-[#c9a84c] hover:bg-[#d8b760] disabled:opacity-40 text-black font-bold py-3.5 rounded-xl transition-colors uppercase tracking-wider text-sm"
               >
                 Continuar
               </button>
             )}
-            {step === 1 && (
+            {(step === 1 || step === 2) && (
               <button
-                onClick={() => setStep(2)}
-                className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-4 rounded-xl transition-colors"
-              >
-                Continuar
-              </button>
-            )}
-            {step === 2 && (
-              <button
-                onClick={() => setStep(3)}
-                disabled={!selectedSlot}
-                className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-bold py-4 rounded-xl transition-colors"
+                onClick={() => {
+                  if (selectedSlot) {
+                    setStep(3);
+                  } else {
+                    setStep(2);
+                  }
+                }}
+                disabled={step === 2 && !selectedSlot}
+                className="w-full bg-[#c9a84c] hover:bg-[#d8b760] disabled:opacity-40 text-black font-bold py-3.5 rounded-xl transition-colors uppercase tracking-wider text-sm"
               >
                 Continuar
               </button>
@@ -1120,7 +1358,7 @@ function BookingWizard() {
               <button
                 onClick={handleLoginOrContinue}
                 disabled={!(clientSessionActive && hasValidSessionPhone) && !customerPhone.trim()}
-                className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-bold py-4 rounded-xl transition-colors"
+                className="w-full bg-[#c9a84c] hover:bg-[#d8b760] disabled:opacity-40 text-black font-bold py-3.5 rounded-xl transition-colors uppercase tracking-wider text-sm"
               >
                 {loginStep === "logging-in" ? "Entrando..." : "Continuar"}
               </button>
@@ -1138,8 +1376,8 @@ export default function AgendasPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center">
-          <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
+        <div className="min-h-screen bg-[#0b0b0d] flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-[#c9a84c] border-t-transparent animate-spin" />
         </div>
       }
     >

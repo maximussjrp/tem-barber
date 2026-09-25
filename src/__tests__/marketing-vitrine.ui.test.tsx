@@ -25,7 +25,7 @@ const mockBarbershop = {
   state: "SP",
 };
 
-function mockFetch(overrides: Partial<typeof mockBarbershop> = {}, uploadResponse: any = { url: "/uploads/new-image.png" }, uploadOk = true) {
+function mockFetch(overrides: Partial<typeof mockBarbershop> = {}, uploadResponse: Record<string, unknown> = { url: "/uploads/new-image.png" }, uploadOk = true) {
   const data = { ...mockBarbershop, ...overrides };
   return vi.fn().mockImplementation((url: string, options?: RequestInit) => {
     if (url === "/api/admin/barbershop" && (!options || options.method !== "PUT")) {
@@ -210,7 +210,7 @@ describe("Marketing Vitrine Page", () => {
     render(<MarketingVitrinePage />);
 
     expect(
-      await screen.findByText("✓ Logo: recomendado formato quadrado, máximo 2MB.")
+      await screen.findByText("✓ Use uma logo nítida. Fundo transparente é opcional.")
     ).toBeInTheDocument();
     expect(
       screen.getByText("✓ Foto de capa: recomendado formato horizontal, máximo 5MB.")

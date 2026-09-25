@@ -76,13 +76,16 @@ export async function GET(
     );
   }
 
-  const { results, totalDuration } = await getAvailableSlots({
+  const effectiveMemberId =
+    memberIdParam && memberIdParam.toLowerCase() !== "any" ? memberIdParam : undefined;
+
+  const { results, totalDuration, unionSlots } = await getAvailableSlots({
     barbershopId: barbershop.id,
     dateStr,
     serviceIds,
     services: servicesInput,
-    memberId: memberIdParam || undefined,
+    memberId: effectiveMemberId,
   });
 
-  return NextResponse.json({ results, totalDuration });
+  return NextResponse.json({ results, totalDuration, unionSlots: unionSlots ?? [] });
 }

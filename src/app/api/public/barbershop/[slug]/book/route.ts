@@ -22,8 +22,12 @@ import { createAppointmentWithScheduleLock } from "@/lib/appointments/create-app
 import {
   PublicBookingUnavailableError,
   PublicSlotInvalidError,
+  getPublicSlotInvalidReason,
   validatePublicBookingEligibility,
 } from "@/lib/appointments/public-booking-eligibility";
+import { findEligibleMembersForServices } from "@/lib/appointments/professional-service-capability";
+import { startOfDayUTC, endOfDayUTC, nowBR } from "@/lib/time-utils";
+import { isNormalizedTimeOffOverlapping, normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 import { stripMetadataFromNotes, buildNotesWithMetadata } from "@/lib/appointments/notes-metadata";
 import {
   findBarbershopCustomerById,
@@ -75,6 +79,7 @@ interface PublicBookingBody {
   notes?: string;
   idempotencyKey?: string;
   bookingMode?: "NORMAL" | "FIT_IN";
+  professionalPreference?: "ANY" | "SPECIFIC";
 }
 
 function getUtcWeekRange(inputDate: Date) {
@@ -297,9 +302,21 @@ export async function POST(
     );
   }
 
-  if (!memberId || (!serviceIds?.length && !bodyServices?.length) || !dateTime) {
+  const isAnyProfessional =
+    !memberId ||
+    memberId.toLowerCase() === "any" ||
+    body.professionalPreference === "ANY";
+
+  if ((!memberId && !isAnyProfessional) || (!serviceIds?.length && !bodyServices?.length) || !dateTime) {
     return NextResponse.json(
       { error: "memberId, services e dateTime sao obrigatorios." },
+      { status: 400 }
+    );
+  }
+
+  if (notes && notes.length > 500) {
+    return NextResponse.json(
+      { error: "NOTES_TOO_LONG", message: "As observações devem ter no máximo 500 caracteres." },
       { status: 400 }
     );
   }
@@ -368,7 +385,7 @@ export async function POST(
   try {
     idempotencyKey = getIdempotencyKeyFromRequest(request, body);
     requestHash = hashPublicBookingPayload({
-      memberId: memberId || "",
+      memberId: (isAnyProfessional ? "any" : memberId) || "",
       serviceIds: serviceIds || [],
       services: bodyServices,
       dateTime: dateTime || "",
@@ -439,15 +456,135 @@ export async function POST(
 
       const targetServiceIds = normalizedServices.map((s) => s.serviceId);
 
-      const { services } = await validatePublicBookingEligibility(tx, {
-        barbershopId: barbershop.id,
-        memberId,
-        serviceIds: targetServiceIds,
-        dateTime: requestedDateTime,
-        quantities: serviceQtyMap,
-      });
+      const availableCandidates: { memberId: string; workloadMinutes: number }[] = [];
 
-      const { totalPrice, durationMin } = calculateAppointmentTotals(services);
+      if (isAnyProfessional) {
+        const capability = await findEligibleMembersForServices(tx, {
+          barbershopId: barbershop.id,
+          serviceIds: targetServiceIds,
+        });
+
+        if (!capability.memberIds.length) {
+          throw new PublicBookingUnavailableError();
+        }
+
+        const [year, month, day] = [
+          requestedDateTime.getUTCFullYear(),
+          requestedDateTime.getUTCMonth() + 1,
+          requestedDateTime.getUTCDate(),
+        ];
+        const dayOfWeek = requestedDateTime.getUTCDay();
+        const startOfDay = startOfDayUTC(year, month, day);
+        const endOfDay = endOfDayUTC(year, month, day);
+
+        const candidates = await tx.barbershopMember.findMany({
+          where: {
+            id: { in: capability.memberIds },
+            barbershopId: barbershop.id,
+            isActive: true,
+            role: { in: ["OWNER", "MANAGER", "BARBER"] },
+          },
+          include: {
+            workingHours: {
+              where: { dayOfWeek, isActive: true },
+            },
+            timeOffs: {
+              where: {
+                startDate: { lt: endOfDay },
+                endDate: { gte: startOfDay },
+              },
+            },
+          },
+        });
+
+        if (!candidates.length) {
+          throw new PublicBookingUnavailableError();
+        }
+
+        const estDurationMin = capability.services.reduce(
+          (total, service) => total + service.durationMin * (serviceQtyMap.get(service.id) ?? 1),
+          0
+        );
+
+        availableCandidates.length = 0;
+
+        for (const candidate of candidates) {
+          const wh = candidate.workingHours[0];
+          if (!wh) continue;
+
+          const reason = getPublicSlotInvalidReason({
+            dateTime: requestedDateTime,
+            durationMin: estDurationMin,
+            workingHours: wh,
+            now: nowBR(),
+          });
+          if (reason) continue;
+
+          const hasTimeOffConflict = candidate.timeOffs.some((storedTimeOff) => {
+            if (!isNormalizedTimeOffOverlapping(storedTimeOff, { start: startOfDay, end: endOfDay })) {
+              return false;
+            }
+            const to = normalizeStoredTimeOffInterval(storedTimeOff);
+            const toStart = to.startDate ? new Date(to.startDate) : null;
+            const toEnd = to.endDate ? new Date(to.endDate) : null;
+            if (!toStart || !toEnd || isNaN(toStart.getTime()) || isNaN(toEnd.getTime())) {
+              return true;
+            }
+            const startMin = toStart.getTime() <= startOfDay.getTime()
+              ? 0
+              : toStart.getUTCHours() * 60 + toStart.getUTCMinutes();
+            const endMin = toEnd.getTime() >= endOfDay.getTime()
+              ? 1440
+              : toEnd.getUTCHours() * 60 + toEnd.getUTCMinutes();
+
+            const reqStartMin = requestedDateTime.getUTCHours() * 60 + requestedDateTime.getUTCMinutes();
+            const reqEndMin = reqStartMin + estDurationMin;
+            return reqStartMin < endMin && reqEndMin > startMin;
+          });
+          if (hasTimeOffConflict) continue;
+
+          const dayAppointments = await tx.appointment.findMany({
+            where: {
+              barbershopId: barbershop.id,
+              memberId: candidate.id,
+              status: { in: ["PENDING", "CONFIRMED"] },
+              dateTime: { gte: startOfDay, lte: endOfDay },
+            },
+            select: { dateTime: true, durationMin: true },
+          });
+
+          const reqStartTime = requestedDateTime.getTime();
+          const reqEndTime = reqStartTime + estDurationMin * 60000;
+          const hasOverlap = dayAppointments.some((appt) => {
+            const apptStart = new Date(appt.dateTime).getTime();
+            const apptEnd = apptStart + appt.durationMin * 60000;
+            return apptStart < reqEndTime && apptEnd > reqStartTime;
+          });
+          if (hasOverlap) continue;
+
+          const workloadMinutes = dayAppointments.reduce((sum, a) => sum + a.durationMin, 0);
+
+          availableCandidates.push({
+            memberId: candidate.id,
+            workloadMinutes,
+          });
+        }
+
+        if (availableCandidates.length === 0) {
+          throw new AppointmentConflictError("Nenhum profissional disponível neste horário.");
+        }
+
+        availableCandidates.sort((a, b) => {
+          if (a.workloadMinutes !== b.workloadMinutes) {
+            return a.workloadMinutes - b.workloadMinutes;
+          }
+          return a.memberId.localeCompare(b.memberId);
+        });
+      }
+
+      const candidateIdsToTry = isAnyProfessional
+        ? availableCandidates.map((c) => c.memberId)
+        : [memberId!];
 
       let customerId: string | undefined;
       if (isPublicClientSession && sessionUserId) {
@@ -545,16 +682,54 @@ export async function POST(
       });
       const updatedNotes = buildNotesWithMetadata(cleanUserNotes, activeQtyMap);
 
-      const appointment = await createAppointmentWithScheduleLock(tx, {
-        barbershopId: barbershop.id,
-        memberId,
-        customerId,
-        dateTime: requestedDateTime,
-        totalPrice,
-        durationMin,
-        services,
-        notes: updatedNotes,
-      });
+      let appointment: Awaited<ReturnType<typeof createAppointmentWithScheduleLock>> | null = null;
+      let lastConflictError: unknown = null;
+
+      for (const candMemberId of candidateIdsToTry) {
+        try {
+          const { services } = await validatePublicBookingEligibility(tx, {
+            barbershopId: barbershop.id,
+            memberId: candMemberId,
+            serviceIds: targetServiceIds,
+            dateTime: requestedDateTime,
+            quantities: serviceQtyMap,
+          });
+
+          const { totalPrice, durationMin } = calculateAppointmentTotals(services);
+
+          appointment = await createAppointmentWithScheduleLock(tx, {
+            barbershopId: barbershop.id,
+            memberId: candMemberId,
+            customerId,
+            dateTime: requestedDateTime,
+            totalPrice,
+            durationMin,
+            services,
+            notes: updatedNotes,
+          });
+
+          break;
+        } catch (err) {
+          if (
+            isAnyProfessional &&
+            (err instanceof AppointmentConflictError ||
+              err instanceof ScheduleBlockConflictApptError ||
+              err instanceof PublicSlotInvalidError ||
+              err instanceof ProfessionalNotAvailableError)
+          ) {
+            lastConflictError = err;
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!appointment) {
+        throw (
+          lastConflictError ??
+          new AppointmentConflictError("Nenhum profissional disponível neste horário.")
+        );
+      }
 
       // Upsert vínculo do cliente com a barbearia
       let isWhatsappVerified = false;

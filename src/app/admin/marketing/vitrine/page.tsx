@@ -351,7 +351,7 @@ export default function MarketingVitrinePage() {
                   <img
                     src={logoUrl}
                     alt="Logo da barbearia"
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain p-1"
                   />
                 </div>
               ) : (
@@ -446,8 +446,7 @@ export default function MarketingVitrinePage() {
             </div>
           </div>
           <div className="text-[11px] text-stone-500 mt-4 space-y-1">
-            <p>✓ Use imagens nítidas e bem iluminadas para aumentar a confiança do cliente.</p>
-            <p>✓ Logo: recomendado formato quadrado, máximo 2MB.</p>
+            <p>✓ Use uma logo nítida. Fundo transparente é opcional.</p>
             <p>✓ Foto de capa: recomendado formato horizontal, máximo 5MB.</p>
             <p>✓ Formatos aceitos: JPEG, PNG ou WebP.</p>
           </div>
@@ -582,7 +581,7 @@ export default function MarketingVitrinePage() {
                   <img
                     src={logoUrl}
                     alt="Logo"
-                    className="w-14 h-14 rounded-xl object-cover border border-stone-700 -mt-10 bg-stone-900"
+                    className="w-14 h-14 rounded-xl object-contain p-1 border border-stone-700 -mt-10 bg-stone-900"
                   />
                 ) : (
                   <div className="w-14 h-14 rounded-xl bg-stone-800 border border-stone-700 flex items-center justify-center -mt-10 shrink-0">

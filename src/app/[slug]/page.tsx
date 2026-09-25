@@ -224,7 +224,7 @@ export default async function BarbershopPublicPage({
           <Link href={`/${safeSlug}`} className="flex items-center gap-3" aria-label={`Inicio da vitrine ${barbershop.name}`}>
             <div className="h-9 w-9 overflow-hidden rounded-full border border-[#c9a84c]/60 bg-zinc-900 shadow-[0_0_0_1px_rgba(255,255,255,.08)]">
               {barbershop.logoUrl ? (
-                <img src={barbershop.logoUrl} alt={`Logo de ${barbershop.name}`} className="h-full w-full object-cover" />
+                <img src={barbershop.logoUrl} alt={`Logo de ${barbershop.name}`} className="h-full w-full object-contain p-0.5" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-[#c9a84c]">
                   {barbershop.name.slice(0, 1).toUpperCase()}

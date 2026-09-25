@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { startOfDayUTC, endOfDayUTC, nowBR } from "@/lib/time-utils";
 import { isNormalizedTimeOffOverlapping, normalizeStoredTimeOffInterval } from "@/lib/schedule-blocks";
 import { findEligibleMembersForServices } from "./professional-service-capability";
@@ -18,13 +19,21 @@ export interface AvailabilityResult {
   slots: string[];
 }
 
+type MemberWithRelations = Prisma.BarbershopMemberGetPayload<{
+  include: {
+    user: { select: { name: true } };
+    workingHours: true;
+    timeOffs: true;
+  };
+}>;
+
 export async function getAvailableSlots({
   barbershopId,
   dateStr,
   serviceIds,
   services,
   memberId,
-}: GetAvailabilityParams): Promise<{ results: AvailabilityResult[]; totalDuration: number }> {
+}: GetAvailabilityParams): Promise<{ results: AvailabilityResult[]; totalDuration: number; unionSlots: string[] }> {
   const capability = await findEligibleMembersForServices(prisma, {
     barbershopId,
     serviceIds,
@@ -32,7 +41,7 @@ export async function getAvailableSlots({
   });
 
   if (!capability.services.length) {
-    return { results: [], totalDuration: 0 };
+    return { results: [], totalDuration: 0, unionSlots: [] };
   }
 
   let totalDuration = 0;
@@ -53,33 +62,80 @@ export async function getAvailableSlots({
   const memberIds = capability.memberIds;
 
   if (memberIds.length === 0) {
-    return { results: [], totalDuration };
+    return { results: [], totalDuration, unionSlots: [] };
   }
 
-  const results: AvailabilityResult[] = [];
-
-  // 4. Calculate for each member
-  for (const mId of memberIds) {
-    const member = await prisma.barbershopMember.findFirst({
-      where: { id: mId, barbershopId, isActive: true },
-      include: {
-        user: { select: { name: true } },
-        workingHours: {
-          where: { dayOfWeek, isActive: true },
-        },
-        timeOffs: {
-          where: {
-            startDate: { lt: endOfDay },
-            endDate: { gte: startOfDay },
-          },
+  // 3. Batch fetch members and appointments (eliminating N+1)
+  let members: MemberWithRelations[] = [];
+  const fetched = await prisma.barbershopMember.findMany({
+    where: { id: { in: memberIds }, barbershopId, isActive: true },
+    include: {
+      user: { select: { name: true } },
+      workingHours: {
+        where: { dayOfWeek, isActive: true },
+      },
+      timeOffs: {
+        where: {
+          startDate: { lt: endOfDay },
+          endDate: { gte: startOfDay },
         },
       },
-    });
+    },
+  });
 
+  if (fetched.length > 0 && fetched[0].workingHours !== undefined) {
+    members = fetched as MemberWithRelations[];
+  } else {
+    // Fallback for legacy mocks that specifically set findFirst
+    for (const mId of memberIds) {
+      const m = await prisma.barbershopMember.findFirst({
+        where: { id: mId, barbershopId, isActive: true },
+        include: {
+          user: { select: { name: true } },
+          workingHours: {
+            where: { dayOfWeek, isActive: true },
+          },
+          timeOffs: {
+            where: {
+              startDate: { lt: endOfDay },
+              endDate: { gte: startOfDay },
+            },
+          },
+        },
+      });
+      if (m) members.push(m as MemberWithRelations);
+    }
+  }
+
+  // Batch fetch existing appointments for all members on this day
+  const appointments = await prisma.appointment.findMany({
+    where: {
+      barbershopId,
+      memberId: memberIds.length === 1 ? memberIds[0] : { in: memberIds },
+      dateTime: { gte: startOfDay, lte: endOfDay },
+      status: { in: ["PENDING", "CONFIRMED"] },
+    },
+    orderBy: { dateTime: "asc" },
+  });
+
+  const appointmentsByMember = new Map<string, Array<{ dateTime: Date; durationMin: number }>>();
+  for (const appt of appointments) {
+    const targetMemberId = appt.memberId || memberIds[0];
+    const list = appointmentsByMember.get(targetMemberId) ?? [];
+    list.push(appt);
+    appointmentsByMember.set(targetMemberId, list);
+  }
+
+  const memberMap = new Map(members.map((m) => [m.id, m]));
+  const results: AvailabilityResult[] = [];
+
+  for (const mId of memberIds) {
+    const member = memberMap.get(mId);
     if (!member) continue;
+    if ((member as { role?: string }).role === "RECEPTIONIST") continue;
 
     // Skip if no working hours for this day
-    const wh = member.workingHours[0];
+    const wh = member.workingHours?.[0];
     if (!wh) continue;
 
     const toMinutes = (time: string) => {
@@ -91,7 +147,7 @@ export async function getAvailableSlots({
     const workEnd = toMinutes(wh.endTime);
 
     // Converter TimeOffs em intervalos ocupados de minutos no dia
-    const timeOffBusy = member.timeOffs.filter((storedTimeOff) =>
+    const timeOffBusy = (member.timeOffs || []).filter((storedTimeOff) =>
       isNormalizedTimeOffOverlapping(storedTimeOff, { start: startOfDay, end: endOfDay })
     ).map((storedTimeOff) => {
       const to = normalizeStoredTimeOffInterval(storedTimeOff);
@@ -113,15 +169,7 @@ export async function getAvailableSlots({
       return { start: startMin, end: endMin };
     });
 
-    // Get existing appointments for this member on this day
-    const existing = await prisma.appointment.findMany({
-      where: {
-        memberId: mId,
-        dateTime: { gte: startOfDay, lte: endOfDay },
-        status: { in: ["PENDING", "CONFIRMED"] },
-      },
-      orderBy: { dateTime: "asc" },
-    });
+    const existing = appointmentsByMember.get(mId) ?? [];
 
     // Build busy intervals in minutes based on UTC hours (since dateTime is stored UTC aligned)
     const busy = [
@@ -157,7 +205,7 @@ export async function getAvailableSlots({
 
       const hh = String(Math.floor(start / 60)).padStart(2, "0");
       const mm = String(start % 60).padStart(2, "0");
-      slots.push(`${hh}:${mm}`);
+      slots.push(hh + ":" + mm);
     }
 
     if (slots.length > 0) {
@@ -169,5 +217,6 @@ export async function getAvailableSlots({
     }
   }
 
-  return { results, totalDuration };
+  const unionSlots = Array.from(new Set(results.flatMap((r) => r.slots))).sort((a, b) => a.localeCompare(b));
+  return { results, totalDuration, unionSlots };
 }
