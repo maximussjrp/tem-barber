@@ -110,7 +110,7 @@ function groupSlotsByPeriod(slots: string[]) {
 
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
-const STEPS = ["Serviço", "Barbeiro", "Horário", "Dados", "Confirmar"];
+const STEPS = ["Serviço", "Disponibilidade", "Dados", "Confirmar"];
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -357,7 +357,7 @@ function BookingWizard() {
   );
 
   useEffect(() => {
-    if ((step === 1 || step === 2) && selectedDate) {
+    if (step === 1 && selectedDate) {
       fetchAvailability(selectedDate);
     }
   }, [step, selectedDate, fetchAvailability]);
@@ -444,7 +444,7 @@ function BookingWizard() {
 
   const handleLoginOrContinue = async () => {
     if (clientSessionActive && hasValidSessionPhone) {
-      setStep(4);
+      setStep(3);
       return;
     }
     if (!customerPhone.trim()) return;
@@ -472,9 +472,9 @@ function BookingWizard() {
     setLoginStep("fill");
     if (res?.ok) {
       setClientLoggedOut(false);
-      setStep(4);
+      setStep(3);
     } else {
-      setStep(4);
+      setStep(3);
     }
   };
 
@@ -738,7 +738,7 @@ function BookingWizard() {
       <div className="sticky top-0 z-40 bg-[#0b0b0d]/90 backdrop-blur border-b border-white/10 px-4 py-3 flex items-center gap-3">
         {step > 0 ? (
           <button
-            onClick={() => setStep((s) => (s === 2 ? 0 : s - 1))}
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
             className="w-9 h-9 flex items-center justify-center rounded-xl bg-zinc-900 border border-white/10 text-zinc-300 hover:text-white transition-colors"
             title="Voltar"
           >
@@ -756,7 +756,7 @@ function BookingWizard() {
             {barbershopName || "Tem Barber"}
           </p>
           <p className="text-xs text-[#c9a84c] font-semibold">
-            {step === 0 ? "Escolha o Serviço" : (step === 1 || step === 2) ? "Data, Profissional & Horário" : step === 3 ? "Seus Dados" : "Confirmar"}
+            {step === 0 ? "Escolha o Serviço" : step === 1 ? "Data, Profissional & Horário" : step === 2 ? "Seus Dados" : "Confirmar"}
           </p>
         </div>
         {clientSessionActive && (
@@ -880,8 +880,8 @@ function BookingWizard() {
           </div>
         )}
 
-        {/* ── Step 1 & 2: Single Screen for Date + Professional + Slots ──── */}
-        {(step === 1 || step === 2) && (
+        {/* ── Step 1: Single Screen for Date + Professional + Slots ──── */}
+        {step === 1 && (
           <div className="space-y-6">
             {/* Selected Service Compact Banner */}
             <div className="flex items-center justify-between bg-[#121317] border border-white/10 rounded-2xl px-4 py-3">
@@ -1132,8 +1132,8 @@ function BookingWizard() {
           </div>
         )}
 
-        {/* ── Step 3: Customer data + Notes + Summary ────────────────────── */}
-        {step === 3 && (
+        {/* ── Step 2: Customer data + Notes + Summary ────────────────────── */}
+        {step === 2 && (
           <div className="space-y-5">
             <h2 className="text-xl font-semibold text-zinc-100">Seus dados</h2>
 
@@ -1230,7 +1230,7 @@ function BookingWizard() {
                     title="Seu telefone"
                     className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-3.5 text-zinc-100 placeholder-zinc-500 focus:border-[#c9a84c] focus:outline-none transition-colors text-sm"
                   />
-                  {bookingError && step === 3 && (
+                  {bookingError && step === 2 && (
                     <p className="text-xs text-red-400 mt-1">{bookingError}</p>
                   )}
                 </div>
@@ -1260,8 +1260,8 @@ function BookingWizard() {
           </div>
         )}
 
-        {/* ── Step 4: Summary + Confirm ─────────────────────────────────── */}
-        {step === 4 && selectedSlot && (
+        {/* ── Step 3: Summary + Confirm ─────────────────────────────────── */}
+        {step === 3 && selectedSlot && (
           <div className="space-y-5">
             <h2 className="text-xl font-semibold text-zinc-100">Confirmar agendamento</h2>
 
@@ -1316,7 +1316,7 @@ function BookingWizard() {
         {/* ── Bottom navigation ─────────────────────────────────────────── */}
         <div className="fixed bottom-0 left-0 right-0 bg-[#0b0b0d]/95 backdrop-blur border-t border-white/10 px-4 py-3.5 z-40">
           <div className="max-w-xl mx-auto">
-            {selectedServiceIds.length > 0 && step < 4 && (
+            {selectedServiceIds.length > 0 && step < 3 && (
               <div className="flex items-center justify-between mb-2.5 text-xs">
                 <span className="text-zinc-400">{totalDuration} min</span>
                 <span className="text-[#f2d78d] font-bold text-sm">
@@ -1334,22 +1334,16 @@ function BookingWizard() {
                 Continuar
               </button>
             )}
-            {(step === 1 || step === 2) && (
+            {step === 1 && (
               <button
-                onClick={() => {
-                  if (selectedSlot) {
-                    setStep(3);
-                  } else {
-                    setStep(2);
-                  }
-                }}
-                disabled={step === 2 && !selectedSlot}
+                onClick={() => setStep(2)}
+                disabled={!selectedSlot}
                 className="w-full bg-[#c9a84c] hover:bg-[#d8b760] disabled:opacity-40 text-black font-bold py-3.5 rounded-xl transition-colors uppercase tracking-wider text-sm"
               >
                 Continuar
               </button>
             )}
-            {step === 3 && (
+            {step === 2 && (
               <button
                 onClick={handleLoginOrContinue}
                 disabled={!(clientSessionActive && hasValidSessionPhone) && !customerPhone.trim()}

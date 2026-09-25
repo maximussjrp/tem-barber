@@ -365,4 +365,59 @@ describe("Agendamento Público 2.0 UI Suite", () => {
     expect(capturedBody!.memberId).not.toBe("barber-1");
     expect(capturedBody!.professionalPreference).toBe("ANY");
   });
+
+  it("valida wizard de 4 etapas e transições sem phantom step (A-H)", async () => {
+    const user = userEvent.setup();
+    render(<AgendasPage />);
+
+    // G. indicador possui exatamente 4 etapas
+    expect(await screen.findByText("Corte Clássico")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.queryByText("5")).not.toBeInTheDocument();
+
+    // Selecionar serviço e avançar para etapa de Disponibilidade
+    await user.click(screen.getByRole("checkbox", { name: "Corte Clássico" }));
+    const continueBtn = screen.getByRole("button", { name: "Continuar" });
+    await user.click(continueBtn);
+
+    // A. ao entrar em Disponibilidade sem slot selecionado: Continuar = disabled
+    const continueBtnStep1 = screen.getByRole("button", { name: "Continuar" });
+    expect(continueBtnStep1).toBeDisabled();
+
+    // B. selecionar data mas não horário: Continuar continua disabled
+    const dateStrip = await screen.findByTestId("date-strip");
+    await user.click(dateStrip.children[1]);
+    expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+
+    // C. selecionar profissional mas não horário: Continuar continua disabled
+    expect(screen.getByText("Carlos Barbeiro")).toBeInTheDocument();
+    await user.click(screen.getByText("Carlos Barbeiro"));
+    expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+
+    // D. selecionar horário: Continuar = enabled
+    expect(await screen.findByText("09:00")).toBeInTheDocument();
+    await user.click(screen.getByText("09:00"));
+    expect(screen.getByRole("button", { name: "Continuar" })).not.toBeDisabled();
+
+    // E & F. clicar Continuar: vai DIRETAMENTE para 'Seus dados' (sem phantom transition de tela)
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByText("Seus dados")).toBeInTheDocument();
+    expect(screen.queryByTestId("date-strip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("professional-strip")).not.toBeInTheDocument();
+
+    // H. Voltar: Dados -> Disponibilidade
+    const backBtn = screen.getByTitle("Voltar");
+    await user.click(backBtn);
+    expect(await screen.findByTestId("date-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("professional-strip")).toBeInTheDocument();
+    expect(screen.queryByText("Seus dados")).not.toBeInTheDocument();
+
+    // H. Voltar: Disponibilidade -> Serviço
+    await user.click(screen.getByTitle("Voltar"));
+    expect(await screen.findByText("Corte Clássico")).toBeInTheDocument();
+    expect(screen.queryByTestId("date-strip")).not.toBeInTheDocument();
+  });
 });
