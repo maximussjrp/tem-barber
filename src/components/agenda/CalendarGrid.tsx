@@ -23,6 +23,8 @@ import {
 } from "./utils";
 import { AppointmentBlock } from "./AppointmentBlock";
 
+const MEMBER_COLUMN_WIDTH = "flex-1 min-w-[280px] lg:min-w-[320px]";
+
 export function CalendarGrid({
   appointments,
   scheduleBlocks,
@@ -84,57 +86,64 @@ export function CalendarGrid({
   const nowTop = minutesToTop(nowMinutes);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[var(--background)]">
-      {/* Header with barber names */}
-      <div className="shrink-0 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
-        <div className="shrink-0 w-14 border-r border-[var(--border-subtle)]" />
-        <div className="flex flex-1 border-l border-[var(--border-subtle)]">
-          {visibleMembers.map((m) => (
-            <div
-              key={m.id}
-              className="flex-1 min-w-[280px] lg:min-w-[320px] px-3 py-2.5 border-r border-[var(--border-subtle)] text-center"
-            >
-              <p className="text-sm font-bold text-[var(--text-primary)] truncate">
-                {m.user?.name}
-              </p>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                {m.startTime && m.endTime ? `${m.startTime} - ${m.endTime}` : "Sem horário"}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Grid container */}
-      <div className="flex-1 overflow-auto flex">
-        {/* Time gutter */}
-        <div
-          className="shrink-0 w-14 relative select-none border-r border-[var(--border-subtle)] bg-[var(--background)]"
-          style={{ height: totalHeight }}
-        >
-          {hours.map((h) => (
-            <div
-              key={h}
-              className="absolute left-0 right-0 flex items-start justify-end pr-2"
-              style={{ top: minutesToTop(h * 60), height: ROW_HEIGHT * 2 }}
-            >
-              <span className="text-[10px] text-[var(--text-muted)] tabular-nums -mt-1.5">
-                {String(h).padStart(2, "0")}:00
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Member columns */}
-        <div className="flex flex-1 border-l border-[var(--border-subtle)]">
-          {visibleMembers.map((m) => {
-            const hasActiveBlock =
-              activeBlockId && (byMember[m.id] ?? []).some((a) => a.id === activeBlockId);
-            return (
+    <div
+      data-testid="calendar-scroll-container"
+      className="flex-1 overflow-auto min-h-0 bg-[var(--background)]"
+    >
+      <div className="flex flex-col min-w-full w-max">
+        {/* Header with barber names - sticky top */}
+        <div className="sticky top-0 z-40 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
+          {/* Top-left corner cell: sticky top-0 and left-0 with highest z-index */}
+          <div className="sticky top-0 left-0 z-50 shrink-0 w-14 border-r border-[var(--border-subtle)] bg-[var(--surface-1)]" />
+          <div className="flex flex-1 border-l border-[var(--border-subtle)]">
+            {visibleMembers.map((m) => (
               <div
                 key={m.id}
-                className={`flex-1 min-w-[280px] lg:min-w-[320px] relative border-r border-[var(--border-subtle)] ${hasActiveBlock ? "z-30" : "z-10"}`}
+                data-testid={`calendar-member-header-${m.id}`}
+                className={`${MEMBER_COLUMN_WIDTH} px-3 py-2.5 border-r border-[var(--border-subtle)] text-center bg-[var(--surface-1)]`}
               >
+                <p className="text-sm font-bold text-[var(--text-primary)] truncate">
+                  {m.user?.name}
+                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {m.startTime && m.endTime ? `${m.startTime} - ${m.endTime}` : "Sem horário"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Grid body row: time gutter + member columns */}
+        <div className="flex flex-1">
+          {/* Time gutter: sticky left */}
+          <div
+            className="sticky left-0 z-20 shrink-0 w-14 select-none border-r border-[var(--border-subtle)] bg-[var(--background)]"
+            style={{ height: totalHeight }}
+          >
+            {hours.map((h) => (
+              <div
+                key={h}
+                className="absolute left-0 right-0 flex items-start justify-end pr-2"
+                style={{ top: minutesToTop(h * 60), height: ROW_HEIGHT * 2 }}
+              >
+                <span className="text-[10px] text-[var(--text-muted)] tabular-nums -mt-1.5">
+                  {String(h).padStart(2, "0")}:00
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Member columns */}
+          <div className="flex flex-1 border-l border-[var(--border-subtle)]">
+            {visibleMembers.map((m) => {
+              const hasActiveBlock =
+                activeBlockId && (byMember[m.id] ?? []).some((a) => a.id === activeBlockId);
+              return (
+                <div
+                  key={m.id}
+                  data-testid={`calendar-member-column-${m.id}`}
+                  className={`${MEMBER_COLUMN_WIDTH} relative border-r border-[var(--border-subtle)] ${hasActiveBlock ? "z-30" : "z-10"}`}
+                >
                 {/* Grid lines */}
                 <div className="absolute inset-0 pointer-events-none">
                   {hours.map((h) => (
@@ -297,5 +306,6 @@ export function CalendarGrid({
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 }
