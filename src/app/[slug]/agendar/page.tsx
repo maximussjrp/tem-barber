@@ -368,11 +368,7 @@ function BookingWizard() {
   };
 
   const handleSelectSlot = (time: string) => {
-    let memberId = selectedMemberId;
-    if (memberId === "any") {
-      const candidate = availabilityResults.find((r) => r.slots.includes(time));
-      memberId = candidate ? candidate.memberId : "any";
-    }
+    const memberId = selectedMemberId === "any" ? "any" : selectedMemberId;
     setSelectedSlot({ memberId, time });
     resetBookingAttempt();
   };
@@ -527,7 +523,7 @@ function BookingWizard() {
           "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify({
-          memberId: selectedSlot.memberId || (selectedMemberId === "any" ? "any" : selectedMemberId),
+          memberId: selectedMemberId === "any" ? "any" : selectedSlot.memberId,
           professionalPreference: selectedMemberId === "any" ? "ANY" : "SPECIFIC",
           services: Object.entries(serviceQuantities).map(([serviceId, quantity]) => ({
             serviceId,
@@ -947,22 +943,21 @@ function BookingWizard() {
                 })}
               </div>
 
-              {/* Accessible Native Date Input */}
-              <div className="pt-1">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  min={minDate()}
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    setSelectedSlot(null);
-                    resetBookingAttempt();
-                  }}
-                  title="Data do agendamento"
-                  aria-label="Data do agendamento"
-                  className="w-full bg-[#121317] border border-white/10 rounded-xl px-4 py-2.5 text-zinc-200 text-xs focus:border-[#c9a84c] focus:outline-none transition-colors"
-                />
-              </div>
+              {/* Accessible Native Date Input (visually hidden to avoid visual competition with date strip) */}
+              <input
+                type="date"
+                value={selectedDate}
+                min={minDate()}
+                onChange={(e) => {
+                  setSelectedDate(e.target.value);
+                  setSelectedSlot(null);
+                  resetBookingAttempt();
+                }}
+                title="Data do agendamento"
+                aria-label="Data do agendamento"
+                data-testid="hidden-native-date-input"
+                className="sr-only"
+              />
             </div>
 
             {/* Professional Horizontal Strip */}

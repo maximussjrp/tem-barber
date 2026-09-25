@@ -288,4 +288,81 @@ describe("Agendamento Público 2.0 UI Suite", () => {
       expect(screen.queryByText("08:00")).not.toBeInTheDocument();
     });
   });
+
+  it("CONTRATO B: ANY nunca fixa primeiro barbeiro da availability no frontend e envia memberId='any'", async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+
+    global.fetch = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/availability")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(mockAvailability),
+        });
+      }
+      if (url.includes("/book")) {
+        capturedBody = JSON.parse(options?.body as string);
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              appointment: {
+                id: "apt-123",
+                barberName: "Carlos Barbeiro",
+                dateTime: "2026-07-20T09:00:00.000Z",
+                services: [{ name: "Corte Clássico" }],
+                totalPrice: 60,
+              },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(mockBarbershopData),
+      });
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(<AgendasPage />);
+
+    // Passo 0: Serviços
+    expect(await screen.findByText("Corte Clássico")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Corte Clássico" }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    // Passo 1: Data + Profissional + Horário
+    const dateStrip = await screen.findByTestId("date-strip");
+    await user.click(dateStrip.children[0]);
+
+    // O primeiro profissional que possui o slot 09:00 é barber-1 (Carlos)
+    expect(await screen.findByText("09:00")).toBeInTheDocument();
+    await user.click(screen.getByText("09:00"));
+
+    // Avançar para dados do cliente
+    const nextBtn = screen.getByRole("button", { name: "Continuar" });
+    await user.click(nextBtn);
+
+    // Passo 2: Dados do cliente
+    const nameInput = await screen.findByTitle("Seu nome");
+    const phoneInput = screen.getByTitle("Seu telefone");
+    await user.type(nameInput, "João Cliente");
+    await user.type(phoneInput, "11988887777");
+
+    // Avançar para resumo / confirmação
+    const continueToConfirmBtn = screen.getByRole("button", { name: "Continuar" });
+    await user.click(continueToConfirmBtn);
+
+    // Passo 3: Confirmação e submissão
+    const confirmBtn = await screen.findByRole("button", { name: /Confirmar agendamento/i });
+    await user.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(capturedBody).not.toBeNull();
+    });
+
+    // Validar rigorosamente o contrato ANY:
+    // Nunca fixa o primeiro barbeiro ("barber-1") no frontend
+    expect(capturedBody!.memberId).toBe("any");
+    expect(capturedBody!.memberId).not.toBe("barber-1");
+    expect(capturedBody!.professionalPreference).toBe("ANY");
+  });
 });

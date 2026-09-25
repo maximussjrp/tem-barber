@@ -550,5 +550,109 @@ describe("Public Booking 2.0 API Suite", () => {
       const data = await res.json();
       expect(data.error).toBe("SLOT_UNAVAILABLE");
     });
+    it("CONTRATO A: ANY envia memberId='any' e professionalPreference='ANY' e tem sucesso", async () => {
+      txMock.barbershopMember.findMany.mockImplementation((args: any) => {
+        if (args?.select?.id) {
+          return Promise.resolve([{ id: "member-aaa" }]);
+        }
+        return Promise.resolve([memberA]);
+      });
+      txMock.appointment.findMany.mockResolvedValue([]);
+      txMock.appointment.findFirst.mockResolvedValue(null);
+
+      const res = await bookAppointment(
+        createPostRequest({
+          memberId: "any",
+          professionalPreference: "ANY",
+          serviceIds: ["svc-1"],
+          dateTime: "2026-07-20T10:00:00.000Z",
+          customerName: "Cliente Teste",
+          customerPhone: "(11) 98888-8888",
+        }, "aaaa1111-1111-4111-8111-111111111111"),
+        slugParams
+      );
+
+      expect(res.status).toBe(201);
+    });
+
+    it("CONTRATO C: SPECIFIC envia memberId real e professionalPreference='SPECIFIC' e tem sucesso", async () => {
+      txMock.barbershopMember.findMany.mockImplementation((args: any) => {
+        if (args?.select?.id) {
+          return Promise.resolve([{ id: "member-aaa" }]);
+        }
+        return Promise.resolve([memberA]);
+      });
+      txMock.appointment.findMany.mockResolvedValue([]);
+      txMock.appointment.findFirst.mockResolvedValue(null);
+
+      const res = await bookAppointment(
+        createPostRequest({
+          memberId: "member-aaa",
+          professionalPreference: "SPECIFIC",
+          serviceIds: ["svc-1"],
+          dateTime: "2026-07-20T10:00:00.000Z",
+          customerName: "Cliente Teste",
+          customerPhone: "(11) 98888-8888",
+        }, "bbbb1111-1111-4111-8111-111111111111"),
+        slugParams
+      );
+
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.appointment.barberName).toBe("Barber Alpha");
+    });
+
+    it("CONTRATO D: SPECIFIC sem memberId retorna 400 controlado", async () => {
+      const res = await bookAppointment(
+        createPostRequest({
+          professionalPreference: "SPECIFIC",
+          serviceIds: ["svc-1"],
+          dateTime: "2026-07-20T10:00:00.000Z",
+          customerName: "Cliente Teste",
+          customerPhone: "(11) 98888-8888",
+        }, "cccc1111-1111-4111-8111-111111111111"),
+        slugParams
+      );
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("INVALID_PROFESSIONAL_PREFERENCE");
+    });
+
+    it("CONTRATO E: SPECIFIC + memberId='any' retorna 400 controlado", async () => {
+      const res = await bookAppointment(
+        createPostRequest({
+          memberId: "any",
+          professionalPreference: "SPECIFIC",
+          serviceIds: ["svc-1"],
+          dateTime: "2026-07-20T10:00:00.000Z",
+          customerName: "Cliente Teste",
+          customerPhone: "(11) 98888-8888",
+        }, "dddd1111-1111-4111-8111-111111111111"),
+        slugParams
+      );
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("INVALID_PROFESSIONAL_PREFERENCE");
+    });
+
+    it("CONTRATO ADICIONAL: ANY + memberId específico retorna 400 controlado", async () => {
+      const res = await bookAppointment(
+        createPostRequest({
+          memberId: "member-aaa",
+          professionalPreference: "ANY",
+          serviceIds: ["svc-1"],
+          dateTime: "2026-07-20T10:00:00.000Z",
+          customerName: "Cliente Teste",
+          customerPhone: "(11) 98888-8888",
+        }, "eeee1111-1111-4111-8111-111111111111"),
+        slugParams
+      );
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("INVALID_PROFESSIONAL_PREFERENCE");
+    });
   });
 });

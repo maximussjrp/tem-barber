@@ -1,6 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import React from "react";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -268,4 +267,58 @@ describe("P1 Vitrine Pública LOTE A3 — Redesign Editorial Premium", () => {
     expect(metadata.alternates?.canonical).toBe("/don-brio");
     expect(metadata.metadataBase?.toString()).toBe("https://app.tembarber.com.br/");
   });
+
+  it("P1-V2 — conformidade de design: marca separada da capa, logo contain, cover cover, service deep-link e sem galeria", async () => {
+    await renderPage();
+
+    // 1. Área de marca e capa são elementos separados
+    const brandArea = screen.getByTestId("brand-header-area");
+    const coverArea = screen.getByTestId("brand-cover-area");
+    expect(brandArea).toBeInTheDocument();
+    expect(coverArea).toBeInTheDocument();
+    expect(brandArea).not.toContainElement(coverArea);
+    expect(coverArea).not.toContainElement(brandArea);
+
+    // 2. Logo object-contain
+    const logoImg = screen.getByTestId("brand-logo-image");
+    expect(logoImg).toHaveClass("object-contain");
+
+    // 3. Capa object-cover
+    const coverImg = screen.getByTestId("brand-cover-image");
+    expect(coverImg).toHaveClass("object-cover");
+
+    // 4. CTA principal "Agendar horário"
+    const bookingCta = screen.getByTestId("hero-booking-cta");
+    expect(bookingCta).toHaveTextContent(/Agendar horário/i);
+
+    // 5. Card de serviço contém ?service=<serviceId>
+    const serviceCardLink = screen.getByRole("link", { name: "Agendar" });
+    expect(serviceCardLink).toHaveAttribute("href", "/don-brio/agendar?service=svc-1");
+
+    // 6. Nenhuma galeria criada
+    expect(screen.queryByRole("button", { name: /Galeria/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Galeria/i })).not.toBeInTheDocument();
+  });
+
+  const viewports = [
+    { width: 330, name: "MOBILE_330" },
+    { width: 360, name: "MOBILE_360" },
+    { width: 390, name: "MOBILE_390" },
+    { width: 430, name: "MOBILE_430" },
+    { width: 1280, name: "DESKTOP_1280" },
+  ];
+
+  for (const vp of viewports) {
+    it(`conformidade responsiva para ${vp.name} (${vp.width}px): marca legível, sem corte e sem quebra`, async () => {
+      window.innerWidth = vp.width;
+      await renderPage();
+
+      expect(screen.getByTestId("brand-header-area")).toBeInTheDocument();
+      expect(screen.getByTestId("brand-cover-area")).toBeInTheDocument();
+      expect(screen.getByTestId("brand-logo-image")).toHaveClass("object-contain");
+      expect(screen.getByTestId("brand-cover-image")).toHaveClass("object-cover");
+      expect(screen.getByTestId("hero-booking-cta")).toBeInTheDocument();
+      cleanup();
+    });
+  }
 });

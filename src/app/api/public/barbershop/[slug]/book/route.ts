@@ -302,12 +302,44 @@ export async function POST(
     );
   }
 
-  const isAnyProfessional =
-    !memberId ||
-    memberId.toLowerCase() === "any" ||
-    body.professionalPreference === "ANY";
+  const rawPreference = body.professionalPreference;
+  const rawMemberId = memberId?.trim();
+  const isMemberIdAny = !rawMemberId || rawMemberId.toLowerCase() === "any";
 
-  if ((!memberId && !isAnyProfessional) || (!serviceIds?.length && !bodyServices?.length) || !dateTime) {
+  if (rawPreference === "SPECIFIC") {
+    if (!rawMemberId || isMemberIdAny) {
+      return NextResponse.json(
+        {
+          error: "INVALID_PROFESSIONAL_PREFERENCE",
+          message: "Para preferência SPECIFIC, informe um memberId válido (não pode ser ausente ou 'any').",
+        },
+        { status: 400 }
+      );
+    }
+  } else if (rawPreference === "ANY") {
+    if (rawMemberId && !isMemberIdAny) {
+      return NextResponse.json(
+        {
+          error: "INVALID_PROFESSIONAL_PREFERENCE",
+          message: "Para preferência ANY, o memberId não pode especificar um profissional fixo.",
+        },
+        { status: 400 }
+      );
+    }
+  } else if (rawPreference && rawPreference !== "ANY" && rawPreference !== "SPECIFIC") {
+    return NextResponse.json(
+      {
+        error: "INVALID_PROFESSIONAL_PREFERENCE",
+        message: "professionalPreference deve ser 'ANY' ou 'SPECIFIC'.",
+      },
+      { status: 400 }
+    );
+  }
+
+  // Compatibilidade legada: se professionalPreference não for enviado, inferir pelo memberId existente
+  const isAnyProfessional = rawPreference ? rawPreference === "ANY" : isMemberIdAny;
+
+  if ((!isAnyProfessional && (!rawMemberId || isMemberIdAny)) || (!serviceIds?.length && !bodyServices?.length) || !dateTime) {
     return NextResponse.json(
       { error: "memberId, services e dateTime sao obrigatorios." },
       { status: 400 }

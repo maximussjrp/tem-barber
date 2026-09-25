@@ -254,79 +254,120 @@ export default async function BarbershopPublicPage({
       </header>
 
       <main className="pb-28 md:pb-16">
-        <section className="relative isolate overflow-hidden">
-          <div className="absolute inset-0 -z-20">
-            {barbershop.coverUrl ? (
-              <img src={barbershop.coverUrl} alt={`Capa de ${barbershop.name}`} className="h-full w-full object-cover" />
-            ) : (
-              <div
-                className="h-full w-full bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.35),transparent_28%),radial-gradient(circle_at_80%_15%,rgba(255,255,255,.12),transparent_24%),linear-gradient(135deg,#1d1e24_0%,#131419_42%,#060607_100%)]"
-                data-testid="hero-fallback"
-              >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(201,168,76,.16),transparent_36%)]" />
-                <div className="absolute inset-y-0 right-0 w-1/3 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,.04)_100%)]" />
+        {/* Brand Area + Cover + Hero CTA Container (Mobile-First) */}
+        <section className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+          {/* 1. Área própria de marca (separada da capa) */}
+          <div
+            className="flex flex-col items-center text-center pb-6 pt-2"
+            data-testid="brand-header-area"
+          >
+            <div className="mb-4 h-24 w-24 sm:h-28 sm:w-28 overflow-hidden rounded-3xl border border-[#c9a84c]/50 bg-zinc-900 p-2 shadow-xl shadow-black/40 flex items-center justify-center">
+              {barbershop.logoUrl ? (
+                <img
+                  src={barbershop.logoUrl}
+                  alt={`Logo de ${barbershop.name}`}
+                  className="h-full w-full object-contain"
+                  data-testid="brand-logo-image"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-[#c9a84c]">
+                  {barbershop.name.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+            </div>
+
+            <h1
+              className="text-2xl sm:text-4xl font-bold tracking-tight text-zinc-50"
+              data-testid="brand-name-title"
+            >
+              {barbershop.name}
+            </h1>
+
+            <p className="mt-2 max-w-xl text-sm sm:text-base text-zinc-300 leading-relaxed">
+              {barbershop.description || "Atendimento premium para quem busca presença, cuidado e estilo em cada detalhe."}
+            </p>
+
+            {hasPublicAddress && (
+              <p className="mt-2 text-xs uppercase tracking-wider text-zinc-400">
+                {barbershop.neighborhood ? `${barbershop.neighborhood} · ` : ""}{barbershop.city}{barbershop.state ? ` - ${barbershop.state}` : ""}
+              </p>
+            )}
+
+            {avgRating !== null && (
+              <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/40 px-3 py-1 text-xs text-zinc-200">
+                <span className="text-[#c9a84c] font-semibold">★ {avgRating.toFixed(1)}</span>
+                <span className="text-zinc-400">({reviews.length} avaliações)</span>
               </div>
             )}
           </div>
-          <div className="absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(5,5,7,0.45)_0%,rgba(8,8,10,0.72)_32%,rgba(8,8,10,0.92)_68%,#0b0b0d_100%)]" />
 
-          <div className="mx-auto grid min-h-[86svh] w-full max-w-7xl grid-cols-1 items-end gap-10 px-4 pb-12 pt-20 sm:px-6 lg:grid-cols-[1.2fr_.8fr] lg:px-8">
-            <div className="space-y-8">
-              <p className="inline-flex items-center rounded-full border border-white/20 bg-black/35 px-4 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-200">
-                Barbearia premium
-              </p>
+          {/* 2. Foto de capa da barbearia (elemento separado, não sobreposta à logo) */}
+          <div
+            className="w-full overflow-hidden rounded-2xl sm:rounded-3xl border border-white/10 shadow-2xl relative"
+            data-testid="brand-cover-area"
+          >
+            <div className="aspect-[16/9] sm:aspect-[21/9] max-h-[380px] w-full">
+              {barbershop.coverUrl ? (
+                <img
+                  src={barbershop.coverUrl}
+                  alt={`Capa de ${barbershop.name}`}
+                  className="h-full w-full object-cover"
+                  data-testid="brand-cover-image"
+                />
+              ) : (
+                <div
+                  className="h-full w-full bg-[radial-gradient(circle_at_20%_20%,rgba(201,168,76,.35),transparent_28%),radial-gradient(circle_at_80%_15%,rgba(255,255,255,.12),transparent_24%),linear-gradient(135deg,#1d1e24_0%,#131419_42%,#060607_100%)] flex items-center justify-center p-8 text-center"
+                  data-testid="hero-fallback"
+                >
+                  <p className="text-lg font-medium text-zinc-400">
+                    {barbershop.name}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
 
-              <div className="space-y-4">
-                <h1 className="max-w-3xl text-balance text-4xl font-semibold leading-[1.08] text-zinc-50 sm:text-5xl lg:text-6xl" data-testid="editorial-hero-title">
-                  Seu estilo.
-                  <br />
-                  Sua presenca.
-                  <br />
-                  Nossa arte.
-                </h1>
-                <p className="max-w-2xl text-base leading-relaxed text-zinc-200/90 sm:text-lg">
-                  Mais que um corte, uma experiencia completa de cuidado, confianca e presenca.
-                </p>
-                <p className="text-sm font-medium text-zinc-300">
-                  {barbershop.name}
-                  {hasPublicAddress ? ` · ${barbershop.neighborhood}, ${barbershop.city}` : ""}
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Link href={`/${safeSlug}/agendar`}>
-                  <Button className="h-12 rounded-full bg-[#c9a84c] px-8 text-sm font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]" data-testid="hero-booking-cta">
-                    Agendar horario online
+          {/* 3. Hero CTA - Primeira dobra mobile */}
+          <div className="mt-6 flex flex-col items-center gap-4 text-center sm:mt-8">
+            <h2
+              className="text-xl sm:text-2xl font-semibold text-zinc-100 hidden sm:block"
+              data-testid="editorial-hero-title"
+            >
+              Seu estilo. Sua presença. Nossa arte.
+            </h2>
+            <div className="flex w-full max-w-md flex-col gap-3 sm:flex-row sm:justify-center">
+              <Link href={`/${safeSlug}/agendar`} className="w-full sm:w-auto">
+                <Button
+                  className="h-12 w-full sm:w-auto sm:px-8 rounded-full bg-[#c9a84c] text-sm font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760] shadow-lg shadow-[#c9a84c]/20"
+                  data-testid="hero-booking-cta"
+                >
+                  Agendar horário
+                </Button>
+              </Link>
+              {whatsappUrl && (
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full sm:w-auto"
+                >
+                  <Button
+                    variant="outline"
+                    className="h-12 w-full sm:w-auto sm:px-8 rounded-full border-white/30 bg-black/40 text-sm font-semibold uppercase tracking-[0.12em] text-white hover:border-[#c9a84c] hover:text-[#f8e4a5]"
+                    data-testid="hero-whatsapp-cta"
+                  >
+                    Falar no WhatsApp
                   </Button>
-                </Link>
-                {whatsappUrl && (
-                  <a href={whatsappUrl} target="_blank" rel="noopener noreferrer">
-                    <Button variant="outline" className="h-12 rounded-full border-white/40 bg-black/30 px-8 text-sm font-semibold uppercase tracking-[0.12em] text-white hover:border-[#c9a84c] hover:text-[#f8e4a5]" data-testid="hero-whatsapp-cta">
-                      Falar no WhatsApp
-                    </Button>
-                  </a>
-                )}
-              </div>
-
-              <ul className="grid gap-2 text-sm text-zinc-200 sm:grid-cols-2">
-                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Atendimento com hora marcada</li>
-                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Agendamento online</li>
-                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Servicos com preco visivel</li>
-                <li className="rounded-xl border border-white/15 bg-black/25 px-3 py-2">Profissionais especializados</li>
-              </ul>
+                </a>
+              )}
             </div>
 
-            <div className="hidden rounded-3xl border border-white/15 bg-black/40 p-6 shadow-2xl backdrop-blur-sm lg:block">
-              <p className="mb-2 text-xs uppercase tracking-[0.26em] text-zinc-400">Assinatura da marca</p>
-              <h2 className="text-2xl font-semibold text-zinc-50">{barbershop.name}</h2>
-              <p className="mt-3 text-sm text-zinc-300">
-                {barbershop.description || "Atendimento premium para quem busca presenca, cuidado e estilo em cada detalhe."}
-              </p>
-              {avgRating !== null && (
-                <p className="mt-6 text-sm text-zinc-200">
-                  <span className="text-[#c9a84c]">★ {avgRating.toFixed(1)}</span> em {reviews.length} avaliacoes verificadas
-                </p>
-              )}
+            {/* Micro benefícios */}
+            <div className="mt-2 grid grid-cols-2 gap-2 w-full max-w-lg text-xs text-zinc-300 sm:grid-cols-4">
+              <div className="rounded-xl border border-white/10 bg-black/30 px-2.5 py-2">Hora marcada</div>
+              <div className="rounded-xl border border-white/10 bg-black/30 px-2.5 py-2">Agendamento rápido</div>
+              <div className="rounded-xl border border-white/10 bg-black/30 px-2.5 py-2">Preço visível</div>
+              <div className="rounded-xl border border-white/10 bg-black/30 px-2.5 py-2">Equipe dedicada</div>
             </div>
           </div>
         </section>
@@ -363,7 +404,7 @@ export default async function BarbershopPublicPage({
                                 <p className="text-xl font-semibold text-[#f2d78d]">{toCurrency(service.price)}</p>
                                 <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">{service.durationMin} min</p>
                               </div>
-                              <Link href={`/${safeSlug}/agendar`}>
+                              <Link href={`/${safeSlug}/agendar?service=${service.id}`}>
                                 <Button size="sm" className="rounded-full bg-[#c9a84c] px-4 text-xs font-semibold uppercase tracking-[0.12em] text-black hover:bg-[#d8b760]">
                                   Agendar
                                 </Button>
