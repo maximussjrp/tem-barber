@@ -1,8 +1,21 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { CalendarGrid } from "@/components/agenda/CalendarGrid";
-import { Member } from "@/components/agenda/types";
+import { Appointment, Member } from "@/components/agenda/types";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({}),
+}));
+
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: { user: { id: "admin-1", role: "OWNER" } },
+    status: "authenticated",
+  }),
+}));
 
 describe("CalendarGrid - Sincronização Horizontal do Cabeçalho e Colunas", () => {
   const membersMock: Member[] = [
@@ -43,6 +56,12 @@ describe("CalendarGrid - Sincronização Horizontal do Cabeçalho e Colunas", ()
     barbershopName: "Barbearia Modelo",
     mode: "admin" as const,
   };
+
+  function extractZIndex(element: HTMLElement | null): number {
+    if (!element) return 0;
+    const match = element.className.match(/z-\[(\d+)\]/) || element.className.match(/\bz-(\d+)\b/);
+    return match ? parseInt(match[1], 10) : 0;
+  }
 
   it("Itens 1, 7 e 8: Header e colunas pertencem ao MESMO scroll container único", () => {
     render(<CalendarGrid {...defaultProps} />);
@@ -102,22 +121,32 @@ describe("CalendarGrid - Sincronização Horizontal do Cabeçalho e Colunas", ()
     ]);
   });
 
-  it("Itens 2, 3, 4 e 5: Sticky classes, z-indexes e paridade exata de largura", () => {
-    const { container } = render(<CalendarGrid {...defaultProps} />);
+  it("Itens 2, 3, 4 e 5: Sticky classes e paridade exata de largura", () => {
+    render(<CalendarGrid {...defaultProps} />);
 
     // Header row deve ser sticky top-0 com z-40 e fundo opaco
-    const headerRow = container.querySelector(".sticky.top-0.z-40");
+    const headerRow = screen.getByTestId("calendar-header-row");
     expect(headerRow).toBeInTheDocument();
-    expect(headerRow?.className).toContain("bg-[var(--surface-1)]");
+    expect(headerRow.className).toContain("sticky");
+    expect(headerRow.className).toContain("top-0");
+    expect(headerRow.className).toContain("z-40");
+    expect(headerRow.className).toContain("bg-[var(--surface-1)]");
 
     // Canto superior esquerdo deve ser sticky top-0 left-0 com z-50
-    const topLeftCorner = container.querySelector(".sticky.top-0.left-0.z-50");
+    const topLeftCorner = screen.getByTestId("calendar-top-left-corner");
     expect(topLeftCorner).toBeInTheDocument();
+    expect(topLeftCorner.className).toContain("sticky");
+    expect(topLeftCorner.className).toContain("top-0");
+    expect(topLeftCorner.className).toContain("left-0");
+    expect(topLeftCorner.className).toContain("z-50");
 
-    // Time gutter deve ser sticky left-0 com z-20 e fundo opaco
-    const timeGutter = container.querySelector(".sticky.left-0.z-20");
+    // Time gutter deve ser sticky left-0 com z-[35] e fundo opaco
+    const timeGutter = screen.getByTestId("calendar-time-gutter");
     expect(timeGutter).toBeInTheDocument();
-    expect(timeGutter?.className).toContain("bg-[var(--background)]");
+    expect(timeGutter.className).toContain("sticky");
+    expect(timeGutter.className).toContain("left-0");
+    expect(timeGutter.className).toContain("z-[35]");
+    expect(timeGutter.className).toContain("bg-[var(--background)]");
 
     // Paridade de largura entre header e coluna
     const expectedWidthClasses = ["flex-1", "min-w-[280px]", "lg:min-w-[320px]"];
@@ -129,6 +158,54 @@ describe("CalendarGrid - Sincronização Horizontal do Cabeçalho e Colunas", ()
       expect(headerDandara.className).toContain(cls);
       expect(colDandara.className).toContain(cls);
     }
+  });
+
+  it("Item 1 e 2: Hierarquia estrita de z-index: ACTIVE_MEMBER_COLUMN_Z < TIME_GUTTER_Z < HEADER_Z < CORNER_Z", () => {
+    const appointmentMock: Appointment = {
+      id: "app-active-1",
+      dateTime: "2026-09-25T10:00:00.000Z",
+      durationMin: 30,
+      totalPrice: "50.00",
+      status: "CONFIRMED",
+      notes: null,
+      customer: { id: "cust-1", name: "Cliente Teste", phone: "11999999999" },
+      barber: { id: "mem-dandara", user: { name: "Dandara", avatarUrl: null } },
+      services: [],
+    };
+
+    render(<CalendarGrid {...defaultProps} appointments={[appointmentMock]} />);
+
+    const headerRow = screen.getByTestId("calendar-header-row");
+    const topLeftCorner = screen.getByTestId("calendar-top-left-corner");
+    const timeGutter = screen.getByTestId("calendar-time-gutter");
+    const normalCol = screen.getByTestId("calendar-member-column-mem-jesus");
+    const targetCol = screen.getByTestId("calendar-member-column-mem-dandara");
+
+    // Coluna normal possui z-10
+    expect(extractZIndex(normalCol)).toBe(10);
+
+    // Clica no appointment para torná-lo ativo (isOpen)
+    const appElement = screen.getByText("Cliente Teste");
+    fireEvent.click(appElement);
+
+    // Coluna com bloco ativo é promovida para z-30
+    expect(targetCol.className).toContain("z-30");
+
+    const activeColZ = extractZIndex(targetCol);
+    const timeGutterZ = extractZIndex(timeGutter);
+    const headerZ = extractZIndex(headerRow);
+    const cornerZ = extractZIndex(topLeftCorner);
+
+    expect(activeColZ).toBe(30);
+    expect(timeGutterZ).toBe(35);
+    expect(headerZ).toBe(40);
+    expect(cornerZ).toBe(50);
+
+    // Validação estrita da ordem requisitada:
+    // ACTIVE_MEMBER_COLUMN_Z < TIME_GUTTER_Z < HEADER_Z < CORNER_Z
+    expect(activeColZ).toBeLessThan(timeGutterZ);
+    expect(timeGutterZ).toBeLessThan(headerZ);
+    expect(headerZ).toBeLessThan(cornerZ);
   });
 
   it("Item 6: Com apenas 1 profissional (cenário /member/agenda), mantém estrutura sem quebras", () => {

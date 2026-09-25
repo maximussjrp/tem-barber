@@ -92,9 +92,15 @@ export function CalendarGrid({
     >
       <div className="flex flex-col min-w-full w-max">
         {/* Header with barber names - sticky top */}
-        <div className="sticky top-0 z-40 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]">
+        <div
+          data-testid="calendar-header-row"
+          className="sticky top-0 z-40 flex border-b border-[var(--border-subtle)] bg-[var(--surface-1)]"
+        >
           {/* Top-left corner cell: sticky top-0 and left-0 with highest z-index */}
-          <div className="sticky top-0 left-0 z-50 shrink-0 w-14 border-r border-[var(--border-subtle)] bg-[var(--surface-1)]" />
+          <div
+            data-testid="calendar-top-left-corner"
+            className="sticky top-0 left-0 z-50 shrink-0 w-14 border-r border-[var(--border-subtle)] bg-[var(--surface-1)]"
+          />
           <div className="flex flex-1 border-l border-[var(--border-subtle)]">
             {visibleMembers.map((m) => (
               <div
@@ -115,9 +121,10 @@ export function CalendarGrid({
 
         {/* Grid body row: time gutter + member columns */}
         <div className="flex flex-1">
-          {/* Time gutter: sticky left */}
+          {/* Time gutter: sticky left with z-[35] (above active column z-30, below header z-40) */}
           <div
-            className="sticky left-0 z-20 shrink-0 w-14 select-none border-r border-[var(--border-subtle)] bg-[var(--background)]"
+            data-testid="calendar-time-gutter"
+            className="sticky left-0 z-[35] shrink-0 w-14 select-none border-r border-[var(--border-subtle)] bg-[var(--background)]"
             style={{ height: totalHeight }}
           >
             {hours.map((h) => (
