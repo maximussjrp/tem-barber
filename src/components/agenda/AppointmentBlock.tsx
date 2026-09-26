@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import {
@@ -92,6 +93,19 @@ export function AppointmentBlock({
       active = false;
     };
   }, [isOpen, appointment.customer?.id]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onToggleOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onToggleOpen]);
 
   const getAppointmentPreview = () => {
     let totalOriginal = 0;
@@ -331,11 +345,27 @@ export function AppointmentBlock({
         )}
       </button>
 
-      {/* Detail Popup (Fixed Modal/Bottom Sheet) */}
-      {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 sm:p-0">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => onToggleOpen(false)} />
-          <div className="relative w-full max-w-sm bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:fade-in sm:zoom-in-95">
+      {/* Detail Popup (Fixed Modal/Bottom Sheet via Portal) */}
+      {isOpen && typeof document !== "undefined" && createPortal(
+        <div
+          data-testid="appointment-overlay-root"
+          className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-4 sm:p-0 pointer-events-auto"
+        >
+          {/* Backdrop */}
+          <div
+            data-testid="appointment-backdrop"
+            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm"
+            onClick={() => onToggleOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Panel */}
+          <div
+            data-testid="appointment-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Detalhes do agendamento de ${appointment.customer?.name || "cliente"}`}
+            className="relative z-[80] w-full max-w-sm max-h-[90vh] overflow-y-auto bg-[var(--surface-2)] border border-[var(--border-medium)] rounded-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:fade-in sm:zoom-in-95"
+          >
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-base font-bold text-[var(--text-primary)]">{appointment.customer?.name}</p>
@@ -727,7 +757,8 @@ export function AppointmentBlock({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
