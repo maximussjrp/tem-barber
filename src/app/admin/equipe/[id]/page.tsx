@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
@@ -100,6 +100,11 @@ export default function MemberDetailPage() {
   const [careerLevelId, setCareerLevelId] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
+  // Avatar state
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [deletingAvatar, setDeletingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Reset Access Modal state
   const [resettingAccess, setResettingAccess] = useState(false);
   const [resetModalData, setResetModalData] = useState<{
@@ -196,6 +201,79 @@ export default function MemberDetailPage() {
 
   function getErrorMessage(error: unknown, fallback = "Erro.") {
     return error instanceof Error ? error.message : fallback;
+  }
+
+  // ── Avatar ──
+  async function handleAvatarUpload(file: File) {
+    const validMimes = ["image/jpeg", "image/png", "image/webp"];
+    if (!validMimes.includes(file.type)) {
+      setError("Tipo de arquivo inválido. Use JPEG, PNG ou WebP.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Imagem deve ter no máximo 5MB.");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/admin/team/${memberId}/avatar`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro no upload da foto.");
+
+      setMember((prev) =>
+        prev
+          ? {
+              ...prev,
+              user: {
+                ...prev.user,
+                avatarUrl: data.url,
+              },
+            }
+          : prev
+      );
+      showSuccess("Foto do profissional atualizada com sucesso!");
+    } catch (e) {
+      setError(getErrorMessage(e, "Erro ao enviar foto."));
+    } finally {
+      setUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    setDeletingAvatar(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/team/${memberId}/avatar`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao remover foto.");
+
+      setMember((prev) =>
+        prev
+          ? {
+              ...prev,
+              user: {
+                ...prev.user,
+                avatarUrl: null,
+              },
+            }
+          : prev
+      );
+      showSuccess("Foto do profissional removida.");
+    } catch (e) {
+      setError(getErrorMessage(e, "Erro ao remover foto."));
+    } finally {
+      setDeletingAvatar(false);
+    }
   }
 
   // ── Perfil ──
@@ -441,6 +519,73 @@ export default function MemberDetailPage() {
       {/* ── Tab: Perfil ── */}
       {activeTab === "perfil" && (
         <form onSubmit={saveProfile} className="space-y-6">
+          {/* Foto do Profissional */}
+          <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4" data-testid="professional-avatar-section">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-stone-400">FOTO DO PROFISSIONAL</h2>
+            <p className="text-xs text-stone-400">
+              Essa foto aparecerá para seus clientes no agendamento online.
+            </p>
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-5 pt-1">
+              <div className="w-20 h-20 rounded-full border-2 border-stone-700 flex items-center justify-center shrink-0 overflow-hidden relative">
+                <Avatar src={member.user.avatarUrl} alt={member.user.name} size="xl" fallbackText={member.user.name} />
+                {(uploadingAvatar || deletingAvatar) && (
+                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-full z-10">
+                    <span className="text-white text-xs font-bold animate-pulse">...</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col justify-center gap-2">
+                {member.user.avatarUrl ? (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingAvatar || deletingAvatar}
+                      className="bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-bold px-4 py-2 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {uploadingAvatar ? "Enviando..." : "Alterar foto"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      disabled={uploadingAvatar || deletingAvatar}
+                      className="bg-red-950/40 hover:bg-red-900/40 text-red-300 border border-red-800/40 text-xs font-bold px-4 py-2 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {deletingAvatar ? "Removendo..." : "Remover foto"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xs text-stone-400 font-medium px-2.5 py-1 rounded bg-stone-950 border border-stone-800">
+                      Foto não cadastrada
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingAvatar || deletingAvatar}
+                      className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-4 py-2 rounded-lg text-xs transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {uploadingAvatar ? "Enviando..." : "Adicionar foto"}
+                    </button>
+                  </div>
+                )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  title="Selecionar foto do profissional"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleAvatarUpload(file);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
           <div className="bg-stone-900 border border-stone-800 rounded-xl p-5 space-y-4">
             <h2 className="text-sm font-bold uppercase tracking-wider text-stone-400">Dados Pessoais & Cadastrais</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

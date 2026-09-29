@@ -94,6 +94,7 @@ export async function GET(
         description: s.description,
         price: s.price,
         durationMin: s.durationMin,
+        imageUrl: s.imageUrl ?? null,
       })),
     })),
     members: barbershop.members.map((m) => ({

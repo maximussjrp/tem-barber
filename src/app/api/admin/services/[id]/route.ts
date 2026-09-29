@@ -1,6 +1,32 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
+import { unlink } from "fs/promises";
+import path from "path";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|webp)$/i;
+
+async function removeFileIfUnreferenced(imageUrl: string | null | undefined, excludeServiceId?: string) {
+  if (!imageUrl || !imageUrl.startsWith("/uploads/")) return;
+  const filename = path.basename(imageUrl);
+  if (!UUID_REGEX.test(filename)) return;
+
+  const usageCount = await prisma.service.count({
+    where: {
+      imageUrl,
+      ...(excludeServiceId ? { id: { not: excludeServiceId } } : {}),
+    },
+  });
+
+  if (usageCount === 0) {
+    const uploadDir = path.resolve(process.cwd(), "public", "uploads");
+    const targetPath = path.resolve(uploadDir, filename);
+    if (targetPath.startsWith(uploadDir + path.sep)) {
+      await unlink(targetPath).catch(() => {});
+    }
+  }
+}
 
 async function findService(id: string, barbershopId: string) {
   const service = await prisma.service.findUnique({ where: { id } });
@@ -111,5 +137,10 @@ export async function DELETE(
   }
 
   await prisma.service.delete({ where: { id } });
+
+  if (service.imageUrl) {
+    await removeFileIfUnreferenced(service.imageUrl, id);
+  }
+
   return NextResponse.json({ success: true });
 }

@@ -298,6 +298,7 @@ model Service {
   description  String?
   price        Decimal @db.Decimal(10, 2)
   durationMin  Int     @map("duration_min") // Duração do serviço em minutos
+  imageUrl     String? @map("image_url")
   isActive     Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at")
