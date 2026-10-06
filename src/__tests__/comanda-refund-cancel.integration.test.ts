@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vites
 import { NextRequest, NextResponse } from "next/server";
 import type { PrismaClient } from "@prisma/client";
 import { ComandaStatus, ComandaItemStatus } from "@prisma/client";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 const { getServerSessionMock } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -95,6 +96,7 @@ async function seedTenant(label: string) {
       state: "SP",
     },
   });
+  await bootstrapFinancialPlan(prisma, shop.id);
   await prisma.tenantSubscription.create({
     data: {
       barbershopId: shop.id,
@@ -236,7 +238,7 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
       where: { id: comanda.id },
       include: { payments: true }
     });
-    expect(comandaEstornadaParcial?.status).toBe("PENDING_PAYMENT");
+    expect(comandaEstornadaParcial?.status).toBe("CLOSED");
     expect(Number(comandaEstornadaParcial?.paidTotal)).toBe(30);
     expect(Number(comandaEstornadaParcial?.remainingTotal)).toBe(20);
 

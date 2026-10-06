@@ -354,7 +354,10 @@ describe("Financial Settlements & Reversals Unit Tests", () => {
         { principalAmount: "100.00", method: "PIX" }
       );
 
-      // Force delete original FinancialEntry to test Fail-Closed
+      // Force delete original FinancialEntryAllocation and FinancialEntry to test Fail-Closed
+      await prisma.financialEntryAllocation.deleteMany({
+        where: { financialEntry: { financialSettlementId: settlement.id } },
+      });
       await prisma.financialEntry.deleteMany({
         where: { financialSettlementId: settlement.id },
       });

@@ -19,7 +19,27 @@ function fixture() {
     { id: "command-b", barbershopId: "shop-b", status: "OPEN", customerId: null, closedAt: null, openedAt: new Date(), paidTotal: fromCents(0), remainingTotal: fromCents(10100) },
   ];
   const items = comandas.map(c => ({ id: `item-${c.id}`, comandaId: c.id, barbershopId: c.barbershopId, type: "SERVICE", status: "DONE", total: fromCents(10100) }));
-  const payments: any[] = [], entries: any[] = [], movements: any[] = [];
+  const payments: any[] = [], entries: any[] = [], movements: any[] = [], allocations: any[] = [];
+  const categories: any[] = [
+    { id: "cat-1", barbershopId: "shop-a", name: "Estornos", isActive: true },
+    { id: "cat-2", barbershopId: "shop-a", name: "Clube", isActive: true },
+    { id: "cat-3", barbershopId: "shop-b", name: "Estornos", isActive: true },
+    { id: "cat-4", barbershopId: "shop-b", name: "Clube", isActive: true },
+    { id: "cat-5", barbershopId: "shop-a", name: "Serviços", isActive: true },
+    { id: "cat-6", barbershopId: "shop-a", name: "Produtos", isActive: true },
+    { id: "cat-7", barbershopId: "shop-b", name: "Serviços", isActive: true },
+    { id: "cat-8", barbershopId: "shop-b", name: "Produtos", isActive: true },
+  ];
+  const systemMappings: any[] = [
+    { barbershopId: "shop-a", systemKey: "REFUND", categoryId: "cat-1", category: categories[0] },
+    { barbershopId: "shop-a", systemKey: "CLUB_REVENUE", categoryId: "cat-2", category: categories[1] },
+    { barbershopId: "shop-b", systemKey: "REFUND", categoryId: "cat-3", category: categories[2] },
+    { barbershopId: "shop-b", systemKey: "CLUB_REVENUE", categoryId: "cat-4", category: categories[3] },
+    { barbershopId: "shop-a", systemKey: "COMANDA_SERVICE_REVENUE", categoryId: "cat-5", category: categories[4] },
+    { barbershopId: "shop-a", systemKey: "COMANDA_PRODUCT_REVENUE", categoryId: "cat-6", category: categories[5] },
+    { barbershopId: "shop-b", systemKey: "COMANDA_SERVICE_REVENUE", categoryId: "cat-7", category: categories[6] },
+    { barbershopId: "shop-b", systemKey: "COMANDA_PRODUCT_REVENUE", categoryId: "cat-8", category: categories[7] },
+  ];
   const sessions: any[] = [{ id: "cash-a", barbershopId: "shop-a", status: "OPEN", openingAmount: fromCents(1000), expectedAmount: fromCents(1000) }];
   const appointment = { id: "appointment-a", status: "CONFIRMED" };
   const matches = (row: any, where: any) => Object.entries(where).every(([key, value]: any) =>
@@ -49,7 +69,29 @@ function fixture() {
       create: create(payments, "payment", { status: "CONFIRMED", refundedAmount: fromCents(0) }),
       update: vi.fn(async ({ where, data }: any) => Object.assign(payments.find(p => p.id === where.id), data)),
     },
-    financialEntry: { create: create(entries, "entry") },
+    financialEntry: {
+      findFirst: vi.fn(async ({ where }: any) => entries.find(e => matches(e, where)) ?? null),
+      findMany: vi.fn(async ({ where }: any) => entries.filter(e => matches(e, where))),
+      create: create(entries, "entry"),
+    },
+    financialCategorySystemMapping: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        const key = where.barbershopId_systemKey;
+        if (!key) return null;
+        return systemMappings.find(m => m.barbershopId === key.barbershopId && m.systemKey === key.systemKey) ?? null;
+      }),
+    },
+    financialCategory: {
+      findFirst: vi.fn(async ({ where }: any) => categories.find(c => matches(c, where)) ?? null),
+    },
+    financialEntryAllocation: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        const key = where.barbershopId_financialEntryId_financialCategoryId;
+        if (!key) return null;
+        return allocations.find(a => a.barbershopId === key.barbershopId && a.financialEntryId === key.financialEntryId && a.financialCategoryId === key.financialCategoryId) ?? null;
+      }),
+      create: create(allocations, "allocation"),
+    },
     cashMovement: { create: create(movements, "movement") },
     cashSession: {
       findFirst: vi.fn(async ({ where }: any) => sessions.find(s => matches(s, where)) ?? null),
@@ -58,7 +100,7 @@ function fixture() {
     },
     appointment: { update: vi.fn(async ({ data }: any) => Object.assign(appointment, data)) },
   };
-  return { tx, client: tx as unknown as Prisma.TransactionClient, comandas, payments, entries, movements, sessions, appointment };
+  return { tx, client: tx as unknown as Prisma.TransactionClient, comandas, payments, entries, movements, sessions, appointment, allocations };
 }
 
 describe("Phase 0: current payment, refund and physical cash contracts", () => {
@@ -255,13 +297,37 @@ describe("Phase 0: current payment, refund and physical cash contracts", () => {
 describe("Phase 0: club receipt creates its own linked revenue", () => {
   function clubFixture() {
     const sub = { id: "sub-a", barbershopId: "shop-a", customerId: "customer-a", clubPlanId: "plan-a", status: "ACTIVE", currentPeriodEnd: new Date("2026-07-31T12:00:00Z"), gracePeriodEnd: new Date("2026-08-01T12:00:00Z"), clubPlan: { name: "Club", monthlyPrice: new Prisma.Decimal("10.10"), shopSharePercent: 50, barberPoolPercent: 50 } };
+    const category = { id: "cat-club", barbershopId: "shop-a", name: "Clube", isActive: true };
+    const systemMapping = { barbershopId: "shop-a", systemKey: "CLUB_REVENUE", categoryId: "cat-club", category };
+    const allocations: any[] = [];
     const tx = {
       customerClubSubscription: {
         findFirst: vi.fn(async ({ where }: any) => where.barbershopId === sub.barbershopId && where.id === sub.id ? sub : null),
         update: vi.fn(async ({ data }: any) => ({ ...sub, ...data })),
       },
       clubSubscriptionPayment: { count: vi.fn().mockResolvedValue(0), create: vi.fn(async ({ data }: any) => ({ id: "club-payment-a", ...data })) },
-      financialEntry: { create: vi.fn(async ({ data }: any) => ({ id: "club-entry-a", ...data })) },
+      financialEntry: {
+        findFirst: vi.fn().mockResolvedValue({ id: "club-entry-a", amount: new Prisma.Decimal("10.10") }),
+        create: vi.fn(async ({ data }: any) => ({ id: "club-entry-a", ...data })),
+      },
+      financialCategorySystemMapping: {
+        findUnique: vi.fn(async ({ where }: any) => {
+          const key = where.barbershopId_systemKey;
+          if (key && key.barbershopId === "shop-a" && key.systemKey === "CLUB_REVENUE") return systemMapping;
+          return null;
+        }),
+      },
+      financialCategory: {
+        findFirst: vi.fn(async () => category),
+      },
+      financialEntryAllocation: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn(async ({ data }: any) => {
+          const alloc = { id: `alloc-${allocations.length + 1}`, ...data };
+          allocations.push(alloc);
+          return alloc;
+        }),
+      },
       cashSession: { findFirst: vi.fn().mockResolvedValue(null) },
       cashMovement: { create: vi.fn() },
     };

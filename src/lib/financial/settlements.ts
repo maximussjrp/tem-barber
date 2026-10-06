@@ -10,6 +10,7 @@ import {
   formatUTCToCivilDate,
   lockTitleRow,
 } from "./titles";
+import { createSingleEntryAllocation } from "./allocations";
 
 export class FinancialSettlementError extends Error {
   readonly code: string;
@@ -288,6 +289,13 @@ export async function createSettlement(
       });
 
       entryId = entry.id;
+
+      await createSingleEntryAllocation(tx, {
+        barbershopId,
+        financialEntryId: entry.id,
+        categoryId: titleRecord.categoryId,
+        amountCents: entryAmountCents,
+      });
     }
 
     await tx.financialTitleEvent.create({
@@ -492,6 +500,13 @@ export async function reverseSettlement(
       });
 
       reversalEntryId = reverseEntry.id;
+
+      await createSingleEntryAllocation(tx, {
+        barbershopId,
+        financialEntryId: reverseEntry.id,
+        categoryId: settlementRecord.title.categoryId,
+        amountCents: reverseAmountCents,
+      });
     }
 
     await tx.financialTitleEvent.create({

@@ -12,6 +12,7 @@ import {
 import prisma from "../prisma";
 import { fromCents, toCents } from "./money";
 import { syncCashSessionExpectedAmount } from "./cash";
+import { createSingleEntryAllocation, FINANCIAL_SYSTEM_KEYS } from "../financial/allocations";
 
 export class ClubError extends Error {
   constructor(
@@ -968,7 +969,7 @@ export async function registerManualClubSubscriptionPayment(params: {
     });
 
     // Create 1 FinancialEntry with type CLUB_REVENUE
-    await tx.financialEntry.create({
+    const clubEntry = await tx.financialEntry.create({
       data: {
         barbershopId: params.barbershopId,
         type: FinancialEntryType.CLUB_REVENUE,
@@ -978,6 +979,13 @@ export async function registerManualClubSubscriptionPayment(params: {
         entryDate: paidAt,
         clubSubscriptionPaymentId: payment.id,
       },
+    });
+
+    await createSingleEntryAllocation(tx, {
+      barbershopId: params.barbershopId,
+      financialEntryId: clubEntry.id,
+      systemKey: FINANCIAL_SYSTEM_KEYS.CLUB_REVENUE,
+      amountCents: toCents(sub.clubPlan.monthlyPrice),
     });
 
     // If CASH, log CashMovement and sync expected amount

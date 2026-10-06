@@ -100,6 +100,7 @@ function createFixture() {
   const payments: any[] = [];
   const entries: any[] = [];
   const movements: any[] = [];
+  const allocations: any[] = [];
   const sessions: any[] = [
     { id: "cash-1", barbershopId: "shop-1", status: "OPEN", expectedAmount: fromCents(1000) },
   ];
@@ -192,8 +193,39 @@ function createFixture() {
       }),
     },
     financialEntry: {
+      findFirst: vi.fn(async ({ where }: any) => entries.find((e) => matches(e, where)) ?? null),
       create: create(entries, "entry"),
       findMany: vi.fn(async ({ where }: any) => entries.filter((e) => matches(e, where))),
+    },
+    financialCategorySystemMapping: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        const key = where.barbershopId_systemKey;
+        if (!key) return null;
+        return {
+          id: `mapping-${key.systemKey}`,
+          barbershopId: key.barbershopId,
+          systemKey: key.systemKey,
+          categoryId: `cat-${key.systemKey}`,
+          category: {
+            id: `cat-${key.systemKey}`,
+            barbershopId: key.barbershopId,
+            name: key.systemKey,
+            isActive: true,
+          },
+        };
+      }),
+    },
+    financialCategory: {
+      findFirst: vi.fn(async ({ where }: any) => ({
+        id: where.id ?? "cat-1",
+        barbershopId: where.barbershopId,
+        name: "Test Cat",
+        isActive: true,
+      })),
+    },
+    financialEntryAllocation: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: create(allocations, "allocation"),
     },
     cashMovement: { create: create(movements, "movement") },
     cashSession: {

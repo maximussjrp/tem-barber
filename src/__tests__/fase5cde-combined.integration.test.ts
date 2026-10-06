@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 import { processCheckoutAllocation, reconcileCheckoutTransaction } from "@/lib/operations/checkout";
 import { recordTip, refundTip, executeTipPayout, reverseTipPayout, reconcileTipLedger } from "@/lib/operations/tips";
 import { cancelComanda } from "@/lib/operations/comandas";
@@ -30,6 +31,7 @@ describe("FASE 5C+5D+5E - Combined Integration Test Suite", () => {
       },
     });
     barbershopId = barbershop.id;
+    await bootstrapFinancialPlan(prisma, barbershopId);
 
     const userBarber = await prisma.user.create({
       data: {

@@ -17,6 +17,7 @@ import {
 import crypto from "crypto";
 import { fromCents, nonNegativeCents, toCents } from "./money";
 import { syncCashSessionExpectedAmount } from "./cash";
+import { createSingleEntryAllocation, FINANCIAL_SYSTEM_KEYS } from "../financial/allocations";
 
 export class CommissionError extends Error {
   constructor(
@@ -1515,7 +1516,7 @@ export async function createCommissionAdvance(
   const description =
     input.description ?? input.notes ?? `Adiantamento de comissão - membro ${memberId}`;
 
-  await tx.financialEntry.create({
+  const advanceEntry = await tx.financialEntry.create({
     data: {
       barbershopId,
       type: FinancialEntryType.COMMISSION_ADVANCE,
@@ -1525,6 +1526,13 @@ export async function createCommissionAdvance(
       userId: createdById,
       commissionAdvanceId: advance.id,
     },
+  });
+
+  await createSingleEntryAllocation(tx, {
+    barbershopId,
+    financialEntryId: advanceEntry.id,
+    systemKey: FINANCIAL_SYSTEM_KEYS.COMMISSION_ADVANCE,
+    amountCents: -requestedCents,
   });
 
   // 8. If CASH, validate open cash session and create CashMovement
@@ -1676,7 +1684,7 @@ export async function reverseCommissionAdvance(
 
   // 7. Create linked FinancialEntry (positive amount)
   const description = `Devolução de adiantamento de comissão - ${advance.id}`;
-  await tx.financialEntry.create({
+  const reversalEntry = await tx.financialEntry.create({
     data: {
       barbershopId,
       type: FinancialEntryType.COMMISSION_ADVANCE_REVERSAL,
@@ -1686,6 +1694,13 @@ export async function reverseCommissionAdvance(
       userId: createdById,
       commissionAdvanceReversalId: reversal.id,
     },
+  });
+
+  await createSingleEntryAllocation(tx, {
+    barbershopId,
+    financialEntryId: reversalEntry.id,
+    systemKey: FINANCIAL_SYSTEM_KEYS.COMMISSION_ADVANCE_REVERSAL,
+    amountCents: reversalCents,
   });
 
   // 8. If physical cash is returned, record CashMovement in OPEN cash session
@@ -1891,7 +1906,7 @@ export async function executeCommissionPayout(
     const description =
       input.notes ?? `Pagamento final de comissao - ciclo #${cycle.cycleNumber} membro ${memberId}`;
 
-    await tx.financialEntry.create({
+    const payoutEntry = await tx.financialEntry.create({
       data: {
         barbershopId,
         type: FinancialEntryType.COMMISSION_PAYOUT,
@@ -1901,6 +1916,13 @@ export async function executeCommissionPayout(
         userId: createdById,
         commissionPayoutId: payout.id,
       },
+    });
+
+    await createSingleEntryAllocation(tx, {
+      barbershopId,
+      financialEntryId: payoutEntry.id,
+      systemKey: FINANCIAL_SYSTEM_KEYS.COMMISSION_PAYOUT,
+      amountCents: -remainingCents,
     });
 
     if (payoutMethod === CommissionDisbursementMethod.CASH && cashSessionId) {

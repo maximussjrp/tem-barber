@@ -3,6 +3,7 @@ import { syncCashSessionExpectedAmount } from "./cash";
 import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "./comandas";
 import { fromCents, positiveCents, toCents } from "./money";
+import { createSingleEntryAllocation, FINANCIAL_SYSTEM_KEYS } from "../financial/allocations";
 
 export async function registerPayment(
   tx: Prisma.TransactionClient,
@@ -405,7 +406,7 @@ export async function refundPayment(
   });
 
   if (original.method !== "CUSTOMER_CREDIT") {
-    await tx.financialEntry.create({
+    const refundEntry = await tx.financialEntry.create({
       data: {
         barbershopId: input.barbershopId,
         type: "REFUND",
@@ -416,6 +417,13 @@ export async function refundPayment(
         comandaId: original.comandaId,
         paymentId: refund.id,
       },
+    });
+
+    await createSingleEntryAllocation(tx, {
+      barbershopId: input.barbershopId,
+      financialEntryId: refundEntry.id,
+      systemKey: FINANCIAL_SYSTEM_KEYS.REFUND,
+      amountCents: -amount,
     });
   }
 

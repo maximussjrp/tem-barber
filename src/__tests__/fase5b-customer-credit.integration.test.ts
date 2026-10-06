@@ -120,6 +120,7 @@ function createFixture() {
   const payments: any[] = [];
   const entries: any[] = [];
   const movements: any[] = [];
+  const allocations: any[] = [];
   const sessions: any[] = [
     { id: "cash-1", barbershopId: "shop-1", status: "OPEN", expectedAmount: fromCents(1000) },
   ];
@@ -266,12 +267,47 @@ function createFixture() {
       }),
     },
     financialEntry: {
+      findFirst: vi.fn(async ({ where }: any) => entries.find((e) => matches(e, where)) ?? null),
       create: vi.fn(async ({ data }: any) => {
         const e = { id: `fe-${entries.length + 1}`, entryDate: new Date(), createdAt: new Date(), ...data };
         entries.push(e);
         return e;
       }),
       findMany: vi.fn(async ({ where }: any) => entries.filter((e) => matches(e, where))),
+    },
+    financialCategorySystemMapping: {
+      findUnique: vi.fn(async ({ where }: any) => {
+        const key = where.barbershopId_systemKey;
+        if (!key) return null;
+        return {
+          id: `mapping-${key.systemKey}`,
+          barbershopId: key.barbershopId,
+          systemKey: key.systemKey,
+          categoryId: `cat-${key.systemKey}`,
+          category: {
+            id: `cat-${key.systemKey}`,
+            barbershopId: key.barbershopId,
+            name: key.systemKey,
+            isActive: true,
+          },
+        };
+      }),
+    },
+    financialCategory: {
+      findFirst: vi.fn(async ({ where }: any) => ({
+        id: where.id ?? "cat-1",
+        barbershopId: where.barbershopId,
+        name: "Test Cat",
+        isActive: true,
+      })),
+    },
+    financialEntryAllocation: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn(async ({ data }: any) => {
+        const alloc = { id: `alloc-${allocations.length + 1}`, ...data };
+        allocations.push(alloc);
+        return alloc;
+      }),
     },
     cashMovement: {
       create: vi.fn(async ({ data }: any) => {

@@ -7,6 +7,7 @@ import {
 import { fromCents, nonNegativeCents, positiveCents, toCents } from "./money";
 import { syncCommissionReleaseForComanda } from "./commissions";
 import { resolveClubBenefitForComandaItem } from "./club";
+import { syncComandaRevenueAllocations } from "@/lib/financial/allocations";
 
 export const comandaInclude = {
   customer: { select: { id: true, name: true, phone: true } },
@@ -221,14 +222,17 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
     tx,
   }) : null;
 
-  // Sum active applied club benefit reductions (real + simulated preview)
+  // Sum active applied club benefit reductions (real + simulated preview) and economic net mix
   let clubReductions = 0;
+  let serviceRawNet = 0;
+  let productRawNet = 0;
   for (const item of regularItems) {
+    let itemReduction = 0;
     const usage = item.clubBenefitUsage;
     if (usage && usage.status === "APPLIED") {
       const covered = usage.coveredAmount ? toCents(usage.coveredAmount) : 0;
       const discount = usage.discountAmount ? toCents(usage.discountAmount) : 0;
-      clubReductions += covered + discount;
+      itemReduction = covered + discount;
     } else if (item.clubBenefitRequested && item.requestedClubPlanBenefitId && balance) {
       const benefit = balance.benefits.find(b => b.id === item.requestedClubPlanBenefitId);
       if (benefit) {
@@ -239,7 +243,7 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
           if (benefit.benefitType === "INCLUDED_SERVICE") {
             const canUseBenefit = benefit.isUnlimited || (benefit.availableQty && benefit.availableQty > 0);
             if (canUseBenefit) {
-              clubReductions += toCents(item.total);
+              itemReduction = toCents(item.total);
               if (!benefit.isUnlimited && benefit.availableQty) {
                 benefit.availableQty--;
               }
@@ -248,10 +252,17 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
             const pct = Number(benefit.discountPercent || 0);
             const original = toCents(item.total);
             const discount = Math.round((original * pct) / 100);
-            clubReductions += discount;
+            itemReduction = discount;
           }
         }
       }
+    }
+    clubReductions += itemReduction;
+    const netItemCents = Math.max(0, toCents(item.total) - itemReduction);
+    if (item.type === "SERVICE") {
+      serviceRawNet += netItemCents;
+    } else if (item.type === "PRODUCT") {
+      productRawNet += netItemCents;
     }
   }
 
@@ -291,11 +302,18 @@ export async function recalculateComandaTotals(tx: Prisma.TransactionClient, com
     // Preserve CLOSED status and closedAt on closed comanda
   }
 
-  return tx.comanda.update({
+  const updatedComanda = await tx.comanda.update({
     where: { id: comandaId },
     data: updateData,
     include: comandaInclude,
   });
+
+  await syncComandaRevenueAllocations(tx, updatedComanda.barbershopId, comandaId, {
+    serviceRawNet,
+    productRawNet,
+  });
+
+  return updatedComanda;
 }
 
 export async function assertEditableComanda(
