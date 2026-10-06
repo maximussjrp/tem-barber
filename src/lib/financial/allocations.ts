@@ -291,27 +291,23 @@ export async function calculateComandaEconomicMix(
 
   let balance: Awaited<ReturnType<typeof import("@/lib/operations/club").getClubBenefitsBalance>> | null = null;
   if (comanda.customerId) {
-    try {
-      const { getActiveCustomerClubSubscription, getClubBenefitsBalance } = await import(
-        "@/lib/operations/club"
-      );
-      const clubEvalDate = comanda.openedAt || new Date();
-      const activeSub = await getActiveCustomerClubSubscription({
+    const { getActiveCustomerClubSubscription, getClubBenefitsBalance } = await import(
+      "@/lib/operations/club"
+    );
+    const clubEvalDate = comanda.openedAt || new Date();
+    const activeSub = await getActiveCustomerClubSubscription({
+      barbershopId: comanda.barbershopId,
+      customerId: comanda.customerId,
+      atDate: clubEvalDate,
+      tx,
+    });
+    if (activeSub) {
+      balance = await getClubBenefitsBalance({
         barbershopId: comanda.barbershopId,
-        customerId: comanda.customerId,
+        subscriptionId: activeSub.id,
         atDate: clubEvalDate,
         tx,
       });
-      if (activeSub) {
-        balance = await getClubBenefitsBalance({
-          barbershopId: comanda.barbershopId,
-          subscriptionId: activeSub.id,
-          atDate: clubEvalDate,
-          tx,
-        });
-      }
-    } catch {
-      // Keep calculation available even if club module is absent in mock environment
     }
   }
 

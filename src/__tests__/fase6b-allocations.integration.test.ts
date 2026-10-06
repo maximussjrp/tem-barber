@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { fromCents, toCents } from "@/lib/operations/money";
@@ -18,7 +18,6 @@ describe("Fase 6B — Comanda Service / Product Allocations Integration Test Sui
   const shopBId = "shop-6b-b";
   const userId = "user-6b-1";
   let serviceAId: string;
-  let serviceBId: string;
   let productAId: string;
 
   beforeAll(async () => {
@@ -884,7 +883,7 @@ describe("Fase 6B — Comanda Service / Product Allocations Integration Test Sui
     );
 
     // Tentativa de pagamento deve falhar pois falta mapping PRODUCT
-    let errorCaught: any = null;
+    let errorCaught: unknown = null;
     try {
       await prisma.$transaction(async (tx) => {
         await registerPayment(tx, {
@@ -901,7 +900,7 @@ describe("Fase 6B — Comanda Service / Product Allocations Integration Test Sui
     }
 
     expect(errorCaught).toBeInstanceOf(FinancialAllocationError);
-    expect(errorCaught.code).toBe("FINANCIAL_SYSTEM_MAPPING_NOT_FOUND");
+    expect((errorCaught as FinancialAllocationError).code).toBe("FINANCIAL_SYSTEM_MAPPING_NOT_FOUND");
 
     // Verificar que NENHUM FinancialEntry ou Payment órfão foi persistido no banco
     const orphanEntries = await prisma.financialEntry.findMany({
@@ -975,5 +974,64 @@ describe("Fase 6B — Comanda Service / Product Allocations Integration Test Sui
     expect(validation.isValid).toBe(true);
     expect(validation.entryCents).toBe(10000);
     expect(validation.sumAllocatedCents).toBe(10000);
+  });
+
+  // -------------------------------------------------------------
+  // TEST 22 — Fail-Closed: Erro real no Clube propaga e aborta alocação
+  // -------------------------------------------------------------
+  test("T22 — CLUB_LOOKUP_ERROR: Erro ao consultar dados do Clube propaga exceção e NÃO cria allocations parciais", async () => {
+    const customer = await prisma.user.create({
+      data: { name: "Cliente Erro Clube", phone: "11999990022" },
+    });
+
+    const comanda = await createTestComanda(
+      [
+        { type: "SERVICE", description: "Corte", unitPrice: 70, total: 70, serviceId: serviceAId },
+        { type: "PRODUCT", description: "Pomada", unitPrice: 30, total: 30, productId: productAId },
+      ],
+      shopAId,
+      customer.id
+    );
+
+    await prisma.financialEntry.create({
+      data: {
+        barbershopId: shopAId,
+        comandaId: comanda.id,
+        type: "COMMAND_REVENUE",
+        category: "PIX",
+        amount: fromCents(10000),
+        description: "Pagamento comanda teste fail-closed",
+      },
+    });
+
+    // Mockar erro na operação do clube
+    const clubModule = await import("@/lib/operations/club");
+    const spy = vi.spyOn(clubModule, "getActiveCustomerClubSubscription").mockRejectedValue(
+      new Error("CLUB_DATABASE_UNAVAILABLE")
+    );
+
+    try {
+      // calculateComandaEconomicMix deve falhar fechado e propagar o erro
+      await expect(
+        calculateComandaEconomicMix(prisma, shopAId, comanda.id)
+      ).rejects.toThrow("CLUB_DATABASE_UNAVAILABLE");
+
+      // syncComandaRevenueAllocations também deve falhar e não criar alocações
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await syncComandaRevenueAllocations(tx, shopAId, comanda.id);
+        })
+      ).rejects.toThrow("CLUB_DATABASE_UNAVAILABLE");
+
+      const allocCount = await prisma.financialEntryAllocation.count({
+        where: {
+          barbershopId: shopAId,
+          financialEntry: { comandaId: comanda.id },
+        },
+      });
+      expect(allocCount).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
