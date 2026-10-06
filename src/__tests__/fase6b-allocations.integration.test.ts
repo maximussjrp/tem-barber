@@ -18,6 +18,7 @@ describe("Fase 6B — Comanda Service / Product Allocations Integration Test Sui
   const shopBId = "shop-6b-b";
   const userId = "user-6b-1";
   let serviceAId: string;
+  let serviceBId: string;
   let productAId: string;
 
   beforeAll(async () => {

@@ -751,4 +751,300 @@ describe("Fase 6C — Backfill, Reconciliação & Integridade Histórica Test Su
     expect(allocB!.barbershopId).toBe(shopBId);
     expect(allocB!.financialCategory.barbershopId).toBe(shopBId);
   });
+
+  // -------------------------------------------------------------
+  // TEST HISTORICAL CANCELLED COMANDA RECONSTRUCTION
+  // -------------------------------------------------------------
+  test("T19 — Backfill reconstrói comanda CANCELLED com 1 item cancelado a posteriori (100% SERVICE)", async () => {
+    const paymentTime = new Date("2026-03-01T12:00:00Z");
+    const itemCreatedTime = new Date("2026-03-01T11:50:00Z");
+    const itemCancelledTime = new Date("2026-03-08T12:00:00Z"); // 7 dias depois
+
+    const comanda = await prisma.comanda.create({
+      data: {
+        barbershopId: shopAId,
+        status: "CANCELLED",
+        customerName: "Cliente Cancelado Post-Pagamento 1",
+        subtotal: fromCents(7000),
+        total: fromCents(7000),
+        paidTotal: fromCents(7000),
+        remainingTotal: fromCents(0),
+        openedAt: itemCreatedTime,
+        closedAt: paymentTime,
+        items: {
+          create: [
+            {
+              barbershopId: shopAId,
+              type: "SERVICE",
+              description: "Corte + Barba",
+              quantity: 1,
+              unitPrice: fromCents(7000),
+              total: fromCents(7000),
+              serviceId: serviceAId,
+              status: "CANCELLED",
+              createdAt: itemCreatedTime,
+              cancelledAt: itemCancelledTime,
+            },
+          ],
+        },
+      },
+    });
+
+    const entry = await prisma.financialEntry.create({
+      data: {
+        barbershopId: shopAId,
+        comandaId: comanda.id,
+        type: "COMMAND_REVENUE",
+        category: "CREDIT_CARD",
+        amount: fromCents(7000),
+        entryDate: paymentTime,
+        description: "Recebimento histórico comanda cancelada a posteriori",
+      },
+    });
+
+    // 1. Dry run
+    const dryRun = await backfillTenantFinancialAllocations(shopAId, { dryRun: true });
+    expect(dryRun.eligibleEntries).toBe(1);
+    expect(dryRun.needsAllocation).toBe(1);
+
+    // 2. Reconcile
+    const recBefore = await reconcileTenantFinancialAllocations(prisma, shopAId);
+    expect(recBefore.eligibleEntries).toBe(1);
+    expect(recBefore.unallocatableByPolicyEntries).toBe(0);
+
+    // 3. Execute backfill
+    const run = await backfillTenantFinancialAllocations(shopAId, { dryRun: false });
+    expect(run.eligibleEntries).toBe(1);
+    expect(run.createdAllocationsCount).toBe(1);
+
+    const allocs = await prisma.financialEntryAllocation.findMany({
+      where: { financialEntryId: entry.id },
+      include: { financialCategory: true },
+    });
+    expect(allocs.length).toBe(1);
+    expect(allocs[0].financialCategory.code).toBe("01.01"); // Receita de Serviços
+    expect(toCents(allocs[0].allocatedAmount)).toBe(7000);
+
+    // 4. Reconcile after
+    const recAfter = await reconcileTenantFinancialAllocations(prisma, shopAId);
+    expect(recAfter.eligibleEntries).toBe(1);
+    expect(recAfter.fullyAllocatedEntries).toBe(1);
+    expect(recAfter.issues.length).toBe(0);
+
+    // 5. Idempotência
+    const run2 = await backfillTenantFinancialAllocations(shopAId, { dryRun: false });
+    expect(run2.createdAllocationsCount).toBe(0);
+    expect(run2.alreadyFullyAllocated).toBe(1);
+  });
+
+  test("T20 — Backfill reconstrói comanda CANCELLED com 2 itens cancelados a posteriori (100% SERVICE)", async () => {
+    const paymentTime = new Date("2026-03-01T12:00:00Z");
+    const itemCreatedTime = new Date("2026-03-01T11:50:00Z");
+    const itemCancelledTime = new Date("2026-03-02T12:00:00Z"); // 1 dia depois
+
+    const comanda = await prisma.comanda.create({
+      data: {
+        barbershopId: shopAId,
+        status: "CANCELLED",
+        customerName: "Cliente Cancelado Post-Pagamento 2",
+        subtotal: fromCents(7000),
+        total: fromCents(7000),
+        paidTotal: fromCents(7000),
+        remainingTotal: fromCents(0),
+        openedAt: itemCreatedTime,
+        closedAt: paymentTime,
+        items: {
+          create: [
+            {
+              barbershopId: shopAId,
+              type: "SERVICE",
+              description: "Barba",
+              quantity: 1,
+              unitPrice: fromCents(3500),
+              total: fromCents(3500),
+              serviceId: serviceAId,
+              status: "CANCELLED",
+              createdAt: itemCreatedTime,
+              cancelledAt: itemCancelledTime,
+            },
+            {
+              barbershopId: shopAId,
+              type: "SERVICE",
+              description: "Corte Tradicional",
+              quantity: 1,
+              unitPrice: fromCents(3500),
+              total: fromCents(3500),
+              serviceId: serviceAId,
+              status: "CANCELLED",
+              createdAt: itemCreatedTime,
+              cancelledAt: itemCancelledTime,
+            },
+          ],
+        },
+      },
+    });
+
+    const entry = await prisma.financialEntry.create({
+      data: {
+        barbershopId: shopAId,
+        comandaId: comanda.id,
+        type: "COMMAND_REVENUE",
+        category: "PIX",
+        amount: fromCents(7000),
+        entryDate: paymentTime,
+        description: "Recebimento histórico comanda 2 itens cancelada a posteriori",
+      },
+    });
+
+    const run = await backfillTenantFinancialAllocations(shopAId, { dryRun: false });
+    expect(run.eligibleEntries).toBe(1);
+    expect(run.createdAllocationsCount).toBe(1);
+
+    const allocs = await prisma.financialEntryAllocation.findMany({
+      where: { financialEntryId: entry.id },
+      include: { financialCategory: true },
+    });
+    expect(allocs.length).toBe(1);
+    expect(allocs[0].financialCategory.code).toBe("01.01");
+    expect(toCents(allocs[0].allocatedAmount)).toBe(7000);
+
+    const rec = await reconcileTenantFinancialAllocations(prisma, shopAId);
+    expect(rec.eligibleEntries).toBe(1);
+    expect(rec.fullyAllocatedEntries).toBe(1);
+    expect(rec.issues.length).toBe(0);
+  });
+
+  test("T21 — Comanda CANCELLED com item cancelado ANTES do pagamento é excluído da reconstrução", async () => {
+    const itemCreatedTime = new Date("2026-03-01T10:00:00Z");
+    const itemCancelledBeforeTime = new Date("2026-03-01T11:00:00Z");
+    const paymentTime = new Date("2026-03-01T12:00:00Z");
+    const activeItemCancelledAfter = new Date("2026-03-02T12:00:00Z");
+
+    const comanda = await prisma.comanda.create({
+      data: {
+        barbershopId: shopAId,
+        status: "CANCELLED",
+        customerName: "Cliente Cancelamento Prévio",
+        subtotal: fromCents(7000),
+        total: fromCents(7000),
+        paidTotal: fromCents(7000),
+        remainingTotal: fromCents(0),
+        openedAt: itemCreatedTime,
+        closedAt: paymentTime,
+        items: {
+          create: [
+            {
+              // Item cancelado antes do pagamento
+              barbershopId: shopAId,
+              type: "PRODUCT",
+              description: "Item Cancelado Antes",
+              quantity: 1,
+              unitPrice: fromCents(3000),
+              total: fromCents(3000),
+              productId: productAId,
+              status: "CANCELLED",
+              createdAt: itemCreatedTime,
+              cancelledAt: itemCancelledBeforeTime,
+            },
+            {
+              // Item ativo no momento do pagamento
+              barbershopId: shopAId,
+              type: "SERVICE",
+              description: "Serviço Ativo no Pagamento",
+              quantity: 1,
+              unitPrice: fromCents(7000),
+              total: fromCents(7000),
+              serviceId: serviceAId,
+              status: "CANCELLED",
+              createdAt: itemCreatedTime,
+              cancelledAt: activeItemCancelledAfter,
+            },
+          ],
+        },
+      },
+    });
+
+    const entry = await prisma.financialEntry.create({
+      data: {
+        barbershopId: shopAId,
+        comandaId: comanda.id,
+        type: "COMMAND_REVENUE",
+        category: "PIX",
+        amount: fromCents(7000),
+        entryDate: paymentTime,
+        description: "Recebimento apenas do item ativo",
+      },
+    });
+
+    const run = await backfillTenantFinancialAllocations(shopAId, { dryRun: false });
+    expect(run.eligibleEntries).toBe(1);
+    expect(run.createdAllocationsCount).toBe(1);
+
+    const allocs = await prisma.financialEntryAllocation.findMany({
+      where: { financialEntryId: entry.id },
+      include: { financialCategory: true },
+    });
+    // O item de produto foi excluído da reconstrução porque cancelledAt <= entryDate
+    expect(allocs.length).toBe(1);
+    expect(allocs[0].financialCategory.code).toBe("01.01");
+    expect(toCents(allocs[0].allocatedAmount)).toBe(7000);
+  });
+
+  test("T22 — Comanda CANCELLED histórica com benefício de Clube opera FAIL-CLOSED (unallocatable)", async () => {
+    const paymentTime = new Date("2026-03-01T12:00:00Z");
+    const itemCreatedTime = new Date("2026-03-01T11:50:00Z");
+    const itemCancelledTime = new Date("2026-03-02T12:00:00Z");
+
+    const comanda = await prisma.comanda.create({
+      data: {
+        barbershopId: shopAId,
+        status: "CANCELLED",
+        customerName: "Cliente Clube Cancelado",
+        subtotal: fromCents(7000),
+        total: fromCents(0), // Coberto pelo clube
+        paidTotal: fromCents(0),
+        remainingTotal: fromCents(0),
+        openedAt: itemCreatedTime,
+        closedAt: paymentTime,
+        items: {
+          create: [
+            {
+              barbershopId: shopAId,
+              type: "SERVICE",
+              description: "Corte Clube",
+              quantity: 1,
+              unitPrice: fromCents(7000),
+              total: fromCents(7000),
+              serviceId: serviceAId,
+              status: "CANCELLED",
+              clubBenefitRequested: true,
+              createdAt: itemCreatedTime,
+              cancelledAt: itemCancelledTime,
+            },
+          ],
+        },
+      },
+    });
+
+    await prisma.financialEntry.create({
+      data: {
+        barbershopId: shopAId,
+        comandaId: comanda.id,
+        type: "COMMAND_REVENUE",
+        category: "OUTROS",
+        amount: fromCents(7000),
+        entryDate: paymentTime,
+        description: "Lançamento de comanda com benefício de clube",
+      },
+    });
+
+    const res = await backfillTenantFinancialAllocations(shopAId, { dryRun: true });
+    // Fail-closed: considerado unallocatableByPolicy, não gera alocação
+    expect(res.eligibleEntries).toBe(0);
+    expect(res.unallocatableByPolicy).toBe(1);
+
+    const rec = await reconcileTenantFinancialAllocations(prisma, shopAId);
+    expect(rec.eligibleEntries).toBe(0);
+    expect(rec.unallocatableByPolicyEntries).toBe(1);
+  });
 });

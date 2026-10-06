@@ -9,6 +9,7 @@ import {
   syncComandaRevenueAllocations,
   calculateComandaEconomicMix,
   validateFinancialEntryAllocationSum,
+  ComandaEconomicMix,
 } from "./allocations";
 
 export interface ReconciliationIssue {
@@ -107,6 +108,86 @@ export function isUnallocatableByPolicy(entry: {
 }
 
 /**
+ * Resolve o mix econômico de uma comanda para fins de reconciliação e backfill histórico.
+ * 1. Primeiro tenta o cálculo runtime padrão (calculateComandaEconomicMix).
+ * 2. Se o mix padrão for zero (ex: comanda CANCELLED a posteriori), e o status da comanda
+ *    for CANCELLED, reconstrói deterministicamente o snapshot dos itens ativos no momento do pagamento/entryDate.
+ * 3. Se houver clubBenefitUsage ou benefício do clube nos itens relevantes, opera fail-closed (retorna mix zero).
+ */
+export async function resolveHistoricalComandaEconomicMix(
+  tx: Prisma.TransactionClient | typeof prisma,
+  barbershopId: string,
+  comandaId: string,
+  entryDate?: Date | null
+): Promise<ComandaEconomicMix> {
+  const currentMix = await calculateComandaEconomicMix(tx, barbershopId, comandaId);
+  if (currentMix.totalRawNet > 0) {
+    return currentMix;
+  }
+
+  // Fallback histórico estritamente para comanda CANCELLED
+  const comanda = tx.comanda?.findFirst
+    ? await tx.comanda.findFirst({
+        where: { id: comandaId, barbershopId },
+        include: {
+          items: {
+            include: { clubBenefitUsage: true },
+          },
+        },
+      })
+    : null;
+
+  if (!comanda || comanda.status !== "CANCELLED") {
+    return { serviceRawNet: 0, productRawNet: 0, totalRawNet: 0 };
+  }
+
+  // Instante de referência para o snapshot histórico do pagamento
+  const snapshotTime = entryDate || comanda.openedAt || new Date();
+
+  // Filtrar itens ativos no momento do snapshot:
+  // item.createdAt <= snapshotTime E (item.cancelledAt IS NULL OU item.cancelledAt > snapshotTime)
+  const historicalItems = (comanda.items || []).filter((item) => {
+    if (item.type !== "SERVICE" && item.type !== "PRODUCT") return false;
+    const createdAtValid = new Date(item.createdAt) <= snapshotTime;
+    const cancelledAfterSnapshot = !item.cancelledAt || new Date(item.cancelledAt) > snapshotTime;
+    return createdAtValid && cancelledAfterSnapshot;
+  });
+
+  if (historicalItems.length === 0) {
+    return { serviceRawNet: 0, productRawNet: 0, totalRawNet: 0 };
+  }
+
+  // Clube: FAIL-CLOSED. Se qualquer item do snapshot tiver clubBenefitUsage ou solicitação de benefício de clube,
+  // não inferir heuristicamente. Retorna totalRawNet = 0 (unallocatable).
+  for (const item of historicalItems) {
+    if (item.clubBenefitUsage) {
+      return { serviceRawNet: 0, productRawNet: 0, totalRawNet: 0 };
+    }
+    if (item.clubBenefitRequested) {
+      return { serviceRawNet: 0, productRawNet: 0, totalRawNet: 0 };
+    }
+  }
+
+  let serviceRawNet = 0;
+  let productRawNet = 0;
+
+  for (const item of historicalItems) {
+    const itemCents = toCents(item.total);
+    if (item.type === "SERVICE") {
+      serviceRawNet += itemCents;
+    } else if (item.type === "PRODUCT") {
+      productRawNet += itemCents;
+    }
+  }
+
+  return {
+    serviceRawNet,
+    productRawNet,
+    totalRawNet: serviceRawNet + productRawNet,
+  };
+}
+
+/**
  * Reconcilia as alocações financeiras de um tenant identificando inconsistências,
  * mappings ausentes, desvios no mix da comanda e somas divergentes.
  */
@@ -192,7 +273,31 @@ export async function reconcileTenantFinancialAllocations(
       seenCatIds.add(alloc.financialCategoryId);
     }
 
-    // 3. Ausência ou soma parcial
+    // 3. Verificação de COMMAND_REVENUE mix & elegibilidade
+    let commandRevenueMix: ComandaEconomicMix | null = null;
+    if (entry.type === "COMMAND_REVENUE") {
+      if (!entry.comandaId) {
+        // Alinhado com o backfill: sem comandaId é inalocável por política
+        unallocatableCount++;
+        eligibleCount--;
+        continue;
+      }
+
+      commandRevenueMix = await resolveHistoricalComandaEconomicMix(
+        tx,
+        barbershopId,
+        entry.comandaId,
+        entry.entryDate
+      );
+      if (commandRevenueMix.totalRawNet <= 0) {
+        // Alinhado com o backfill: comanda sem receita econômica ativa/reconstruível é inalocável por política
+        unallocatableCount++;
+        eligibleCount--;
+        continue;
+      }
+    }
+
+    // 4. Ausência ou soma parcial
     if (allocations.length === 0) {
       issues.push({
         financialEntryId: entry.id,
@@ -222,45 +327,43 @@ export async function reconcileTenantFinancialAllocations(
       continue;
     }
 
-    // 4. Verificação de COMMAND_REVENUE mix drift
-    if (entry.type === "COMMAND_REVENUE" && entry.comandaId) {
-      const mix = await calculateComandaEconomicMix(tx, barbershopId, entry.comandaId);
-      if (mix.totalRawNet > 0) {
-        let expectedServiceCents = 0;
-        let expectedProductCents = 0;
+    // 5. Verificação de COMMAND_REVENUE mix drift
+    if (entry.type === "COMMAND_REVENUE" && commandRevenueMix) {
+      const mix = commandRevenueMix;
+      let expectedServiceCents = 0;
+      let expectedProductCents = 0;
 
-        if (mix.productRawNet === 0) {
-          expectedServiceCents = entryCents;
-        } else if (mix.serviceRawNet === 0) {
-          expectedProductCents = entryCents;
-        } else {
-          const sign = entryCents < 0 ? -1 : 1;
-          const absEntryCents = Math.abs(entryCents);
-          let absServiceCents = Math.round((absEntryCents * mix.serviceRawNet) / mix.totalRawNet);
-          if (absEntryCents >= 2) {
-            absServiceCents = Math.max(1, Math.min(absEntryCents - 1, absServiceCents));
-          }
-          expectedServiceCents = absServiceCents * sign;
-          expectedProductCents = entryCents - expectedServiceCents;
+      if (mix.productRawNet === 0) {
+        expectedServiceCents = entryCents;
+      } else if (mix.serviceRawNet === 0) {
+        expectedProductCents = entryCents;
+      } else {
+        const sign = entryCents < 0 ? -1 : 1;
+        const absEntryCents = Math.abs(entryCents);
+        let absServiceCents = Math.round((absEntryCents * mix.serviceRawNet) / mix.totalRawNet);
+        if (absEntryCents >= 2) {
+          absServiceCents = Math.max(1, Math.min(absEntryCents - 1, absServiceCents));
         }
+        expectedServiceCents = absServiceCents * sign;
+        expectedProductCents = entryCents - expectedServiceCents;
+      }
 
-        const serviceAlloc = allocations.find((a) => a.financialCategory.systemMappings?.some((m) => m.systemKey === FINANCIAL_SYSTEM_KEYS.COMANDA_SERVICE_REVENUE));
-        const productAlloc = allocations.find((a) => a.financialCategory.systemMappings?.some((m) => m.systemKey === FINANCIAL_SYSTEM_KEYS.COMANDA_PRODUCT_REVENUE));
+      const serviceAlloc = allocations.find((a) => a.financialCategory.systemMappings?.some((m) => m.systemKey === FINANCIAL_SYSTEM_KEYS.COMANDA_SERVICE_REVENUE));
+      const productAlloc = allocations.find((a) => a.financialCategory.systemMappings?.some((m) => m.systemKey === FINANCIAL_SYSTEM_KEYS.COMANDA_PRODUCT_REVENUE));
 
-        const actualServiceCents = serviceAlloc ? toCents(serviceAlloc.allocatedAmount) : 0;
-        const actualProductCents = productAlloc ? toCents(productAlloc.allocatedAmount) : 0;
+      const actualServiceCents = serviceAlloc ? toCents(serviceAlloc.allocatedAmount) : 0;
+      const actualProductCents = productAlloc ? toCents(productAlloc.allocatedAmount) : 0;
 
-        if (expectedServiceCents !== actualServiceCents || expectedProductCents !== actualProductCents) {
-          issues.push({
-            financialEntryId: entry.id,
-            barbershopId,
-            type: entry.type,
-            amountCents: entryCents,
-            issueCode: "COMMAND_REVENUE_DRIFT",
-            description: `Alocação da comanda diverge do mix atual faturado (Esperado: S=${expectedServiceCents}, P=${expectedProductCents}; Atual: S=${actualServiceCents}, P=${actualProductCents}).`,
-          });
-          continue;
-        }
+      if (expectedServiceCents !== actualServiceCents || expectedProductCents !== actualProductCents) {
+        issues.push({
+          financialEntryId: entry.id,
+          barbershopId,
+          type: entry.type,
+          amountCents: entryCents,
+          issueCode: "COMMAND_REVENUE_DRIFT",
+          description: `Alocação da comanda diverge do mix atual faturado (Esperado: S=${expectedServiceCents}, P=${expectedProductCents}; Atual: S=${actualServiceCents}, P=${actualProductCents}).`,
+        });
+        continue;
       }
     }
 
@@ -353,7 +456,12 @@ export async function backfillTenantFinancialAllocations(
           continue;
         }
 
-        const mix = await calculateComandaEconomicMix(tx, barbershopId, entry.comandaId);
+        const mix = await resolveHistoricalComandaEconomicMix(
+          tx,
+          barbershopId,
+          entry.comandaId,
+          entry.entryDate
+        );
         if (mix.totalRawNet <= 0) {
           result.unallocatableByPolicy++;
           result.eligibleEntries--;
