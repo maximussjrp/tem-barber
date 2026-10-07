@@ -14,6 +14,7 @@ export const FINANCIAL_NAV_ITEMS: FinancialNavItem[] = [
   { label: "Visão Geral", href: "/admin/financeiro", exact: true },
   { label: "Contas", href: "/admin/financeiro/contas" },
   { label: "Movimentações", href: "/admin/financeiro/movimentacoes" },
+  { label: "Fluxo de Caixa", href: "/admin/financeiro/fluxo-caixa" },
   { label: "Contas Recorrentes", href: "/admin/financeiro/recorrentes" },
   { label: "Categorias", href: "/admin/financeiro/categorias" },
 ];

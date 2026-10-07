@@ -216,6 +216,7 @@ describe("Sidebar Logo Fallback", () => {
     expect(screen.getAllByText("Visão Geral").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Contas").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Movimentações").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fluxo de Caixa").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Contas Recorrentes").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Categorias").length).toBeGreaterThan(0);
 
@@ -252,6 +253,9 @@ describe("Sidebar Logo Fallback", () => {
 
     const movLink = drawer.getByRole("link", { name: "Movimentações" });
     expect(movLink).toHaveAttribute("href", "/admin/financeiro/movimentacoes");
+
+    const fluxoLink = drawer.getByRole("link", { name: "Fluxo de Caixa" });
+    expect(fluxoLink).toHaveAttribute("href", "/admin/financeiro/fluxo-caixa");
 
     const recLink = drawer.getByRole("link", { name: "Contas Recorrentes" });
     expect(recLink).toHaveAttribute("href", "/admin/financeiro/recorrentes");
