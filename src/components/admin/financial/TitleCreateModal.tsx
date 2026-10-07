@@ -14,6 +14,7 @@ interface TitleCreateModalProps {
   onClose: () => void;
   onSuccess: () => void;
   leafCategories: LeafCategoryOption[];
+  initialKind?: "PAYABLE" | "RECEIVABLE";
 }
 
 export function TitleCreateModal({
@@ -21,8 +22,9 @@ export function TitleCreateModal({
   onClose,
   onSuccess,
   leafCategories,
+  initialKind = "PAYABLE",
 }: TitleCreateModalProps) {
-  const [kind, setKind] = useState<"PAYABLE" | "RECEIVABLE">("PAYABLE");
+  const [kind, setKind] = useState<"PAYABLE" | "RECEIVABLE">(initialKind);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -57,7 +59,7 @@ export function TitleCreateModal({
   };
 
   const handleResetAndClose = () => {
-    setKind("PAYABLE");
+    setKind(initialKind);
     setTitle("");
     setDescription("");
     setCategoryId("");

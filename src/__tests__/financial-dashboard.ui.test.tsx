@@ -226,8 +226,8 @@ describe("Dashboard Financeiro por Período — PR #17 UI Tests", () => {
     expect(screen.getByText("Nenhum profissional com vendas no período.")).toBeInTheDocument();
   });
 
-  it("15. Preserva dialog de Nova Entrada e Nova Saída manual", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
+  it("15. Nova Entrada abre criação de título RECEIVABLE e Nova Saída abre PAYABLE sem chamar POST /financial/entries", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => mockSummaryData,
@@ -240,7 +240,12 @@ describe("Dashboard Financeiro por Período — PR #17 UI Tests", () => {
     });
 
     fireEvent.click(screen.getByText("+ Nova Entrada"));
-    expect(screen.getByText("Nova Entrada")).toBeInTheDocument();
-    expect(screen.getByText("Confirmar")).toBeInTheDocument();
+    expect(screen.getByText("Nova Conta / Título")).toBeInTheDocument();
+    expect(screen.getByText("Conta a receber")).toBeInTheDocument();
+    expect(screen.getByText("Salvar Conta")).toBeInTheDocument();
+
+    // Verify it did not call legacy POST /api/admin/financial/entries
+    const postCalls = fetchSpy.mock.calls.filter((c) => (c[0] as string).includes("/entries"));
+    expect(postCalls.length).toBe(0);
   });
 });

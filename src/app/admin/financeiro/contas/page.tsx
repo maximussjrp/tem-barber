@@ -12,6 +12,7 @@ import {
 import type { CategoryNode } from "@/lib/financial/categories";
 import { TitleCreateModal } from "@/components/admin/financial/TitleCreateModal";
 import { TitleDetailModal } from "@/components/admin/financial/TitleDetailModal";
+import { FinancialNav } from "@/components/admin/financial/FinancialNav";
 
 export default function ContasPage() {
   const [leafCategories, setLeafCategories] = useState<LeafCategoryOption[]>([]);
@@ -147,6 +148,8 @@ export default function ContasPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
+      <FinancialNav />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

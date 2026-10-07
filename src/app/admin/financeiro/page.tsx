@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback, useTransition } from "react";
-import { Dialog } from "@/components/ui/Dialog";
+import Link from "next/link";
 import { formatBRL } from "@/lib/operations/money";
+import { FinancialNav } from "@/components/admin/financial/FinancialNav";
+import { TitleCreateModal } from "@/components/admin/financial/TitleCreateModal";
+import {
+  flattenLeafCategories,
+  LeafCategoryOption,
+} from "@/lib/financial/accounts-client";
+import type { CategoryNode } from "@/lib/financial/categories";
 
 type PaymentMethodItem = {
   method: string;
@@ -140,14 +147,16 @@ export default function FinanceiroPage() {
   const [error, setError] = useState("");
   const [forbiddenError, setForbiddenError] = useState(false);
 
-  // Manual Movement Dialog (Preserved)
-  const [manualDialog, setManualDialog] = useState<{
+  // Categories for Title creation
+  const [leafCategories, setLeafCategories] = useState<LeafCategoryOption[]>([]);
+
+  // Title Create Modal (Nova Entrada / Nova Saída via FinancialTitle)
+  const [titleModal, setTitleModal] = useState<{
     isOpen: boolean;
-    type: "MANUAL_IN" | "MANUAL_OUT" | null;
-    amount: string;
-    description: string;
-  }>({ isOpen: false, type: null, amount: "", description: "" });
-  const [savingManual, setSavingManual] = useState(false);
+    kind: "RECEIVABLE" | "PAYABLE";
+  }>({ isOpen: false, kind: "RECEIVABLE" });
+
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
   const loadData = useCallback(async (sDate: string, eDate: string) => {
     setLoading(true);
@@ -201,40 +210,30 @@ export default function FinanceiroPage() {
     setEndDate(val);
   }
 
-  async function handleManualSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!manualDialog.type || !manualDialog.amount) return;
-    setSavingManual(true);
-    try {
-      await fetch("/api/admin/financial/entries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: manualDialog.type,
-          amount: manualDialog.amount,
-          description: manualDialog.description,
-          category: "Manual",
-        }),
-      });
-      await loadData(startDate, endDate);
-      setManualDialog({ isOpen: false, type: null, amount: "", description: "" });
-    } finally {
-      setSavingManual(false);
+  function openTitleModal(kind: "RECEIVABLE" | "PAYABLE") {
+    setTitleModal({ isOpen: true, kind });
+    if (leafCategories.length === 0) {
+      fetch("/api/admin/financial/categories")
+        .then((res) => (res.ok ? res.json() : []))
+        .then((json: CategoryNode[]) => {
+          if (Array.isArray(json)) {
+            setLeafCategories(flattenLeafCategories(json));
+          }
+        })
+        .catch(() => {});
     }
   }
 
-  function openManual(type: "MANUAL_IN" | "MANUAL_OUT") {
-    setManualDialog({
-      isOpen: true,
-      type,
-      amount: "",
-      description: type === "MANUAL_IN" ? "Entrada manual" : "Saída manual",
-    });
+  function handleTitleSuccess() {
+    setTitleModal((prev) => ({ ...prev, isOpen: false }));
+    setSuccessBanner("Conta cadastrada com sucesso! Ela já está disponível no módulo de Contas.");
+    void loadData(startDate, endDate);
   }
 
   if (forbiddenError) {
     return (
       <div className="p-4 md:p-6 space-y-6">
+        <FinancialNav />
         <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">Financeiro</h1>
         <div className="rounded-xl border border-red-500/30 bg-red-950/40 p-6 text-center text-red-200">
           <p className="font-bold text-lg mb-1">Acesso Negado</p>
@@ -246,60 +245,29 @@ export default function FinanceiroPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Manual Entry Dialog (Preserved) */}
-      <Dialog
-        isOpen={manualDialog.isOpen}
-        onClose={() => setManualDialog((prev) => ({ ...prev, isOpen: false }))}
-        title={manualDialog.type === "MANUAL_IN" ? "Nova Entrada" : "Nova Saída"}
-        className="max-w-md"
-      >
-        <form onSubmit={handleManualSubmit} className="space-y-4 pt-2">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
-              Valor (R$)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={manualDialog.amount}
-              onChange={(e) => setManualDialog((p) => ({ ...p, amount: e.target.value }))}
-              className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]"
-              autoFocus
-              required
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
-              Descrição
-            </label>
-            <input
-              type="text"
-              value={manualDialog.description}
-              onChange={(e) => setManualDialog((p) => ({ ...p, description: e.target.value }))}
-              className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-xl px-4 py-3 text-[var(--text-primary)] focus:border-[var(--gold)] focus:outline-none focus:ring-1 focus:ring-[var(--gold-border)]"
-              required
-            />
-          </div>
-          <div className="flex justify-end gap-3 pt-4">
+      <FinancialNav />
+
+      {/* Success Navigation Banner */}
+      {successBanner && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-xs text-emerald-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <span>{successBanner}</span>
+          <div className="flex items-center gap-3 shrink-0">
+            <Link
+              href="/admin/financeiro/contas"
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 text-black font-bold text-xs hover:bg-emerald-400 transition-colors"
+            >
+              Ir para Contas →
+            </Link>
             <button
               type="button"
-              onClick={() => setManualDialog((prev) => ({ ...prev, isOpen: false }))}
-              disabled={savingManual}
-              className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-muted)] hover:bg-[var(--surface-raised)] transition-colors text-sm font-semibold cursor-pointer"
+              onClick={() => setSuccessBanner(null)}
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={savingManual}
-              className="px-4 py-2 rounded-lg bg-[var(--gold)] text-[var(--text-inverse)] font-bold transition-colors text-sm hover:brightness-110 cursor-pointer"
-            >
-              Confirmar
+              Fechar
             </button>
           </div>
-        </form>
-      </Dialog>
+        </div>
+      )}
 
       {/* Header & Controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -314,18 +282,21 @@ export default function FinanceiroPage() {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => openManual("MANUAL_IN")}
+            type="button"
+            onClick={() => openTitleModal("RECEIVABLE")}
             className="px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-950/40 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-900/40 transition-colors cursor-pointer"
           >
             + Nova Entrada
           </button>
           <button
-            onClick={() => openManual("MANUAL_OUT")}
+            type="button"
+            onClick={() => openTitleModal("PAYABLE")}
             className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-950/40 text-red-400 border border-red-500/20 hover:bg-red-900/40 transition-colors cursor-pointer"
           >
             - Nova Saída
           </button>
           <button
+            type="button"
             onClick={() => loadData(startDate, endDate)}
             disabled={loading}
             className="px-3 py-2 text-xs font-semibold rounded-lg bg-[var(--surface-raised)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:border-[var(--gold)] transition-colors cursor-pointer"
@@ -352,6 +323,7 @@ export default function FinanceiroPage() {
           ].map((preset) => (
             <button
               key={preset.key}
+              type="button"
               onClick={() => handlePresetClick(preset.key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activePreset === preset.key
@@ -391,6 +363,7 @@ export default function FinanceiroPage() {
         <div className="rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-200 flex items-center justify-between gap-4">
           <span>⚠️ {error}</span>
           <button
+            type="button"
             onClick={() => loadData(startDate, endDate)}
             className="px-3 py-1.5 bg-red-900/60 hover:bg-red-800 text-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer shrink-0"
           >
@@ -413,158 +386,187 @@ export default function FinanceiroPage() {
         </div>
       ) : data ? (
         <div className="space-y-6">
-          {/* Main Cards Grid (8 Cards) */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            {/* 1. Faturamento Bruto */}
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Comandas Fechadas — Bruto
-              </p>
-              <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
-                {formatBRL(data.totals.grossRevenue)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Subtotal de comandas fechadas no período</p>
-            </div>
+          {/* SEÇÃO 1: 4 KPIs PRIMÁRIOS OFICIAIS */}
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+              Indicadores Principais
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              {/* 1. Recebido */}
+              <div className="rounded-xl border border-emerald-500/30 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                  Recebido
+                </p>
+                <p className="text-2xl font-bold font-serif text-emerald-400 mt-2">
+                  {formatBRL(data.totals.totalReceived)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Comandas {formatBRL(data.totals.commandReceived)} + manuais {formatBRL(data.totals.manualIncome)}
+                </p>
+              </div>
 
-            <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                Produção de Serviços
-              </p>
-              <p className="text-xl font-bold text-emerald-400 mt-2">
-                {formatBRL(data.totals.serviceProductionGross)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Valor dos serviços concluídos no período</p>
-            </div>
+              {/* 2. A Receber */}
+              <div className="rounded-xl border border-amber-500/30 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  A Receber
+                </p>
+                <p className="text-2xl font-bold font-serif text-amber-400 mt-2">
+                  {formatBRL(data.totals.totalReceivable)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Saldo aberto atual · {data.openCommands.count} comandas
+                </p>
+              </div>
 
-            {/* 2. Descontos */}
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Descontos
-              </p>
-              <p className="text-xl font-bold text-amber-400 mt-2">
-                {formatBRL(data.totals.totalDiscounts)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Concedidos no período</p>
-            </div>
+              {/* 3. Despesas */}
+              <div className="rounded-xl border border-red-500/30 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-bold text-red-400 uppercase tracking-wider">
+                  Despesas
+                </p>
+                <p className="text-2xl font-bold font-serif text-red-400 mt-2">
+                  {formatBRL(data.totals.totalExpenses)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Saídas manuais e despesas operacionais
+                </p>
+              </div>
 
-            {/* 3. Faturamento Líquido */}
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Faturamento Líquido
-              </p>
-              <p className="text-xl font-bold text-[var(--gold)] mt-2">
-                {formatBRL(data.totals.netRevenue)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Comandas fechadas: bruto - descontos + acréscimos
-              </p>
-            </div>
-
-            {/* 4. Total Recebido */}
-            <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                Total Recebido
-              </p>
-              <p className="text-xl font-bold text-emerald-400 mt-2">
-                {formatBRL(data.totals.totalReceived)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Comandas {formatBRL(data.totals.commandReceived)} + manuais {formatBRL(data.totals.manualIncome)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                Entradas Manuais
-              </p>
-              <p className="text-xl font-bold text-emerald-400 mt-2">
-                {formatBRL(data.totals.manualIncome)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos de entrada</p>
-            </div>
-
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Acréscimos
-              </p>
-              <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
-                {formatBRL(data.totals.totalSurcharges)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Incluídos no líquido</p>
-            </div>
-
-            {/* 5. A Receber */}
-            <div className="rounded-xl border border-amber-500/20 bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                A Receber Total
-              </p>
-              <p className="text-xl font-bold text-amber-400 mt-2">
-                {formatBRL(data.totals.totalReceivable)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Saldo aberto atual da barbearia · {data.openCommands.count} comandas
-              </p>
-            </div>
-
-            {/* 6. Saídas manuais */}
-            <div className="rounded-xl border border-red-500/20 bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                Saídas Manuais
-              </p>
-              <p className="text-xl font-bold text-red-400 mt-2">
-                {formatBRL(data.totals.manualExpenses)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos de saída</p>
-            </div>
-
-            {/* 7. Comissões Liberadas */}
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Comissões Liberadas
-              </p>
-              <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
-                {formatBRL(data.totals.releasedCommissions)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Estimadas: {formatBRL(data.totals.estimatedCommissions)}
-              </p>
-            </div>
-
-            {/* 8. Resultado Operacional (Highlighted) */}
-            <div
-              className={`rounded-xl border p-4 shadow-lg flex flex-col justify-between transition-all ${
-                data.totals.operationalResult >= 0
-                  ? "border-[var(--gold-border)] bg-gradient-to-br from-[var(--surface-raised)] to-[var(--surface)]"
-                  : "border-red-500/40 bg-red-950/20"
-              }`}
-            >
-              <p
-                className={`text-xs font-bold uppercase tracking-wider ${
-                  data.totals.operationalResult >= 0 ? "text-[var(--gold)]" : "text-red-400"
+              {/* 4. Resultado Operacional */}
+              <div
+                className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between transition-all ${
+                  data.totals.operationalResult >= 0
+                    ? "border-[var(--gold-border)] bg-gradient-to-br from-[var(--surface-raised)] to-[var(--surface)]"
+                    : "border-red-500/40 bg-red-950/20"
                 }`}
               >
-                Resultado Operacional
-              </p>
-              <p
-                className={`text-2xl font-bold font-serif mt-2 ${
-                  data.totals.operationalResult >= 0 ? "text-emerald-400" : "text-red-400"
-                }`}
-              >
-                {data.totals.operationalResult >= 0 ? "+" : ""}
-                {formatBRL(data.totals.operationalResult)}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Recebido - Despesas - Comissões
-              </p>
+                <p
+                  className={`text-xs font-bold uppercase tracking-wider ${
+                    data.totals.operationalResult >= 0 ? "text-[var(--gold)]" : "text-red-400"
+                  }`}
+                >
+                  Resultado Operacional
+                </p>
+                <p
+                  className={`text-2xl font-bold font-serif mt-2 ${
+                    data.totals.operationalResult >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {data.totals.operationalResult >= 0 ? "+" : ""}
+                  {formatBRL(data.totals.operationalResult)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Recebido - Despesas - Comissões
+                </p>
+              </div>
             </div>
-          </section>
+          </div>
+
+          {/* SEÇÃO 2: RESUMO DO PERÍODO (PRESERVANDO DADOS SECUNDÁRIOS) */}
+          <div className="space-y-3 pt-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              Resumo do Período
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              {/* Faturamento Bruto */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                  Comandas Fechadas — Bruto
+                </p>
+                <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
+                  {formatBRL(data.totals.grossRevenue)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Faturamento bruto das comandas</p>
+              </div>
+
+              {/* Produção de Serviços */}
+              <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                  Produção de Serviços
+                </p>
+                <p className="text-xl font-bold text-emerald-400 mt-2">
+                  {formatBRL(data.totals.serviceProductionGross)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Serviços concluídos no período</p>
+              </div>
+
+              {/* Descontos */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                  Descontos
+                </p>
+                <p className="text-xl font-bold text-amber-400 mt-2">
+                  {formatBRL(data.totals.totalDiscounts)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Concedidos no período</p>
+              </div>
+
+              {/* Acréscimos */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                  Acréscimos
+                </p>
+                <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
+                  {formatBRL(data.totals.totalSurcharges)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Incluídos no faturamento líquido</p>
+              </div>
+
+              {/* Faturamento Líquido */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                  Faturamento Líquido
+                </p>
+                <p className="text-xl font-bold text-[var(--gold)] mt-2">
+                  {formatBRL(data.totals.netRevenue)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Comandas fechadas: bruto - descontos + acréscimos
+                </p>
+              </div>
+
+              {/* Entradas Manuais */}
+              <div className="rounded-xl border border-emerald-500/20 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                  Entradas Manuais
+                </p>
+                <p className="text-xl font-bold text-emerald-400 mt-2">
+                  {formatBRL(data.totals.manualIncome)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos administrativos</p>
+              </div>
+
+              {/* Saídas Manuais */}
+              <div className="rounded-xl border border-red-500/20 bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-red-400 uppercase tracking-wider">
+                  Saídas Manuais
+                </p>
+                <p className="text-xl font-bold text-red-400 mt-2">
+                  {formatBRL(data.totals.manualExpenses)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">Lançamentos de despesa manuais</p>
+              </div>
+
+              {/* Comissões Liberadas / Estimadas */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                  Comissões Liberadas
+                </p>
+                <p className="text-xl font-bold text-[var(--text-primary)] mt-2">
+                  {formatBRL(data.totals.releasedCommissions)}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Estimadas: {formatBRL(data.totals.estimatedCommissions)}
+                </p>
+              </div>
+            </div>
+          </div>
 
           {/* Section: Resumo de Comandas & Formas de Pagamento */}
           <div className="grid lg:grid-cols-2 gap-6">
             {/* Formas de quitação das comandas */}
             <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-4">
               <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-widest border-b border-[var(--border-subtle)] pb-3">
-                Formas de quitação das comandas
+                Recebimentos por Forma de Pagamento
               </h2>
               {data.paymentMethods.every((pm) => pm.amount === 0) ? (
                 <p className="text-sm text-[var(--text-muted)] py-4 text-center">
@@ -613,6 +615,38 @@ export default function FinanceiroPage() {
               )}
             </section>
 
+            {/* Status de Comandas */}
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-4">
+              <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-widest border-b border-[var(--border-subtle)] pb-3">
+                Status de Comandas no Período
+              </h2>
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="rounded-lg border border-amber-500/20 bg-[var(--surface-raised)] p-3 space-y-1">
+                  <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+                    Abertas / A Receber — Total
+                  </p>
+                  <p className="text-lg font-bold text-[var(--text-primary)]">
+                    {data.openCommands.count} <span className="text-xs font-normal text-[var(--text-muted)]">comandas</span>
+                  </p>
+                  <p className="text-sm font-bold text-amber-400">
+                    {formatBRL(data.openCommands.amount)}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-emerald-500/20 bg-[var(--surface-raised)] p-3 space-y-1">
+                  <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                    Concluídas no Período
+                  </p>
+                  <p className="text-lg font-bold text-[var(--text-primary)]">
+                    {data.closedCommands.count} <span className="text-xs font-normal text-[var(--text-muted)]">comandas</span>
+                  </p>
+                  <p className="text-sm font-bold text-emerald-400">
+                    {formatBRL(data.closedCommands.amount)}
+                  </p>
+                </div>
+              </div>
+            </section>
+
             {/* Seção de Passivos / Terceiros */}
             {data.totals.liabilities && (
               <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-3 col-span-full">
@@ -651,38 +685,6 @@ export default function FinanceiroPage() {
                 </div>
               </section>
             )}
-
-            {/* Resumo de Comandas */}
-            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-4 shadow-sm space-y-4">
-              <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-widest border-b border-[var(--border-subtle)] pb-3">
-                Status de Comandas no Período
-              </h2>
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div className="rounded-lg border border-amber-500/20 bg-[var(--surface-raised)] p-3 space-y-1">
-                  <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-                    Abertas / A Receber — Total
-                  </p>
-                  <p className="text-lg font-bold text-[var(--text-primary)]">
-                    {data.openCommands.count} <span className="text-xs font-normal text-[var(--text-muted)]">comandas</span>
-                  </p>
-                  <p className="text-sm font-bold text-amber-400">
-                    {formatBRL(data.openCommands.amount)}
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-emerald-500/20 bg-[var(--surface-raised)] p-3 space-y-1">
-                  <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                    Concluídas no Período
-                  </p>
-                  <p className="text-lg font-bold text-[var(--text-primary)]">
-                    {data.closedCommands.count} <span className="text-xs font-normal text-[var(--text-muted)]">comandas</span>
-                  </p>
-                  <p className="text-sm font-bold text-emerald-400">
-                    {formatBRL(data.closedCommands.amount)}
-                  </p>
-                </div>
-              </div>
-            </section>
           </div>
 
           {/* Section: Top Serviços & Top Profissionais */}
@@ -778,6 +780,18 @@ export default function FinanceiroPage() {
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-8 text-center text-[var(--text-muted)] text-sm">
           Selecione um período para visualizar os dados financeiros.
         </div>
+      )}
+
+      {/* Title Create Modal for Nova Entrada / Nova Saída (Canonical FinancialTitle) */}
+      {titleModal.isOpen && (
+        <TitleCreateModal
+          key={`modal-${titleModal.kind}`}
+          isOpen={titleModal.isOpen}
+          onClose={() => setTitleModal((prev) => ({ ...prev, isOpen: false }))}
+          onSuccess={handleTitleSuccess}
+          leafCategories={leafCategories}
+          initialKind={titleModal.kind}
+        />
       )}
     </div>
   );

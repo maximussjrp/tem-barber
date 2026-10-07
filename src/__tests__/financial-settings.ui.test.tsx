@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import ConfiguracoesFinanceirasPage from "@/app/admin/financeiro/configuracoes/page";
+import ContasRecorrentesPage from "@/app/admin/financeiro/recorrentes/page";
 import {
   findCategoryByCode,
   monthToEndDate,
@@ -142,8 +142,8 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       });
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
-    expect(screen.getByText(/carregando configurações financeiras/i)).toBeInTheDocument();
+    render(<ContasRecorrentesPage />);
+    expect(screen.getByText(/carregando (contas recorrentes|configurações financeiras)/i)).toBeInTheDocument();
 
     resolveCategories({
       ok: true,
@@ -159,7 +159,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 2: 6 presets aparecem
   it("2. exibe os 6 presets do catálogo na tela", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -179,7 +179,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       json: async () => ({ error: "FORBIDDEN" }),
     } as any);
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Acesso Negado")).toBeInTheDocument();
@@ -194,7 +194,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       json: async () => ({ message: "Erro interno no servidor" }),
     } as any);
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Erro interno no servidor")).toBeInTheDocument();
@@ -251,7 +251,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return { ok: false, status: 404 } as any;
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getAllByText("Categoria financeira indisponível").length).toBe(6);
@@ -275,7 +275,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return { ok: false, status: 404 } as any;
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getAllByText("Configurar").length).toBeGreaterThan(0);
@@ -285,7 +285,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 9: 1 rotina => "1 conta configurada"
   it("9. 1 rotina exibe '1 conta configurada'", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("1 conta configurada")).toBeInTheDocument();
@@ -339,7 +339,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return { ok: false, status: 404 } as any;
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("2 contas configuradas")).toBeInTheDocument();
@@ -351,7 +351,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 11: POST correto
   it("11. POST ao criar rotina envia payload correto", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Água")).toBeInTheDocument();
@@ -387,7 +387,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 12: POST força kind=PAYABLE, frequency=MONTHLY
   it("12. POST força os campos kind=PAYABLE e frequency=MONTHLY", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Água")).toBeInTheDocument();
@@ -421,7 +421,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 13: Aluguel inicia FIXED
   it("13. modal de Aluguel inicia com modo FIXED", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -439,7 +439,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 14: Água inicia VARIABLE
   it("14. modal de Água inicia com modo VARIABLE", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Água")).toBeInTheDocument();
@@ -457,7 +457,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 15: usuário consegue mudar amountMode
   it("15. permite alterar o modo entre FIXED e VARIABLE no modal", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -476,7 +476,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 16: valor > 0 obrigatório para FIXED
   it("16. exige valor > 0 para o modo FIXED", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -503,7 +503,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 17: valor > 0 obrigatório para VARIABLE
   it("17. exige valor > 0 para o modo VARIABLE", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Água")).toBeInTheDocument();
@@ -546,7 +546,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 21: PATCH edição NÃO envia kind, categoryId, frequency
   it("21. PATCH na edição envia APENAS campos editáveis sem enviar kind, categoryId ou frequency", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel Ponto Central")).toBeInTheDocument();
@@ -584,7 +584,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
     setupDefaultFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Desativar")).toBeInTheDocument();
@@ -621,7 +621,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return { ok: false, status: 404 } as any;
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Reativar")).toBeInTheDocument();
@@ -646,7 +646,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 24: nenhum DELETE
   it("24. NENHUMA requisição DELETE é realizada durante operações de UI", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -659,7 +659,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 25: nenhuma request para /routines/generate
   it("25. NENHUMA requisição para /api/admin/financial/routines/generate é chamada na UX-C", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -690,7 +690,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       });
     });
 
-    const { unmount } = render(<ConfiguracoesFinanceirasPage />);
+    const { unmount } = render(<ContasRecorrentesPage />);
     expect(signalReceived).toBeDefined();
 
     unmount();
@@ -706,7 +706,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 27: modal reseta corretamente entre aberturas
   it("27. o modal reseta os campos corretamente ao abrir para presets diferentes", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
@@ -779,7 +779,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return { ok: false, status: 404 } as any;
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel Ponto Central")).toBeInTheDocument();
@@ -815,7 +815,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
   // Test 30: duplo envio síncrono submitLockRef no modal
   it("30. bloqueia envio duplo síncrono (submitLockRef) na criação e na edição no modal", async () => {
     setupDefaultFetch();
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Água")).toBeInTheDocument();
@@ -849,7 +849,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
     setupDefaultFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Desativar")).toBeInTheDocument();
@@ -890,7 +890,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return Promise.resolve({ ok: false, status: 404 });
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Erro 500")).toBeInTheDocument();
@@ -912,7 +912,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
     setupDefaultFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel Ponto Central")).toBeInTheDocument();
@@ -1000,7 +1000,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return Promise.resolve({ ok: false, status: 404 });
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     // Wait for error screen to display (LOAD A started routines and rejected categories)
     await waitFor(() => {
@@ -1051,7 +1051,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return Promise.resolve({ ok: false, status: 404 });
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Aluguel Ponto Central")).toBeInTheDocument();
@@ -1110,7 +1110,7 @@ describe("ConfiguracoesFinanceirasPage — UX-C Suite", () => {
       return Promise.resolve({ ok: false, status: 404 });
     });
 
-    render(<ConfiguracoesFinanceirasPage />);
+    render(<ContasRecorrentesPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Reativar")).toBeInTheDocument();

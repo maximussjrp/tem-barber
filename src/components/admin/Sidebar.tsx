@@ -114,13 +114,23 @@ const navItems = [
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
-        label: "Contas a Pagar / Receber",
+        label: "Contas",
         href: "/admin/financeiro/contas",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
-        label: "Configurações",
-        href: "/admin/financeiro/configuracoes",
+        label: "Movimentações",
+        href: "/admin/financeiro/movimentacoes",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Contas Recorrentes",
+        href: "/admin/financeiro/recorrentes",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Categorias",
+        href: "/admin/financeiro/categorias",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
     ],
