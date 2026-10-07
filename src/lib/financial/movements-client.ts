@@ -1,10 +1,10 @@
 export type MovementDirection = "IN" | "OUT";
 
-export type MovementAllocationStatus = "NONE" | "PARTIAL" | "TOTAL";
+export type MovementAllocationStatus = "ALLOCATED" | "UNALLOCATED";
 
 export interface MovementAllocation {
   id: string;
-  allocatedAmount: number;
+  allocatedAmount: string;
   financialCategory: {
     id: string;
     code: string;

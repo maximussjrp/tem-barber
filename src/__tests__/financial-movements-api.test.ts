@@ -65,6 +65,7 @@ describe("GET /api/admin/financial/entries — API Route Suite", () => {
         customerCreditEntryId: null,
         allocations: [
           {
+            id: "alloc-1",
             allocatedAmount: new Decimal("80.00"),
             financialCategory: {
               id: "cat-1",
@@ -85,6 +86,18 @@ describe("GET /api/admin/financial/entries — API Route Suite", () => {
     const data = await res.json();
     expect(data.items.length).toBe(1);
     expect(data.items[0].id).toBe("entry-1");
+    expect(data.items[0].allocations).toEqual([
+      {
+        id: "alloc-1",
+        allocatedAmount: "80.00",
+        financialCategory: {
+          id: "cat-1",
+          code: "01.01",
+          name: "Serviços",
+          classification: "REVENUE",
+        },
+      },
+    ]);
 
     // Must query with session barbershopId ONLY
     expect(countSpy).toHaveBeenCalledWith(

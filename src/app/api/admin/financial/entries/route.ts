@@ -130,6 +130,7 @@ export async function GET(request: NextRequest) {
       include: {
         allocations: {
           select: {
+            id: true,
             allocatedAmount: true,
             financialCategory: {
               select: {
@@ -151,6 +152,7 @@ export async function GET(request: NextRequest) {
     const directionDerived = isOut ? "OUT" : "IN";
 
     const allocationsMapped = entry.allocations.map((a) => ({
+      id: a.id,
       allocatedAmount: a.allocatedAmount.toFixed(2),
       financialCategory: {
         id: a.financialCategory.id,

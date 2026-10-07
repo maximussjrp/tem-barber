@@ -19,10 +19,13 @@ interface FlattenedCategoryWithDepth {
 
 const CLASSIFICATION_LABELS: Record<string, string> = {
   REVENUE: "Receita",
-  EXPENSE: "Despesa",
-  ASSET: "Ativo",
-  LIABILITY: "Passivo",
-  EQUITY: "Patrimônio Líquido",
+  VARIABLE_COST: "Custos Variáveis",
+  FIXED_EXPENSE: "Despesas Fixas",
+  INVESTMENT: "Investimentos",
+  NON_OPERATING_IN: "Entradas Não Operacionais",
+  NON_OPERATING_OUT: "Saídas Não Operacionais",
+  TRANSFER: "Transferências",
+  ADJUSTMENT: "Ajustes",
 };
 
 export default function CategoriasPage() {
@@ -35,7 +38,7 @@ export default function CategoriasPage() {
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [createClassification, setCreateClassification] = useState<string>("EXPENSE");
+  const [createClassification, setCreateClassification] = useState<string>("FIXED_EXPENSE");
   const [createParentId, setCreateParentId] = useState<string>("");
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -117,7 +120,7 @@ export default function CategoriasPage() {
   };
   traverse(tree);
 
-  // Eligible parents for Move and Create (depth < 2 so child depth <= 2, i.e., max 3 levels: 0, 1, 2)
+  // Eligible parents for Move and Create (backend is 1-indexed: root=1, child=2, grandchild=3; so parent can be depth 1 or 2)
   const eligibleParentsForTarget = (target?: FlattenedCategoryWithDepth | null) => {
     return flattenedNodes.filter((c) => {
       if (!c.isActive) return false;
@@ -125,8 +128,8 @@ export default function CategoriasPage() {
         if (c.id === target.id) return false;
         if (c.classification !== target.classification) return false;
       }
-      // Max depth for a parent is 1 (levels 0 and 1), because level 2 cannot have children (depth limit 3)
-      return c.depth < 2;
+      // Parent depth can be <= 2 (or < 3) so that children can reach depth 3
+      return c.depth <= 2;
     });
   };
 
@@ -297,7 +300,7 @@ export default function CategoriasPage() {
         <button
           onClick={() => {
             setCreateName("");
-            setCreateClassification("EXPENSE");
+            setCreateClassification("FIXED_EXPENSE");
             setCreateParentId("");
             setCreateError(null);
             setIsCreateOpen(true);
@@ -478,10 +481,12 @@ export default function CategoriasPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                <label htmlFor="create-classification-select" className="block text-xs font-medium text-zinc-400 mb-1">
                   Classificação
                 </label>
                 <select
+                  id="create-classification-select"
+                  aria-label="Classificação"
                   value={createClassification}
                   onChange={(e) => {
                     setCreateClassification(e.target.value);
@@ -498,10 +503,12 @@ export default function CategoriasPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                <label htmlFor="create-parent-select" className="block text-xs font-medium text-zinc-400 mb-1">
                   Categoria Pai (Opcional - Raiz por padrão)
                 </label>
                 <select
+                  id="create-parent-select"
+                  aria-label="Categoria Pai"
                   value={createParentId}
                   onChange={(e) => setCreateParentId(e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500"

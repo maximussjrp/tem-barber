@@ -22,26 +22,35 @@ const mockCategories = [
     isLeaf: true,
     children: [],
   },
+  {
+    id: "cat-3",
+    code: "03.01",
+    name: "Aluguel",
+    classification: "FIXED_EXPENSE",
+    isActive: true,
+    isLeaf: true,
+    children: [],
+  },
 ];
 
 const mockMovementsResponse = {
   items: [
     {
       id: "entry-1",
-      type: "COMANDA_SERVICE",
-      amount: 65,
-      description: "Corte Degradê - Comanda #123",
+      type: "COMMAND_REVENUE",
+      amount: 100,
+      description: "Comanda Mista #123 (Serviço + Produto)",
       entryDate: "2026-07-10T14:30:00.000Z",
       direction: "IN",
-      allocationStatus: "TOTAL",
+      allocationStatus: "ALLOCATED",
       sourceRefs: {
         comandaId: "cmd-123",
         financialSettlementId: null,
       },
       allocations: [
         {
-          id: "alloc-1",
-          allocatedAmount: 65,
+          id: "alloc-srv-1",
+          allocatedAmount: "65.00",
           financialCategory: {
             id: "cat-1",
             code: "01.01",
@@ -49,40 +58,50 @@ const mockMovementsResponse = {
             classification: "REVENUE",
           },
         },
+        {
+          id: "alloc-prd-2",
+          allocatedAmount: "35.00",
+          financialCategory: {
+            id: "cat-2",
+            code: "02.01",
+            name: "Produtos de Barba",
+            classification: "REVENUE",
+          },
+        },
       ],
     },
     {
       id: "entry-2",
-      type: "FINANCIAL_SETTLEMENT",
+      type: "MANUAL_OUT",
       amount: 1500,
       description: "Pagamento Aluguel Julho",
       entryDate: "2026-07-09T10:00:00.000Z",
       direction: "OUT",
-      allocationStatus: "TOTAL",
+      allocationStatus: "ALLOCATED",
       sourceRefs: {
         financialSettlementId: "set-456",
       },
       allocations: [
         {
-          id: "alloc-2",
-          allocatedAmount: 1500,
+          id: "alloc-3",
+          allocatedAmount: "1500.00",
           financialCategory: {
             id: "cat-3",
             code: "03.01",
             name: "Aluguel",
-            classification: "EXPENSE",
+            classification: "FIXED_EXPENSE",
           },
         },
       ],
     },
     {
       id: "entry-3",
-      type: "TIP_ENTRY",
+      type: "TIP_RECEIVED",
       amount: 15,
       description: "Gorjeta Barbeiro Carlos",
       entryDate: "2026-07-08T18:00:00.000Z",
       direction: "IN",
-      allocationStatus: "NONE",
+      allocationStatus: "UNALLOCATED",
       sourceRefs: {
         tipEntryId: "tip-789",
       },
@@ -134,16 +153,32 @@ describe("MovimentacoesPage — UI Suite", () => {
     render(<MovimentacoesPage />);
 
     await waitFor(() => {
-      expect(screen.getAllByText("Corte Degradê - Comanda #123").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Comanda Mista #123 (Serviço + Produto)").length).toBeGreaterThan(0);
       expect(screen.getAllByText("Pagamento Aluguel Julho").length).toBeGreaterThan(0);
     });
 
     // Positive and negative amounts
-    expect(screen.getAllByText(/\+ R\$\s*65,00/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/\+ R\$\s*100,00/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/- R\$\s*1\.500,00/).length).toBeGreaterThan(0);
   });
 
-  it("3. exibe badge 'Fora do plano gerencial' para lançamentos sem alocação contábil", async () => {
+  it("3. confirma caso misto SERVICE + PRODUCT com múltiplos allocations renderiza ambas as categorias", async () => {
+    render(<MovimentacoesPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Comanda Mista #123 (Serviço + Produto)").length).toBeGreaterThan(0);
+    });
+
+    // Ambas as categorias devem ser visíveis
+    expect(screen.getAllByText("Serviços de Cabelo").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Produtos de Barba").length).toBeGreaterThan(0);
+
+    // Valores divididos formatados na visualização
+    expect(screen.getAllByText(/\(R\$\s*65,00\)/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/\(R\$\s*35,00\)/).length).toBeGreaterThan(0);
+  });
+
+  it("4. exibe badge 'Fora do plano gerencial' para lançamentos sem alocação contábil", async () => {
     render(<MovimentacoesPage />);
 
     await waitFor(() => {
@@ -153,7 +188,7 @@ describe("MovimentacoesPage — UI Suite", () => {
     expect(screen.getAllByText("Fora do plano gerencial").length).toBeGreaterThan(0);
   });
 
-  it("4. trata estado de erro 403 Acesso Negado", async () => {
+  it("5. trata estado de erro 403 Acesso Negado", async () => {
     fetchSpy.mockImplementation((url: any) => {
       if (url.includes("/api/admin/financial/entries")) {
         return Promise.resolve({
@@ -172,7 +207,7 @@ describe("MovimentacoesPage — UI Suite", () => {
     });
   });
 
-  it("5. trata estado vazio quando não há itens", async () => {
+  it("6. trata estado vazio quando não há itens", async () => {
     fetchSpy.mockImplementation((url: any) => {
       if (url.includes("/api/admin/financial/entries")) {
         return Promise.resolve({
@@ -194,11 +229,11 @@ describe("MovimentacoesPage — UI Suite", () => {
     });
   });
 
-  it("6. dispara nova requisição ao alterar filtro de direção", async () => {
+  it("7. dispara nova requisição ao alterar filtro de direção", async () => {
     render(<MovimentacoesPage />);
 
     await waitFor(() => {
-      expect(screen.getAllByText("Corte Degradê - Comanda #123").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Comanda Mista #123 (Serviço + Produto)").length).toBeGreaterThan(0);
     });
 
     const directionSelect = screen.getByLabelText("Filtro de direção");

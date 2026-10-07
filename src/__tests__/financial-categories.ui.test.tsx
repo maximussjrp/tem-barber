@@ -11,7 +11,7 @@ const mockCategoriesTree = [
     classification: "REVENUE",
     parentCategoryId: null,
     isActive: true,
-    depth: 0,
+    depth: 1,
     isLeaf: false,
     children: [
       {
@@ -21,7 +21,7 @@ const mockCategoriesTree = [
         classification: "REVENUE",
         parentCategoryId: "cat-1",
         isActive: true,
-        depth: 1,
+        depth: 2,
         isLeaf: true,
         children: [],
       },
@@ -29,22 +29,22 @@ const mockCategoriesTree = [
   },
   {
     id: "cat-2",
-    code: "02",
-    name: "Despesas",
-    classification: "EXPENSE",
+    code: "03",
+    name: "Despesas Fixas",
+    classification: "FIXED_EXPENSE",
     parentCategoryId: null,
     isActive: true,
-    depth: 0,
+    depth: 1,
     isLeaf: false,
     children: [
       {
         id: "cat-2-1",
-        code: "02.01",
+        code: "03.01",
         name: "Aluguel",
-        classification: "EXPENSE",
+        classification: "FIXED_EXPENSE",
         parentCategoryId: "cat-2",
         isActive: true,
-        depth: 1,
+        depth: 2,
         isLeaf: true,
         children: [],
       },
@@ -84,12 +84,12 @@ describe("CategoriasPage — UI Suite", () => {
     await waitFor(() => {
       expect(screen.getByText("Receitas")).toBeInTheDocument();
       expect(screen.getByText("Serviços")).toBeInTheDocument();
-      expect(screen.getByText("Despesas")).toBeInTheDocument();
+      expect(screen.getAllByText("Despesas Fixas").length).toBeGreaterThan(0);
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
     });
   });
 
-  it("3. abre modal de criação de categoria e envia payload correto", async () => {
+  it("3. abre modal de criação com enum FIXED_EXPENSE e envia payload correto", async () => {
     render(<CategoriasPage />);
 
     await waitFor(() => {
@@ -111,7 +111,7 @@ describe("CategoriasPage — UI Suite", () => {
           json: async () => ({
             id: "cat-new",
             name: "Marketing Digital",
-            classification: "EXPENSE",
+            classification: "FIXED_EXPENSE",
           }),
         } as any);
       }
@@ -131,11 +131,57 @@ describe("CategoriasPage — UI Suite", () => {
       expect(postCalls.length).toBe(1);
       const body = JSON.parse(postCalls[0][1].body);
       expect(body.name).toBe("Marketing Digital");
-      expect(body.classification).toBe("EXPENSE");
+      expect(body.classification).toBe("FIXED_EXPENSE");
     });
   });
 
-  it("4. abre modal de renomear e envia PATCH com novo nome", async () => {
+  it("4. permite escolher categoria depth 2 como parent para criar categoria depth 3", async () => {
+    render(<CategoriasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Categoria")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Nova Categoria"));
+
+    // O select de Categoria Pai deve conter Aluguel (que tem depth=2), permitindo criar depth=3
+    const parentSelect = screen.getByLabelText(/categoria pai/i);
+    expect(parentSelect).toBeInTheDocument();
+
+    const options = Array.from(parentSelect.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options.some((opt) => opt?.includes("Aluguel"))).toBe(true);
+    expect(options.some((opt) => opt?.includes("Despesas Fixas"))).toBe(true);
+  });
+
+  it("5. todas as opções de classificação são enums reais do domínio Prisma", async () => {
+    render(<CategoriasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Categoria")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Nova Categoria"));
+
+    const classSelect = screen.getByLabelText(/classificação/i);
+    const optionValues = Array.from(classSelect.querySelectorAll("option")).map((o) => o.value);
+
+    expect(optionValues).toContain("REVENUE");
+    expect(optionValues).toContain("VARIABLE_COST");
+    expect(optionValues).toContain("FIXED_EXPENSE");
+    expect(optionValues).toContain("INVESTMENT");
+    expect(optionValues).toContain("NON_OPERATING_IN");
+    expect(optionValues).toContain("NON_OPERATING_OUT");
+    expect(optionValues).toContain("TRANSFER");
+    expect(optionValues).toContain("ADJUSTMENT");
+
+    // Enums fictícios banidos
+    expect(optionValues).not.toContain("EXPENSE");
+    expect(optionValues).not.toContain("ASSET");
+    expect(optionValues).not.toContain("LIABILITY");
+    expect(optionValues).not.toContain("EQUITY");
+  });
+
+  it("6. abre modal de renomear e envia PATCH com novo nome", async () => {
     render(<CategoriasPage />);
 
     await waitFor(() => {
@@ -172,7 +218,7 @@ describe("CategoriasPage — UI Suite", () => {
     });
   });
 
-  it("5. aposentadoria com exigência de substituição abre seleção de substituta", async () => {
+  it("7. aposentadoria com exigência de substituição abre seleção de substituta", async () => {
     render(<CategoriasPage />);
 
     await waitFor(() => {
@@ -217,7 +263,7 @@ describe("CategoriasPage — UI Suite", () => {
     });
   });
 
-  it("6. trata erro 403 Acesso negado", async () => {
+  it("8. trata erro 403 Acesso negado", async () => {
     fetchSpy.mockImplementation(() =>
       Promise.resolve({
         ok: false,
