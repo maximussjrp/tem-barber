@@ -389,7 +389,8 @@ export default function MovimentacoesPage() {
               <tbody className="divide-y divide-zinc-800/60">
                 {items.map((mov) => {
                   const isPositive = mov.direction === "IN";
-                  const formattedAmt = formatCurrencyBRL(mov.amount);
+                  const absAmount = Math.abs(parseFloat(mov.amount || "0"));
+                  const formattedAmt = formatCurrencyBRL(absAmount);
 
                   return (
                     <tr
@@ -467,7 +468,8 @@ export default function MovimentacoesPage() {
           <div className="md:hidden space-y-3">
             {items.map((mov) => {
               const isPositive = mov.direction === "IN";
-              const formattedAmt = formatCurrencyBRL(mov.amount);
+              const absAmount = Math.abs(parseFloat(mov.amount || "0"));
+              const formattedAmt = formatCurrencyBRL(absAmount);
 
               return (
                 <div

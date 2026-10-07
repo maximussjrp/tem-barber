@@ -38,7 +38,7 @@ const mockMovementsResponse = {
     {
       id: "entry-1",
       type: "COMMAND_REVENUE",
-      amount: 100,
+      amount: "100.00",
       description: "Comanda Mista #123 (Serviço + Produto)",
       entryDate: "2026-07-10T14:30:00.000Z",
       direction: "IN",
@@ -73,7 +73,7 @@ const mockMovementsResponse = {
     {
       id: "entry-2",
       type: "MANUAL_OUT",
-      amount: 1500,
+      amount: "-1500.00",
       description: "Pagamento Aluguel Julho",
       entryDate: "2026-07-09T10:00:00.000Z",
       direction: "OUT",
@@ -97,7 +97,7 @@ const mockMovementsResponse = {
     {
       id: "entry-3",
       type: "TIP_RECEIVED",
-      amount: 15,
+      amount: "15.00",
       description: "Gorjeta Barbeiro Carlos",
       entryDate: "2026-07-08T18:00:00.000Z",
       direction: "IN",
@@ -157,9 +157,13 @@ describe("MovimentacoesPage — UI Suite", () => {
       expect(screen.getAllByText("Pagamento Aluguel Julho").length).toBeGreaterThan(0);
     });
 
-    // Positive and negative amounts
-    expect(screen.getAllByText(/\+ R\$\s*100,00/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/- R\$\s*1\.500,00/).length).toBeGreaterThan(0);
+    // Positive and negative amounts with single explicit sign
+    expect(screen.getAllByText(/\+\s*R\$\s*100,00/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/-\s*R\$\s*1\.500,00/).length).toBeGreaterThan(0);
+
+    // Provar que NÃO existe representação com sinal duplo (ex: - -R$ ou --R$)
+    expect(screen.queryByText(/-\s*-\s*R\$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/--R\$/)).not.toBeInTheDocument();
   });
 
   it("3. confirma caso misto SERVICE + PRODUCT com múltiplos allocations renderiza ambas as categorias", async () => {

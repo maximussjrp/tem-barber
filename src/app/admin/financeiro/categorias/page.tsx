@@ -371,7 +371,7 @@ export default function CategoriasPage() {
           <div className="divide-y divide-zinc-800/40">
             {flattenedNodes.map((item) => {
               const indentPadding =
-                item.depth === 0 ? "pl-4" : item.depth === 1 ? "pl-8" : "pl-12";
+                item.depth <= 1 ? "pl-4" : item.depth === 2 ? "pl-8" : "pl-12";
 
               return (
                 <div
@@ -382,7 +382,7 @@ export default function CategoriasPage() {
                 >
                   {/* Category Name & Indicator */}
                   <div className={`col-span-6 sm:col-span-5 flex items-center gap-2 ${indentPadding}`}>
-                    {item.depth > 0 && (
+                    {item.depth > 1 && (
                       <span className="text-zinc-600 select-none">↳</span>
                     )}
                     <div className="truncate">
@@ -518,7 +518,7 @@ export default function CategoriasPage() {
                     .filter((c) => c.classification === createClassification)
                     .map((c) => (
                       <option key={c.id} value={c.id}>
-                        {"— ".repeat(c.depth)}
+                        {"— ".repeat(Math.max(0, c.depth - 1))}
                         {c.name}
                       </option>
                     ))}
@@ -623,7 +623,7 @@ export default function CategoriasPage() {
                   <option value="">Nenhum (Raiz)</option>
                   {eligibleParentsForTarget(moveTarget).map((c) => (
                     <option key={c.id} value={c.id}>
-                      {"— ".repeat(c.depth)}
+                      {"— ".repeat(Math.max(0, c.depth - 1))}
                       {c.name}
                     </option>
                   ))}

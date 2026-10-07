@@ -45,8 +45,20 @@ const mockCategoriesTree = [
         parentCategoryId: "cat-2",
         isActive: true,
         depth: 2,
-        isLeaf: true,
-        children: [],
+        isLeaf: false,
+        children: [
+          {
+            id: "cat-2-1-1",
+            code: "03.01.01",
+            name: "Aluguel Loja Principal",
+            classification: "FIXED_EXPENSE",
+            parentCategoryId: "cat-2-1",
+            isActive: true,
+            depth: 3,
+            isLeaf: true,
+            children: [],
+          },
+        ],
       },
     ],
   },
@@ -78,7 +90,7 @@ describe("CategoriasPage — UI Suite", () => {
     expect(screen.getByRole("link", { name: "Categorias" })).toBeInTheDocument();
   });
 
-  it("2. exibe a árvore hierárquica de categorias com identação", async () => {
+  it("2. exibe a árvore hierárquica 1-indexed (root, child, grandchild) com identação correta", async () => {
     render(<CategoriasPage />);
 
     await waitFor(() => {
@@ -86,7 +98,19 @@ describe("CategoriasPage — UI Suite", () => {
       expect(screen.getByText("Serviços")).toBeInTheDocument();
       expect(screen.getAllByText("Despesas Fixas").length).toBeGreaterThan(0);
       expect(screen.getByText("Aluguel")).toBeInTheDocument();
+      expect(screen.getByText("Aluguel Loja Principal")).toBeInTheDocument();
     });
+
+    // Provar semanticamente que nós de nível 2 e 3 exibem o marcador hierárquico ↳
+    const indicators = screen.getAllByText("↳");
+    // child: Serviços (depth 2), Aluguel (depth 2), Aluguel Loja Principal (depth 3) => 3 indicadores no total
+    expect(indicators.length).toBe(3);
+
+    // E os nós raiz (Receitas, Despesas Fixas - depth 1) NÃO possuem o marcador ↳ em seu container de nome
+    const receitasEl = screen.getByText("Receitas").closest("div");
+    expect(receitasEl?.parentElement?.textContent).not.toContain("↳");
+    const despesasFixasEl = screen.getByText("03").closest("div"); // linha do root Despesas Fixas
+    expect(despesasFixasEl?.textContent).not.toContain("↳");
   });
 
   it("3. abre modal de criação com enum FIXED_EXPENSE e envia payload correto", async () => {

@@ -32,7 +32,7 @@ export interface MovementSourceRefs {
 export interface FinancialMovement {
   id: string;
   type: string;
-  amount: number;
+  amount: string;
   description: string;
   entryDate: string;
   direction: MovementDirection;
