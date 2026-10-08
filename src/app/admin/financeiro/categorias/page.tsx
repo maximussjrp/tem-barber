@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { FinancialNav } from "@/components/admin/financial/FinancialNav";
 import type { CategoryNode } from "@/lib/financial/categories";
 import { LeafCategoryOption, flattenLeafCategories } from "@/lib/financial/accounts-client";
@@ -81,6 +81,36 @@ export default function CategoriasPage() {
   const [isReplacementRequired, setIsReplacementRequired] = useState(false);
   const [isSubmittingRetire, setIsSubmittingRetire] = useState(false);
   const [retireError, setRetireError] = useState<string | null>(null);
+
+  // Mobile actions menu state
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!openActionsId) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenActionsId(null);
+      }
+    };
+
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setOpenActionsId(null);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [openActionsId]);
 
   const loadCategories = useCallback(async (signal?: AbortSignal) => {
     setIsLoading(true);
@@ -358,6 +388,28 @@ export default function CategoriasPage() {
     }
   };
 
+  const openRename = (item: FlattenedCategoryWithDepth) => {
+    setRenameTarget(item);
+    setRenameName(item.name);
+    setRenameError(null);
+    setOpenActionsId(null);
+  };
+
+  const openMove = (item: FlattenedCategoryWithDepth) => {
+    setMoveTarget(item);
+    setMoveParentId("");
+    setMoveError(null);
+    setOpenActionsId(null);
+  };
+
+  const openRetire = (item: FlattenedCategoryWithDepth) => {
+    setRetireTarget(item);
+    setReplacementCategoryId("");
+    setIsReplacementRequired(false);
+    setRetireError(null);
+    setOpenActionsId(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Module Navigation */}
@@ -437,99 +489,191 @@ export default function CategoriasPage() {
 
       {/* Tree Content */}
       {!isForbidden && !error && !isLoading && flattenedNodes.length > 0 && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800/60 overflow-hidden">
-          <div className="bg-zinc-950/60 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-400 grid grid-cols-12 gap-2">
-            <div className="col-span-6 sm:col-span-5">Categoria</div>
-            <div className="col-span-3 sm:col-span-3">Classificação</div>
-            <div className="hidden sm:block sm:col-span-2">Código</div>
-            <div className="col-span-3 sm:col-span-2 text-right">Ações</div>
+        <div className="space-y-4">
+          {/* Desktop View (Table layout) */}
+          <div className="hidden sm:block rounded-xl border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800/60 overflow-hidden">
+            <div className="bg-zinc-950/60 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-400 grid grid-cols-12 gap-2">
+              <div className="col-span-6 sm:col-span-5">Categoria</div>
+              <div className="col-span-3 sm:col-span-3">Classificação</div>
+              <div className="hidden sm:block sm:col-span-2">Código</div>
+              <div className="col-span-3 sm:col-span-2 text-right">Ações</div>
+            </div>
+
+            <div className="divide-y divide-zinc-800/40">
+              {flattenedNodes.map((item) => {
+                const indentPadding =
+                  item.depth <= 1 ? "pl-4" : item.depth === 2 ? "pl-8" : "pl-12";
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`px-4 py-3 grid grid-cols-12 gap-2 items-center hover:bg-zinc-800/20 transition-colors ${
+                      !item.isActive ? "opacity-50" : ""
+                    }`}
+                  >
+                    {/* Category Name & Indicator */}
+                    <div className={`col-span-6 sm:col-span-5 flex items-center gap-2 ${indentPadding}`}>
+                      {item.depth > 1 && (
+                        <span className="text-zinc-600 select-none">↳</span>
+                      )}
+                      <div className="truncate">
+                        <span className="font-medium text-sm text-zinc-200">
+                          {item.name}
+                        </span>
+                        {!item.isActive && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-900">
+                            Inativa
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Classification */}
+                    <div className="col-span-3 sm:col-span-3">
+                      <span className="px-2 py-0.5 rounded text-xs bg-zinc-800 text-zinc-300 border border-zinc-700/50">
+                        {CLASSIFICATION_LABELS[item.classification] || item.classification}
+                      </span>
+                    </div>
+
+                    {/* Code */}
+                    <div className="hidden sm:block sm:col-span-2 font-mono text-xs text-zinc-500 truncate">
+                      {item.code}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="col-span-3 sm:col-span-2 flex items-center justify-end gap-1.5">
+                      {item.isActive && (
+                        <>
+                          <button
+                            onClick={() => openRename(item)}
+                            className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+                            title="Renomear"
+                          >
+                            Renomear
+                          </button>
+
+                          {!OFFICIAL_CATEGORY_CODES.has(item.code) && (
+                            <button
+                              onClick={() => openMove(item)}
+                              className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+                              title="Mover"
+                            >
+                              Mover
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => openRetire(item)}
+                            className="px-2 py-1 text-xs rounded bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-900/50 transition"
+                            title="Aposentar"
+                          >
+                            Aposentar
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="divide-y divide-zinc-800/40">
+          {/* Mobile View (Card / row layout) */}
+          <div className="sm:hidden rounded-xl border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800/60">
             {flattenedNodes.map((item) => {
               const indentPadding =
-                item.depth <= 1 ? "pl-4" : item.depth === 2 ? "pl-8" : "pl-12";
+                item.depth <= 1 ? "pl-0" : item.depth === 2 ? "pl-3.5" : "pl-7";
 
               return (
                 <div
                   key={item.id}
-                  className={`px-4 py-3 grid grid-cols-12 gap-2 items-center hover:bg-zinc-800/20 transition-colors ${
-                    !item.isActive ? "opacity-50" : ""
-                  }`}
+                  className={`p-3.5 flex flex-col gap-2 relative transition-colors ${
+                    openActionsId === item.id ? "bg-zinc-800/40 z-20" : "hover:bg-zinc-800/20"
+                  } ${!item.isActive ? "opacity-50" : ""}`}
                 >
-                  {/* Category Name & Indicator */}
-                  <div className={`col-span-6 sm:col-span-5 flex items-center gap-2 ${indentPadding}`}>
-                    {item.depth > 1 && (
-                      <span className="text-zinc-600 select-none">↳</span>
-                    )}
-                    <div className="truncate">
-                      <span className="font-medium text-sm text-zinc-200">
-                        {item.name}
-                      </span>
-                      {!item.isActive && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-900">
-                          Inativa
-                        </span>
+                  {/* Top Line: Name + Hierarchy Indicator + Actions Trigger */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`flex items-center gap-1.5 min-w-0 ${indentPadding}`}>
+                      {item.depth > 1 && (
+                        <span className="text-zinc-500 font-semibold select-none flex-shrink-0">↳</span>
                       )}
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="font-medium text-sm text-zinc-100 break-words">
+                          {item.name}
+                        </span>
+                        {!item.isActive && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-900 flex-shrink-0">
+                            Inativa
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {item.isActive && (
+                      <div
+                        ref={openActionsId === item.id ? actionsMenuRef : undefined}
+                        className="flex-shrink-0 relative"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setOpenActionsId(openActionsId === item.id ? null : item.id)}
+                          aria-label={`Ações de ${item.name}`}
+                          aria-haspopup="menu"
+                          aria-expanded={openActionsId === item.id}
+                          className="w-10 h-10 flex items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/60 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                        >
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                          </svg>
+                        </button>
+
+                        {openActionsId === item.id && (
+                          <div
+                            role="menu"
+                            aria-orientation="vertical"
+                            aria-label={`Menu de ações de ${item.name}`}
+                            className="absolute right-0 top-12 z-30 min-w-[140px] rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl py-1 text-xs"
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => openRename(item)}
+                              className="w-full text-left px-3.5 py-2.5 text-zinc-200 hover:bg-zinc-800 hover:text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-inset"
+                            >
+                              Renomear
+                            </button>
+                            {!OFFICIAL_CATEGORY_CODES.has(item.code) && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => openMove(item)}
+                                className="w-full text-left px-3.5 py-2.5 text-zinc-200 hover:bg-zinc-800 hover:text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-inset"
+                              >
+                                Mover
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => openRetire(item)}
+                              className="w-full text-left px-3.5 py-2.5 text-red-400 hover:bg-red-950/40 hover:text-red-300 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-inset"
+                            >
+                              Aposentar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Classification */}
-                  <div className="col-span-3 sm:col-span-3">
+                  {/* Bottom Line: Classification Badge + Code */}
+                  <div className={`flex items-center justify-between gap-2 pt-0.5 ${indentPadding}`}>
                     <span className="px-2 py-0.5 rounded text-xs bg-zinc-800 text-zinc-300 border border-zinc-700/50">
                       {CLASSIFICATION_LABELS[item.classification] || item.classification}
                     </span>
-                  </div>
-
-                  {/* Code */}
-                  <div className="hidden sm:block sm:col-span-2 font-mono text-xs text-zinc-500 truncate">
-                    {item.code}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="col-span-3 sm:col-span-2 flex items-center justify-end gap-1.5">
-                    {item.isActive && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setRenameTarget(item);
-                            setRenameName(item.name);
-                            setRenameError(null);
-                          }}
-                          className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-                          title="Renomear"
-                        >
-                          Renomear
-                        </button>
-
-                        {!OFFICIAL_CATEGORY_CODES.has(item.code) && (
-                          <button
-                            onClick={() => {
-                              setMoveTarget(item);
-                              setMoveParentId("");
-                              setMoveError(null);
-                            }}
-                            className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-                            title="Mover"
-                          >
-                            Mover
-                          </button>
-                        )}
-
-                        <button
-                          onClick={() => {
-                            setRetireTarget(item);
-                            setReplacementCategoryId("");
-                            setIsReplacementRequired(false);
-                            setRetireError(null);
-                          }}
-                          className="px-2 py-1 text-xs rounded bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-900/50 transition"
-                          title="Aposentar"
-                        >
-                          Aposentar
-                        </button>
-                      </>
-                    )}
+                    <span className="font-mono text-xs text-zinc-400">
+                      Código {item.code}
+                    </span>
                   </div>
                 </div>
               );
@@ -540,8 +684,8 @@ export default function CategoriasPage() {
 
       {/* Modal: Create Category */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-white">Nova Categoria</h3>
 
             <form onSubmit={handleCreateSubmit} className="space-y-4">
@@ -637,8 +781,8 @@ export default function CategoriasPage() {
 
       {/* Modal: Rename Category */}
       {renameTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-white">Renomear Categoria</h3>
 
             <form onSubmit={handleRenameSubmit} className="space-y-4">
@@ -684,8 +828,8 @@ export default function CategoriasPage() {
 
       {/* Modal: Move Category */}
       {moveTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-white">
               Mover &quot;{moveTarget.name}&quot;
             </h3>
@@ -745,8 +889,8 @@ export default function CategoriasPage() {
 
       {/* Modal: Retire Category */}
       {retireTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-white">
               Aposentar &quot;{retireTarget.name}&quot;
             </h3>
