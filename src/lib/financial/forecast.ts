@@ -2,12 +2,32 @@ import prisma from "@/lib/prisma";
 import { toCents } from "@/lib/operations/money";
 import { formatUTCToCivilDate } from "./titles";
 import { calculateRoutineDueOnCivil } from "./routines";
-import { generateReferenceMonths } from "./cash-flow";
 import {
   FinancialCategoryClassification,
   FinancialTitleKind,
   Prisma,
 } from "@prisma/client";
+
+// Gera meses de referência YYYY-MM que cruzam o intervalo
+export function generateReferenceMonths(startStr: string, endStr: string): string[] {
+  const startMonth = startStr.slice(0, 7);
+  const endMonth = endStr.slice(0, 7);
+  const months: string[] = [];
+
+  let [currY, currM] = startMonth.split("-").map(Number);
+  const [endY, endM] = endMonth.split("-").map(Number);
+
+  while (currY < endY || (currY === endY && currM <= endM)) {
+    months.push(`${currY}-${String(currM).padStart(2, "0")}`);
+    currM++;
+    if (currM > 12) {
+      currM = 1;
+      currY++;
+    }
+  }
+
+  return months;
+}
 
 export interface TitleForecastFilterOptions {
   barbershopId: string;

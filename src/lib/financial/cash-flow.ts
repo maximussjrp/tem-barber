@@ -4,8 +4,11 @@ import { todayIsoBR, localDateToUTCBoundary, shiftDateISO } from "@/lib/time-uti
 import {
   getFinancialTitlesForecast,
   getFinancialRoutinesForecast,
+  generateReferenceMonths,
 } from "./forecast";
 import { Prisma } from "@prisma/client";
+
+export { generateReferenceMonths };
 
 // ============================================================================
 // Types & Contracts
@@ -158,27 +161,6 @@ export function generateDateRange(startStr: string, endStr: string): string[] {
     curr = shiftDateISO(curr, 1);
   }
   return dates;
-}
-
-// Gera meses de referência YYYY-MM que cruzam o intervalo
-export function generateReferenceMonths(startStr: string, endStr: string): string[] {
-  const startMonth = startStr.slice(0, 7);
-  const endMonth = endStr.slice(0, 7);
-  const months: string[] = [];
-
-  let [currY, currM] = startMonth.split("-").map(Number);
-  const [endY, endM] = endMonth.split("-").map(Number);
-
-  while (currY < endY || (currY === endY && currM <= endM)) {
-    months.push(`${currY}-${String(currM).padStart(2, "0")}`);
-    currM++;
-    if (currM > 12) {
-      currM = 1;
-      currY++;
-    }
-  }
-
-  return months;
 }
 
 // ============================================================================
