@@ -726,4 +726,88 @@ describe("Contas a Pagar / Receber — UX-B UI Tests", () => {
     expect(categorySelect.textContent).toContain("2.1 - Custo Variável");
     expect(categorySelect.textContent).not.toContain("1.1 - Receita de Serviços");
   });
+
+  it("17. Modal Nova Conta: checkbox [Já foi pago] e [Já foi recebido] controla campos e alterna labels entre PAYABLE e RECEIVABLE", async () => {
+    setupFetchMock();
+
+    render(<ContasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Conta")).toBeInTheDocument();
+    });
+
+    // 1. Abrir modal
+    fireEvent.click(screen.getByText("Nova Conta"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Conta / Título")).toBeInTheDocument();
+    });
+
+    // Default PAYABLE: checkbox deve ser "Já foi pago" e iniciar desmarcado
+    const payableCheckbox = screen.getByLabelText("Já foi pago") as HTMLInputElement;
+    expect(payableCheckbox).toBeInTheDocument();
+    expect(payableCheckbox.checked).toBe(false);
+    expect(screen.queryByLabelText(/Data do Pagamento/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Forma de Pagamento/i)).not.toBeInTheDocument();
+
+    // Marcar checkbox
+    fireEvent.click(payableCheckbox);
+    expect(payableCheckbox.checked).toBe(true);
+    expect(screen.getByLabelText(/Data do Pagamento/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Forma de Pagamento/i)).toBeInTheDocument();
+
+    // Alternar para RECEIVABLE: labels devem mudar para recebimento
+    fireEvent.click(screen.getByText("Conta a receber"));
+    expect(screen.queryByLabelText("Já foi pago")).not.toBeInTheDocument();
+    const receivableCheckbox = screen.getByLabelText("Já foi recebido") as HTMLInputElement;
+    expect(receivableCheckbox).toBeInTheDocument();
+    expect(screen.getByLabelText(/Data do Recebimento/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Forma de Recebimento/i)).toBeInTheDocument();
+
+    // Desmarcar checkbox
+    fireEvent.click(receivableCheckbox);
+    expect(receivableCheckbox.checked).toBe(false);
+    expect(screen.queryByLabelText(/Data do Recebimento/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Forma de Recebimento/i)).not.toBeInTheDocument();
+  });
+
+  it("18. Modal Nova Conta: fechar e reabrir reseta checkbox [Já foi pago], data e método para defaults", async () => {
+    setupFetchMock();
+
+    render(<ContasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Conta")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Nova Conta"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Nova Conta / Título")).toBeInTheDocument();
+    });
+
+    // Marcar checkbox e alterar método
+    const checkbox = screen.getByLabelText("Já foi pago");
+    fireEvent.click(checkbox);
+    const methodSelect = screen.getByLabelText(/Forma de Pagamento/i) as HTMLSelectElement;
+    fireEvent.change(methodSelect, { target: { value: "CREDIT_CARD" } });
+    expect(methodSelect.value).toBe("CREDIT_CARD");
+
+    // Fechar modal
+    fireEvent.click(screen.getByText("Cancelar"));
+    await waitFor(() => {
+      expect(screen.queryByText("Nova Conta / Título")).not.toBeInTheDocument();
+    });
+
+    // Reabrir modal
+    fireEvent.click(screen.getByText("Nova Conta"));
+    await waitFor(() => {
+      expect(screen.getByText("Nova Conta / Título")).toBeInTheDocument();
+    });
+
+    const resetCheckbox = screen.getByLabelText("Já foi pago") as HTMLInputElement;
+    expect(resetCheckbox.checked).toBe(false);
+    expect(screen.queryByLabelText(/Data do Pagamento/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Forma de Pagamento/i)).not.toBeInTheDocument();
+  });
 });

@@ -14,6 +14,7 @@ import {
   getKindBadge,
   getPaymentMethodLabel,
 } from "@/lib/financial/accounts-client";
+import { todayIsoBR } from "@/lib/time-utils";
 
 interface TitleDetailModalProps {
   isOpen: boolean;
@@ -43,6 +44,7 @@ export function TitleDetailModal({
   const isSubmittingRef = useRef(false);
 
   // Settlement Form State
+  const [settleDate, setSettleDate] = useState(() => todayIsoBR());
   const [settlePrincipal, setSettlePrincipal] = useState("");
   const [settleDiscount, setSettleDiscount] = useState("0");
   const [settleInterest, setSettleInterest] = useState("0");
@@ -80,6 +82,7 @@ export function TitleDetailModal({
       setDetail(data);
 
       // Pre-fill forms
+      setSettleDate(todayIsoBR());
       setSettlePrincipal(data.outstandingPrincipal || data.originalAmount);
       setSettleDiscount("0");
       setSettleInterest("0");
@@ -155,6 +158,16 @@ export function TitleDetailModal({
 
     if (isSubmittingRef.current) return;
 
+    if (!settleDate) {
+      setActionError("Data da baixa é obrigatória.");
+      return;
+    }
+
+    if (settleDate > todayIsoBR()) {
+      setActionError("A data da baixa não pode ser futura.");
+      return;
+    }
+
     if (isNaN(parsedPrincipal) || parsedPrincipal <= 0) {
       setActionError("O valor principal da baixa deve ser maior que zero.");
       return;
@@ -185,6 +198,7 @@ export function TitleDetailModal({
             fineAmount: parsedFine,
             method: payloadMethod,
             notes: settleNotes.trim() || undefined,
+            settledOn: settleDate,
           }),
         });
 
@@ -573,7 +587,21 @@ export function TitleDetailModal({
                 Insira os valores correspondentes ao pagamento/recebimento desta conta.
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
+                    {detail.kind === "PAYABLE" ? "Data do Pagamento *" : "Data do Recebimento *"}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    max={todayIsoBR()}
+                    value={settleDate}
+                    onChange={(e) => setSettleDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
                     Valor Principal a Quitar (R$) *

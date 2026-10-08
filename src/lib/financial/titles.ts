@@ -1,5 +1,6 @@
 import {
   FinancialCategoryClassification,
+  FinancialSettlementMethod,
   FinancialTitleKind,
   Prisma,
 } from "@prisma/client";
@@ -174,6 +175,12 @@ export interface CreateTitleInput {
   originalAmount: unknown;
   issuedOn: unknown;
   dueOn: unknown;
+  initialSettlement?: {
+    settledOn: unknown;
+    method: unknown;
+    idempotencyKey: unknown;
+    notes?: unknown;
+  };
 }
 
 export async function createTitle(
@@ -230,6 +237,53 @@ export async function createTitle(
     );
   }
 
+  let validatedInitialSettlement: {
+    idempotencyKey: string;
+    method: FinancialSettlementMethod;
+    cleanNotes: string | null;
+    economicTimestamp: Date;
+    settledOnCivil: string;
+  } | null = null;
+
+  if (input.initialSettlement !== undefined && input.initialSettlement !== null) {
+    const { createSettlementWithinTransaction, resolveSettlementEconomicTimestamp, validateIdempotencyKeyHeader } =
+      await import("./settlements");
+
+    const init = input.initialSettlement;
+    const idempotencyKey = validateIdempotencyKeyHeader(init.idempotencyKey);
+
+    if (
+      typeof init.method !== "string" ||
+      !Object.values(FinancialSettlementMethod).includes(init.method as FinancialSettlementMethod)
+    ) {
+      throw new FinancialTitleError(
+        "MISSING_SETTLEMENT_METHOD",
+        "Forma de pagamento/recebimento válida é obrigatória para baixa inicial.",
+        400
+      );
+    }
+    const method = init.method as FinancialSettlementMethod;
+
+    const { economicTimestamp, settledOnCivil } = resolveSettlementEconomicTimestamp(init.settledOn);
+
+    let cleanNotes: string | null = null;
+    if (init.notes !== undefined && init.notes !== null) {
+      if (typeof init.notes !== "string") {
+        throw new FinancialTitleError("INVALID_NOTES", "Observações devem ser string.", 400);
+      }
+      const trimmed = init.notes.trim();
+      if (trimmed.length > 0) cleanNotes = trimmed;
+    }
+
+    validatedInitialSettlement = {
+      idempotencyKey,
+      method,
+      cleanNotes,
+      economicTimestamp,
+      settledOnCivil,
+    };
+  }
+
   const runTx = async (tx: Prisma.TransactionClient) => {
     await validateTitleCategory(tx, barbershopId, categoryId, kind);
 
@@ -262,6 +316,36 @@ export async function createTitle(
         actorUserId: createdById,
       },
     });
+
+    if (validatedInitialSettlement) {
+      const { createSettlementWithinTransaction } = await import("./settlements");
+      const canonicalPayload = {
+        titleId: titleRecord.id,
+        principalAmount: fromCents(originalAmountCents).toFixed(2),
+        discountAmount: "0.00",
+        interestAmount: "0.00",
+        fineAmount: "0.00",
+        method: validatedInitialSettlement.method,
+        notes: validatedInitialSettlement.cleanNotes,
+        settledOn: validatedInitialSettlement.settledOnCivil,
+      };
+
+      await createSettlementWithinTransaction(tx, {
+        barbershopId,
+        titleId: titleRecord.id,
+        createdById,
+        idempotencyKey: validatedInitialSettlement.idempotencyKey,
+        principalCents: originalAmountCents,
+        discountCents: 0,
+        interestCents: 0,
+        fineCents: 0,
+        netCashCents: originalAmountCents,
+        method: validatedInitialSettlement.method,
+        cleanNotes: validatedInitialSettlement.cleanNotes,
+        economicTimestamp: validatedInitialSettlement.economicTimestamp,
+        canonicalPayload,
+      });
+    }
 
     return titleRecord;
   };

@@ -6,6 +6,8 @@ import {
   LeafCategoryOption,
   PAYABLE_CLASSIFICATIONS,
   RECEIVABLE_CLASSIFICATIONS,
+  PAYMENT_METHODS,
+  generateUUIDv4,
 } from "@/lib/financial/accounts-client";
 import { todayIsoBR } from "@/lib/time-utils";
 
@@ -31,6 +33,11 @@ export function TitleCreateModal({
   const [originalAmount, setOriginalAmount] = useState("");
   const [issuedOn, setIssuedOn] = useState(() => todayIsoBR());
   const [dueOn, setDueOn] = useState(() => todayIsoBR());
+
+  // Already settled toggle
+  const [isAlreadySettled, setIsAlreadySettled] = useState(false);
+  const [settledOn, setSettledOn] = useState(() => todayIsoBR());
+  const [settleMethod, setSettleMethod] = useState("PIX");
 
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -66,6 +73,9 @@ export function TitleCreateModal({
     setOriginalAmount("");
     setIssuedOn(todayIsoBR());
     setDueOn(todayIsoBR());
+    setIsAlreadySettled(false);
+    setSettledOn(todayIsoBR());
+    setSettleMethod("PIX");
     setError("");
     onClose();
   };
@@ -100,20 +110,45 @@ export function TitleCreateModal({
       return;
     }
 
+    if (isAlreadySettled) {
+      if (!settledOn) {
+        setError("Data de pagamento/recebimento é obrigatória quando a conta já foi liquidada.");
+        return;
+      }
+      if (settledOn > todayIsoBR()) {
+        setError("A data da baixa não pode ser futura.");
+        return;
+      }
+      if (!settleMethod) {
+        setError("Forma de pagamento/recebimento é obrigatória quando a conta já foi liquidada.");
+        return;
+      }
+    }
+
     startTransition(async () => {
       try {
+        const payload: Record<string, unknown> = {
+          kind,
+          categoryId,
+          title: title.trim(),
+          description: description.trim() || undefined,
+          originalAmount: numAmount,
+          issuedOn,
+          dueOn,
+        };
+
+        if (isAlreadySettled) {
+          payload.initialSettlement = {
+            settledOn,
+            method: settleMethod,
+            idempotencyKey: generateUUIDv4(),
+          };
+        }
+
         const res = await fetch("/api/admin/financial/titles", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            kind,
-            categoryId,
-            title: title.trim(),
-            description: description.trim() || undefined,
-            originalAmount: numAmount,
-            issuedOn,
-            dueOn,
-          }),
+          body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
@@ -249,6 +284,65 @@ export function TitleCreateModal({
               className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
             />
           </div>
+        </div>
+
+        {/* Already Settled Checkbox & Fields */}
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-3 space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isAlreadySettled}
+              onChange={(e) => setIsAlreadySettled(e.target.checked)}
+              className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0"
+            />
+            <span className="text-xs font-bold text-[var(--text-primary)]">
+              {kind === "PAYABLE" ? "Já foi pago" : "Já foi recebido"}
+            </span>
+          </label>
+
+          {isAlreadySettled && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border-subtle)]">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="settled-on-input"
+                  className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]"
+                >
+                  {kind === "PAYABLE" ? "Data do Pagamento *" : "Data do Recebimento *"}
+                </label>
+                <input
+                  id="settled-on-input"
+                  type="date"
+                  required
+                  max={todayIsoBR()}
+                  value={settledOn}
+                  onChange={(e) => setSettledOn(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="settle-method-select"
+                  className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]"
+                >
+                  {kind === "PAYABLE" ? "Forma de Pagamento *" : "Forma de Recebimento *"}
+                </label>
+                <select
+                  id="settle-method-select"
+                  required
+                  value={settleMethod}
+                  onChange={(e) => setSettleMethod(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+                >
+                  {PAYMENT_METHODS.map((pm) => (
+                    <option key={pm.value} value={pm.value}>
+                      {pm.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Description optional */}

@@ -56,6 +56,21 @@ export function formatDateBR(date: Date | string): string {
 }
 
 /**
+ * Converte um timestamp real (Date ou string ISO) para a data civil correspondente no fuso America/Sao_Paulo (YYYY-MM-DD).
+ * Garante que lançamentos realizados próximos ao fim do dia (ex: 23:30 BRT = 02:30Z do dia seguinte)
+ * retornem a data civil brasileira correta.
+ */
+export function formatTimestampToCivilDateBR(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/**
  * Formata a hora de uma data nativa do JS no padrão brasileiro (HH:mm).
  */
 export function formatTimeBR(date: Date | string): string {

@@ -8,9 +8,11 @@ import {
   calculateTitleDerivedStatus,
   FinancialTitleError,
   formatUTCToCivilDate,
+  isValidISODateString,
   lockTitleRow,
 } from "./titles";
 import { createSingleEntryAllocation } from "./allocations";
+import { formatTimestampToCivilDateBR, localDateToUTCBoundary, todayIsoBR } from "@/lib/time-utils";
 
 export class FinancialSettlementError extends Error {
   readonly code: string;
@@ -46,6 +48,50 @@ export function validateIdempotencyKeyHeader(keyInput: unknown): string {
   return clean;
 }
 
+export function resolveSettlementEconomicTimestamp(settledOnInput?: unknown): {
+  economicTimestamp: Date;
+  settledOnCivil: string;
+} {
+  const todayCivil = todayIsoBR();
+
+  if (settledOnInput === undefined || settledOnInput === null) {
+    return {
+      economicTimestamp: new Date(),
+      settledOnCivil: todayCivil,
+    };
+  }
+
+  if (typeof settledOnInput !== "string" || !isValidISODateString(settledOnInput)) {
+    throw new FinancialSettlementError(
+      "INVALID_SETTLED_ON_DATE",
+      "settledOn deve ser uma data civil válida no formato YYYY-MM-DD.",
+      400
+    );
+  }
+
+  const settledOnCivil = settledOnInput.trim();
+
+  if (settledOnCivil > todayCivil) {
+    throw new FinancialSettlementError(
+      "FUTURE_SETTLEMENT_DATE_BLOCKED",
+      "A data da baixa não pode ser futura.",
+      400
+    );
+  }
+
+  if (settledOnCivil === todayCivil) {
+    return {
+      economicTimestamp: new Date(),
+      settledOnCivil,
+    };
+  }
+
+  return {
+    economicTimestamp: localDateToUTCBoundary(settledOnCivil),
+    settledOnCivil,
+  };
+}
+
 export interface CreateSettlementInput {
   principalAmount: unknown;
   discountAmount?: unknown;
@@ -53,6 +99,7 @@ export interface CreateSettlementInput {
   fineAmount?: unknown;
   method?: unknown;
   notes?: unknown;
+  settledOn?: unknown;
   settledAt?: unknown;
 }
 
@@ -64,6 +111,7 @@ export interface CanonicalSettlementPayload {
   fineAmount: string;
   method: string | null;
   notes: string | null;
+  settledOn: string | null;
 }
 
 export function matchesCanonicalSettlementPayload(
@@ -75,18 +123,29 @@ export function matchesCanonicalSettlementPayload(
     fineAmount: Prisma.Decimal;
     method: FinancialSettlementMethod | null;
     notes: string | null;
+    settledAt: Date;
   },
   expected: CanonicalSettlementPayload
 ): boolean {
-  return (
+  const matchesBase =
     existing.titleId === expected.titleId &&
     existing.principalAmount.toFixed(2) === expected.principalAmount &&
     existing.discountAmount.toFixed(2) === expected.discountAmount &&
     existing.interestAmount.toFixed(2) === expected.interestAmount &&
     existing.fineAmount.toFixed(2) === expected.fineAmount &&
     (existing.method ?? null) === expected.method &&
-    (existing.notes ?? null) === expected.notes
-  );
+    (existing.notes ?? null) === expected.notes;
+
+  if (!matchesBase) return false;
+
+  // Quando settledOn é explicitamente informado, validamos contra a data civil brasileira do timestamp persistido
+  if (expected.settledOn !== null) {
+    const existingSettledOn = formatTimestampToCivilDateBR(existing.settledAt);
+    return existingSettledOn === expected.settledOn;
+  }
+
+  // Quando settledOn é omitido (ex: caller legado), não invalidamos o replay por data
+  return true;
 }
 
 export async function createSettlement(
@@ -154,6 +213,9 @@ export async function createSettlement(
     if (trimmed.length > 0) cleanNotes = trimmed;
   }
 
+  const { economicTimestamp, settledOnCivil } = resolveSettlementEconomicTimestamp(input.settledOn);
+  const isExplicitSettledOn = input.settledOn !== undefined && input.settledOn !== null;
+
   const canonicalPayload: CanonicalSettlementPayload = {
     titleId,
     principalAmount: fromCents(principalCents).toFixed(2),
@@ -162,6 +224,7 @@ export async function createSettlement(
     fineAmount: fromCents(fineCents).toFixed(2),
     method,
     notes: cleanNotes,
+    settledOn: isExplicitSettledOn ? settledOnCivil : null,
   };
 
   const preCheck = await client.financialSettlement.findUnique({
@@ -181,144 +244,21 @@ export async function createSettlement(
   }
 
   const runTx = async (tx: Prisma.TransactionClient) => {
-    await lockTitleRow(tx, barbershopId, titleId);
-
-    const recheck = await tx.financialSettlement.findUnique({
-      where: { barbershopId_idempotencyKey: { barbershopId, idempotencyKey } },
-      include: { financialEntry: true },
+    return createSettlementWithinTransaction(tx, {
+      barbershopId,
+      titleId,
+      createdById,
+      idempotencyKey,
+      principalCents,
+      discountCents,
+      interestCents,
+      fineCents,
+      netCashCents,
+      method,
+      cleanNotes,
+      economicTimestamp,
+      canonicalPayload,
     });
-
-    if (recheck) {
-      if (matchesCanonicalSettlementPayload(recheck, canonicalPayload)) {
-        return { result: recheck, isReplay: true };
-      }
-      throw new FinancialSettlementError(
-        "IDEMPOTENCY_KEY_REUSED",
-        "A chave de idempotência já foi utilizada com um payload diferente.",
-        409
-      );
-    }
-
-    const titleRecord = await tx.financialTitle.findFirst({
-      where: { id: titleId, barbershopId },
-      include: {
-        settlements: {
-          include: { reversals: true },
-        },
-      },
-    });
-
-    if (!titleRecord) {
-      throw new FinancialTitleError("FINANCIAL_TITLE_NOT_FOUND", "Título não encontrado.", 404);
-    }
-
-    if (titleRecord.cancelledAt !== null) {
-      throw new FinancialSettlementError(
-        "TITLE_CANCELLED",
-        "Não é possível liquidar um título cancelado.",
-        409
-      );
-    }
-
-    const activeSettlements = titleRecord.settlements.filter((s) => s.reversals.length === 0);
-    const settledCents = activeSettlements.reduce(
-      (sum, s) => sum + toCents(s.principalAmount),
-      0
-    );
-
-    const originalCents = toCents(titleRecord.originalAmount);
-    const dueOnCivil = formatUTCToCivilDate(titleRecord.dueOn);
-
-    const derived = calculateTitleDerivedStatus({
-      cancelledAt: titleRecord.cancelledAt,
-      originalAmountCents: originalCents,
-      settledPrincipalCents: settledCents,
-      dueOnCivil,
-    });
-
-    if (derived.status === "PAID" || derived.outstandingPrincipalCents === 0) {
-      throw new FinancialSettlementError("TITLE_PAID", "Título já está totalmente quitado.", 409);
-    }
-
-    if (principalCents > derived.outstandingPrincipalCents) {
-      throw new FinancialSettlementError(
-        "OVERPAYMENT",
-        `O principal a liquidar (${fromCents(principalCents).toFixed(2)}) excede o saldo devedor (${fromCents(derived.outstandingPrincipalCents).toFixed(2)}).`,
-        409
-      );
-    }
-
-    const now = new Date();
-
-    const settlementRecord = await tx.financialSettlement.create({
-      data: {
-        barbershopId,
-        titleId,
-        principalAmount: fromCents(principalCents),
-        discountAmount: fromCents(discountCents),
-        interestAmount: fromCents(interestCents),
-        fineAmount: fromCents(fineCents),
-        method,
-        settledAt: now,
-        notes: cleanNotes,
-        idempotencyKey,
-        createdById,
-      },
-    });
-
-    let entryId: string | null = null;
-    if (netCashCents > 0) {
-      const entryType = titleRecord.kind === "RECEIVABLE" ? "MANUAL_IN" : "MANUAL_OUT";
-      const entryAmountCents = titleRecord.kind === "RECEIVABLE" ? netCashCents : -netCashCents;
-      const description =
-        titleRecord.kind === "RECEIVABLE"
-          ? `Liquidação de conta a receber: ${titleRecord.title}`
-          : `Liquidação de conta a pagar: ${titleRecord.title}`;
-
-      const entry = await tx.financialEntry.create({
-        data: {
-          barbershopId,
-          type: entryType,
-          category: "FINANCIAL_TITLE",
-          amount: fromCents(entryAmountCents),
-          description,
-          entryDate: now,
-          userId: createdById,
-          financialSettlementId: settlementRecord.id,
-        },
-      });
-
-      entryId = entry.id;
-
-      await createSingleEntryAllocation(tx, {
-        barbershopId,
-        financialEntryId: entry.id,
-        categoryId: titleRecord.categoryId,
-        amountCents: entryAmountCents,
-      });
-    }
-
-    await tx.financialTitleEvent.create({
-      data: {
-        barbershopId,
-        titleId,
-        type: "SETTLEMENT_CREATED",
-        payload: {
-          settlementId: settlementRecord.id,
-          principalAmount: fromCents(principalCents).toFixed(2),
-          discountAmount: fromCents(discountCents).toFixed(2),
-          interestAmount: fromCents(interestCents).toFixed(2),
-          fineAmount: fromCents(fineCents).toFixed(2),
-          netCash: fromCents(netCashCents).toFixed(2),
-          method,
-          settledAt: now.toISOString(),
-          financialEntryId: entryId,
-        },
-        actorUserId: createdById,
-      },
-    });
-
-    return { result: settlementRecord, isReplay: false };
   };
 
   try {
@@ -346,6 +286,180 @@ export async function createSettlement(
     }
     throw err;
   }
+}
+
+export interface SettlementWithinTxParams {
+  barbershopId: string;
+  titleId: string;
+  createdById: string;
+  idempotencyKey: string;
+  principalCents: number;
+  discountCents: number;
+  interestCents: number;
+  fineCents: number;
+  netCashCents: number;
+  method: FinancialSettlementMethod | null;
+  cleanNotes: string | null;
+  economicTimestamp: Date;
+  canonicalPayload: CanonicalSettlementPayload;
+}
+
+export async function createSettlementWithinTransaction(
+  tx: Prisma.TransactionClient,
+  params: SettlementWithinTxParams
+): Promise<{ result: any; isReplay: boolean }> {
+  const {
+    barbershopId,
+    titleId,
+    createdById,
+    idempotencyKey,
+    principalCents,
+    discountCents,
+    interestCents,
+    fineCents,
+    netCashCents,
+    method,
+    cleanNotes,
+    economicTimestamp,
+    canonicalPayload,
+  } = params;
+
+  await lockTitleRow(tx, barbershopId, titleId);
+
+  const recheck = await tx.financialSettlement.findUnique({
+    where: { barbershopId_idempotencyKey: { barbershopId, idempotencyKey } },
+    include: { financialEntry: true },
+  });
+
+  if (recheck) {
+    if (matchesCanonicalSettlementPayload(recheck, canonicalPayload)) {
+      return { result: recheck, isReplay: true };
+    }
+    throw new FinancialSettlementError(
+      "IDEMPOTENCY_KEY_REUSED",
+      "A chave de idempotência já foi utilizada com um payload diferente.",
+      409
+    );
+  }
+
+  const titleRecord = await tx.financialTitle.findFirst({
+    where: { id: titleId, barbershopId },
+    include: {
+      settlements: {
+        include: { reversals: true },
+      },
+    },
+  });
+
+  if (!titleRecord) {
+    throw new FinancialTitleError("FINANCIAL_TITLE_NOT_FOUND", "Título não encontrado.", 404);
+  }
+
+  if (titleRecord.cancelledAt !== null) {
+    throw new FinancialSettlementError(
+      "TITLE_CANCELLED",
+      "Não é possível liquidar um título cancelado.",
+      409
+    );
+  }
+
+  const activeSettlements = titleRecord.settlements.filter((s) => s.reversals.length === 0);
+  const settledCents = activeSettlements.reduce(
+    (sum, s) => sum + toCents(s.principalAmount),
+    0
+  );
+
+  const originalCents = toCents(titleRecord.originalAmount);
+  const dueOnCivil = formatUTCToCivilDate(titleRecord.dueOn);
+
+  const derived = calculateTitleDerivedStatus({
+    cancelledAt: titleRecord.cancelledAt,
+    originalAmountCents: originalCents,
+    settledPrincipalCents: settledCents,
+    dueOnCivil,
+  });
+
+  if (derived.status === "PAID" || derived.outstandingPrincipalCents === 0) {
+    throw new FinancialSettlementError("TITLE_PAID", "Título já está totalmente quitado.", 409);
+  }
+
+  if (principalCents > derived.outstandingPrincipalCents) {
+    throw new FinancialSettlementError(
+      "OVERPAYMENT",
+      `O principal a liquidar (${fromCents(principalCents).toFixed(2)}) excede o saldo devedor (${fromCents(derived.outstandingPrincipalCents).toFixed(2)}).`,
+      409
+    );
+  }
+
+  const settlementRecord = await tx.financialSettlement.create({
+    data: {
+      barbershopId,
+      titleId,
+      principalAmount: fromCents(principalCents),
+      discountAmount: fromCents(discountCents),
+      interestAmount: fromCents(interestCents),
+      fineAmount: fromCents(fineCents),
+      method,
+      settledAt: economicTimestamp,
+      notes: cleanNotes,
+      idempotencyKey,
+      createdById,
+    },
+  });
+
+  let entryId: string | null = null;
+  if (netCashCents > 0) {
+    const entryType = titleRecord.kind === "RECEIVABLE" ? "MANUAL_IN" : "MANUAL_OUT";
+    const entryAmountCents = titleRecord.kind === "RECEIVABLE" ? netCashCents : -netCashCents;
+    const description =
+      titleRecord.kind === "RECEIVABLE"
+        ? `Liquidação de conta a receber: ${titleRecord.title}`
+        : `Liquidação de conta a pagar: ${titleRecord.title}`;
+
+    const entry = await tx.financialEntry.create({
+      data: {
+        barbershopId,
+        type: entryType,
+        category: "FINANCIAL_TITLE",
+        amount: fromCents(entryAmountCents),
+        description,
+        entryDate: economicTimestamp,
+        userId: createdById,
+        financialSettlementId: settlementRecord.id,
+      },
+    });
+
+    entryId = entry.id;
+
+    await createSingleEntryAllocation(tx, {
+      barbershopId,
+      financialEntryId: entry.id,
+      categoryId: titleRecord.categoryId,
+      amountCents: entryAmountCents,
+    });
+  }
+
+  await tx.financialTitleEvent.create({
+    data: {
+      barbershopId,
+      titleId,
+      type: "SETTLEMENT_CREATED",
+      payload: {
+        settlementId: settlementRecord.id,
+        principalAmount: fromCents(principalCents).toFixed(2),
+        discountAmount: fromCents(discountCents).toFixed(2),
+        interestAmount: fromCents(interestCents).toFixed(2),
+        fineAmount: fromCents(fineCents).toFixed(2),
+        netCash: fromCents(netCashCents).toFixed(2),
+        method,
+        settledAt: economicTimestamp.toISOString(),
+        financialEntryId: entryId,
+      },
+      actorUserId: createdById,
+    },
+  });
+
+  return { result: settlementRecord, isReplay: false };
 }
 
 export interface ReverseSettlementInput {

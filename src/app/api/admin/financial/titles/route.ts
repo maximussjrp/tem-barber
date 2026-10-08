@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireFinancialSession } from "@/lib/financial/permissions";
 import { createTitle, FinancialTitleError, listTitles } from "@/lib/financial/titles";
+import { FinancialSettlementError } from "@/lib/financial/settlements";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await requireFinancialSession();
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const created = await createTitle(barbershopId, userId, body);
     return NextResponse.json(created, { status: 201 });
   } catch (err: unknown) {
-    if (err instanceof FinancialTitleError) {
+    if (err instanceof FinancialTitleError || err instanceof FinancialSettlementError) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
     }
     return NextResponse.json({ error: "Erro ao criar título financeiro." }, { status: 500 });
