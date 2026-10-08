@@ -60,6 +60,17 @@ const mockCategoriesTree = [
           },
         ],
       },
+      {
+        id: "cat-custom-2",
+        code: "03.07",
+        name: "Despesas Customizadas",
+        classification: "FIXED_EXPENSE",
+        parentCategoryId: "cat-2",
+        isActive: true,
+        depth: 2,
+        isLeaf: true,
+        children: [],
+      },
     ],
   },
 ];
@@ -103,8 +114,8 @@ describe("CategoriasPage — UI Suite", () => {
 
     // Provar semanticamente que nós de nível 2 e 3 exibem o marcador hierárquico ↳
     const indicators = screen.getAllByText("↳");
-    // child: Serviços (depth 2), Aluguel (depth 2), Aluguel Loja Principal (depth 3) => 3 indicadores no total
-    expect(indicators.length).toBe(3);
+    // child: Serviços (depth 2), Aluguel (depth 2), Aluguel Loja Principal (depth 3), Despesas Customizadas (depth 2) => 4 indicadores no total
+    expect(indicators.length).toBe(4);
 
     // E os nós raiz (Receitas, Despesas Fixas - depth 1) NÃO possuem o marcador ↳ em seu container de nome
     const receitasEl = screen.getByText("Receitas").closest("div");
@@ -127,6 +138,9 @@ describe("CategoriasPage — UI Suite", () => {
     const nameInput = screen.getByPlaceholderText(/ex: aluguel da loja/i);
     fireEvent.change(nameInput, { target: { value: "Marketing Digital" } });
 
+    const parentSelect = screen.getByLabelText(/categoria pai/i);
+    fireEvent.change(parentSelect, { target: { value: "cat-2" } });
+
     fetchSpy.mockImplementation((url: any, init: any) => {
       if (url.includes("/api/admin/financial/categories") && init?.method === "POST") {
         return Promise.resolve({
@@ -136,6 +150,7 @@ describe("CategoriasPage — UI Suite", () => {
             id: "cat-new",
             name: "Marketing Digital",
             classification: "FIXED_EXPENSE",
+            parentCategoryId: "cat-2",
           }),
         } as any);
       }
@@ -156,10 +171,11 @@ describe("CategoriasPage — UI Suite", () => {
       const body = JSON.parse(postCalls[0][1].body);
       expect(body.name).toBe("Marketing Digital");
       expect(body.classification).toBe("FIXED_EXPENSE");
+      expect(body.parentCategoryId).toBe("cat-2");
     });
   });
 
-  it("4. permite escolher categoria depth 2 como parent para criar categoria depth 3", async () => {
+  it("4. permite escolher categoria depth 2 customizada como parent e oculta categorias oficiais non-root", async () => {
     render(<CategoriasPage />);
 
     await waitFor(() => {
@@ -168,13 +184,17 @@ describe("CategoriasPage — UI Suite", () => {
 
     fireEvent.click(screen.getByText("Nova Categoria"));
 
-    // O select de Categoria Pai deve conter Aluguel (que tem depth=2), permitindo criar depth=3
+    // O select de Categoria Pai deve conter categorias válidas
     const parentSelect = screen.getByLabelText(/categoria pai/i);
     expect(parentSelect).toBeInTheDocument();
 
     const options = Array.from(parentSelect.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options.some((opt) => opt?.includes("Aluguel"))).toBe(true);
+    // Categoria oficial folha (03.01 - Aluguel) NÃO pode receber subcategorias e deve ser ocultada
+    expect(options.some((opt) => opt?.includes("Aluguel"))).toBe(false);
+    // Categoria raiz oficial (03 - Despesas Fixas) pode receber filhos
     expect(options.some((opt) => opt?.includes("Despesas Fixas"))).toBe(true);
+    // Categoria customizada nível 2 (03.07 - Despesas Customizadas) pode receber filhos (nível 3)
+    expect(options.some((opt) => opt?.includes("Despesas Customizadas"))).toBe(true);
   });
 
   it("5. todas as opções de classificação são enums reais do domínio Prisma", async () => {
@@ -301,5 +321,41 @@ describe("CategoriasPage — UI Suite", () => {
     await waitFor(() => {
       expect(screen.getByText("Acesso negado")).toBeInTheDocument();
     });
+  });
+
+  it("9. oculta botão Mover para categorias oficiais e exibe apenas para customizadas", async () => {
+    render(<CategoriasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Despesas Customizadas")).toBeInTheDocument();
+    });
+
+    // Mover deve existir apenas para as categorias customizadas (03.01.01 e 03.07), não para oficiais (01, 01.01, 03, 03.01)
+    const moveButtons = screen.getAllByRole("button", { name: "Mover" });
+    expect(moveButtons.length).toBe(2);
+  });
+
+  it("10. modal de mover filtra pais inelegíveis (mesmo nó, descendentes, oficiais non-root)", async () => {
+    render(<CategoriasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Despesas Customizadas")).toBeInTheDocument();
+    });
+
+    const moveButtons = screen.getAllByRole("button", { name: "Mover" });
+    // Clicar no botão Mover de Despesas Customizadas (segundo botão)
+    fireEvent.click(moveButtons[1]);
+
+    expect(screen.getByRole("heading", { name: /Mover/i })).toBeInTheDocument();
+
+    const parentSelect = screen.getByLabelText(/novo pai/i);
+    const options = Array.from(parentSelect.querySelectorAll("option")).map((o) => o.textContent);
+
+    // Próprio nó (Despesas Customizadas) NÃO pode aparecer como destino
+    expect(options.some((opt) => opt?.includes("03.07 — Despesas Customizadas"))).toBe(false);
+    // Categoria oficial folha (03.01 - Aluguel) NÃO pode receber subcategorias
+    expect(options.some((opt) => opt?.includes("03.01 — Aluguel"))).toBe(false);
+    // Categoria raiz oficial (03 - Despesas Fixas) pode receber a categoria
+    expect(options.some((opt) => opt?.includes("03 — Despesas Fixas"))).toBe(true);
   });
 });

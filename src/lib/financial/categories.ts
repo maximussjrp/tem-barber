@@ -1,6 +1,6 @@
 import { FinancialCategory, FinancialCategoryClassification, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { randomBytes } from "crypto";
+import { randomUUID } from "crypto";
 
 export class FinancialCategoryError extends Error {
   readonly code: string;
@@ -32,6 +32,7 @@ import {
   lockFinancialCategoryTenant,
   withFinancialCategoryMutationTransaction,
 } from "./category-lock";
+import { OFFICIAL_CATEGORIES } from "./default-plan";
 
 export type { DbClient };
 export {
@@ -39,6 +40,26 @@ export {
   lockFinancialCategoryTenant,
   withFinancialCategoryMutationTransaction,
 };
+
+/**
+ * Códigos oficiais do plano padrão de contas.
+ */
+export const OFFICIAL_CATEGORY_CODES = new Set(OFFICIAL_CATEGORIES.map((c) => c.code));
+
+/**
+ * Códigos das raízes oficiais (01 a 08).
+ */
+export const OFFICIAL_ROOT_CODES = new Set(
+  OFFICIAL_CATEGORIES.filter((c) => c.parentCode === null).map((c) => c.code)
+);
+
+export function isOfficialCategoryCode(code: string): boolean {
+  return OFFICIAL_CATEGORY_CODES.has(code);
+}
+
+export function isOfficialRootCode(code: string): boolean {
+  return OFFICIAL_ROOT_CODES.has(code);
+}
 
 /**
  * Verifica se uma categoria está diretamente vinculada em qualquer uma das 4 tabelas de lançamentos/regras.
@@ -198,11 +219,92 @@ export async function getCategoryById(
 }
 
 /**
- * Gerador de código para categoria customizada.
+ * Valida se um código de categoria segue a regra hierárquica canônica:
+ * Segmentos de 2 dígitos separados por ponto (ex: "01", "01.01", "01.01.01"), até 3 níveis.
  */
-function generateCustomCode(): string {
-  const rand = randomBytes(4).toString("hex").toUpperCase();
-  return `CUSTOM-${rand}`;
+export function isValidHierarchicalCategoryCode(code: string): boolean {
+  return /^\d{2}(\.\d{2}){0,2}$/.test(code);
+}
+
+/**
+ * Verifica se um código termina no bucket reservado .99 (ou é 99).
+ */
+export function isTerminal99Bucket(code: string): boolean {
+  return /(^|\.)99$/.test(code);
+}
+
+/**
+ * Gera o próximo código hierárquico dentro do pai informado.
+ * - Encontra o menor slot numérico livre entre 01 e 98.
+ * - O slot 99 é reservado exclusivamente para "Outras ..." e nunca é atribuído automaticamente.
+ * - Considera categorias ativas e inativas (códigos inativos continuam reservados).
+ * - Lança CATEGORY_SLOTS_EXHAUSTED se todos os slots 01..98 estiverem ocupados.
+ */
+export async function generateNextHierarchicalCategoryCode(
+  tx: DbClient,
+  barbershopId: string,
+  parent: FinancialCategory
+): Promise<string> {
+  if (!isValidHierarchicalCategoryCode(parent.code)) {
+    throw new FinancialCategoryError(
+      "FINANCIAL_CATEGORY_PARENT_INVALID_CODE",
+      `O código da categoria pai "${parent.code}" não segue o padrão hierárquico oficial (ex: "01", "01.01").`,
+      409
+    );
+  }
+
+  if (isTerminal99Bucket(parent.code)) {
+    throw new FinancialCategoryError(
+      "FINANCIAL_CATEGORY_TERMINAL_BUCKET",
+      `A categoria "${parent.code}" é um bucket reservado (.99) e não pode receber subcategorias.`,
+      409
+    );
+  }
+
+  // Buscar todos os filhos existentes do pai (tanto ativos quanto inativos)
+  const existingChildren = await tx.financialCategory.findMany({
+    where: { barbershopId, parentCategoryId: parent.id },
+    select: { code: true },
+  });
+
+  // Também verificar no tenant qualquer categoria que use o prefixo do pai para prevenir colisões de código
+  const prefix = `${parent.code}.`;
+  const collidingCategories = await tx.financialCategory.findMany({
+    where: {
+      barbershopId,
+      code: { startsWith: prefix },
+    },
+    select: { code: true },
+  });
+
+  const usedSlots = new Set<number>();
+
+  for (const child of [...existingChildren, ...collidingCategories]) {
+    if (child.code.startsWith(prefix)) {
+      const rest = child.code.slice(prefix.length);
+      const segment = rest.split(".")[0];
+      if (/^\d{2}$/.test(segment)) {
+        const num = parseInt(segment, 10);
+        if (!isNaN(num)) {
+          usedSlots.add(num);
+        }
+      }
+    }
+  }
+
+  // Encontrar o menor slot livre entre 1 e 98
+  for (let slot = 1; slot <= 98; slot++) {
+    if (!usedSlots.has(slot)) {
+      const formattedSlot = String(slot).padStart(2, "0");
+      return `${parent.code}.${formattedSlot}`;
+    }
+  }
+
+  throw new FinancialCategoryError(
+    "CATEGORY_SLOTS_EXHAUSTED",
+    `Não há slots numéricos disponíveis (01 a 98) sob a categoria "${parent.code}".`,
+    409
+  );
 }
 
 /**
@@ -230,115 +332,102 @@ export async function createCategory(
     throw new FinancialCategoryError("INVALID_CLASSIFICATION", "Classificação inválida.", 400);
   }
 
-  if (
-    parentCategoryId !== undefined &&
-    parentCategoryId !== null &&
-    typeof parentCategoryId !== "string"
-  ) {
+  if (!parentCategoryId || typeof parentCategoryId !== "string" || parentCategoryId.trim().length === 0) {
     throw new FinancialCategoryError(
-      "INVALID_PARENT_ID",
-      "parentCategoryId deve ser uma string ou null.",
+      "FINANCIAL_CATEGORY_PARENT_REQUIRED",
+      "É obrigatório selecionar uma categoria pai para criar uma nova categoria.",
       400
     );
   }
 
   const typedClassification = classification as FinancialCategoryClassification;
-  const normalizedParentId = (parentCategoryId as string | null | undefined) || null;
+  const normalizedParentId = parentCategoryId.trim();
 
   return withFinancialCategoryMutationTransaction(barbershopId, client, async (tx) => {
-    if (normalizedParentId) {
-      const parent = await tx.financialCategory.findFirst({
-        where: { id: normalizedParentId, barbershopId },
-      });
+    const parent = await tx.financialCategory.findFirst({
+      where: { id: normalizedParentId, barbershopId },
+    });
 
-      if (!parent || !parent.isActive) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_PARENT_NOT_FOUND",
-          "Categoria pai não encontrada ou inativa.",
-          404
-        );
-      }
-
-      if (parent.classification !== typedClassification) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_CLASSIFICATION_MISMATCH",
-          "A classificação da categoria deve ser igual à do pai.",
-          409
-        );
-      }
-
-      const allCategories = await tx.financialCategory.findMany({
-        where: { barbershopId },
-      });
-
-      const parentDepth = calculateCategoryDepth(allCategories, parent.id);
-      if (parentDepth >= 3) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_MAX_DEPTH",
-          "A profundidade da árvore não pode exceder 3 níveis.",
-          409
-        );
-      }
-
-      const parentInUse = await isCategoryInUse(tx, barbershopId, parent.id);
-      if (parentInUse) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_PARENT_IN_USE",
-          "A categoria pai está em uso para lançamentos e não pode possuir subcategorias.",
-          409
-        );
-      }
-    }
-
-    // Tentar criar com retry seguro e tratamento de colisão unique (P2002)
-    let attempts = 0;
-    const MAX_ATTEMPTS = 5;
-    let createdCategory: FinancialCategory | null = null;
-
-    while (attempts < MAX_ATTEMPTS) {
-      const code = generateCustomCode();
-      const existingCode = await tx.financialCategory.findUnique({
-        where: { barbershopId_code: { barbershopId, code } },
-      });
-
-      if (existingCode) {
-        attempts += 1;
-        continue;
-      }
-
-      try {
-        createdCategory = await tx.financialCategory.create({
-          data: {
-            barbershopId,
-            code,
-            name: name.trim(),
-            classification: typedClassification,
-            parentCategoryId: normalizedParentId,
-            isActive: true,
-          },
-        });
-        break;
-      } catch (err: unknown) {
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        ) {
-          attempts += 1;
-          continue;
-        }
-        throw err;
-      }
-    }
-
-    if (!createdCategory) {
+    if (!parent || !parent.isActive) {
       throw new FinancialCategoryError(
-        "FINANCIAL_CATEGORY_CODE_CONFLICT",
-        "Não foi possível gerar um código único para a categoria após várias tentativas.",
+        "FINANCIAL_CATEGORY_PARENT_NOT_FOUND",
+        "Categoria pai não encontrada ou inativa.",
+        404
+      );
+    }
+
+    if (parent.classification !== typedClassification) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_CLASSIFICATION_MISMATCH",
+        "A classificação da categoria deve ser igual à do pai.",
         409
       );
     }
 
-    return createdCategory;
+    const allCategories = await tx.financialCategory.findMany({
+      where: { barbershopId },
+    });
+
+    const parentDepth = calculateCategoryDepth(allCategories, parent.id);
+    if (parentDepth >= 3) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_MAX_DEPTH",
+        "A profundidade da árvore não pode exceder 3 níveis.",
+        409
+      );
+    }
+
+    if (isTerminal99Bucket(parent.code)) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_TERMINAL_BUCKET",
+        `A categoria "${parent.code}" é um bucket reservado (.99) e não pode receber subcategorias.`,
+        409
+      );
+    }
+
+    if (isOfficialCategoryCode(parent.code) && !isOfficialRootCode(parent.code)) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_OFFICIAL_NON_ROOT_CHILD_BLOCKED",
+        `A categoria oficial folha "${parent.code} - ${parent.name}" é estrutural e não pode receber subcategorias customizadas.`,
+        409
+      );
+    }
+
+    const parentInUse = await isCategoryInUse(tx, barbershopId, parent.id);
+    if (parentInUse) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_PARENT_IN_USE",
+        "A categoria pai está em uso para lançamentos e não pode possuir subcategorias.",
+        409
+      );
+    }
+
+    const code = await generateNextHierarchicalCategoryCode(tx, barbershopId, parent);
+
+    try {
+      return await tx.financialCategory.create({
+        data: {
+          barbershopId,
+          code,
+          name: name.trim(),
+          classification: typedClassification,
+          parentCategoryId: normalizedParentId,
+          isActive: true,
+        },
+      });
+    } catch (err: unknown) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        throw new FinancialCategoryError(
+          "FINANCIAL_CATEGORY_CODE_CONFLICT",
+          `Conflito de unicidade ao registrar a categoria com o código ${code}.`,
+          409
+        );
+      }
+      throw err;
+    }
   });
 }
 
@@ -380,8 +469,12 @@ export async function updateCategory(
 }
 
 /**
- * Mover categoria para novo pai ou para root.
+ * Mover categoria para novo pai.
  * Serializado por tenant via pg_advisory_xact_lock dentro de transação.
+ * - Impede movimentação de raízes oficiais ("01" a "08").
+ * - Impede mover categorias comuns para a raiz (parentCategoryId null).
+ * - Recalcula deterministicamente o código da categoria e de todas as subcategorias da sua subárvore.
+ * - Utiliza códigos temporários para evitar violação do índice único @@unique([barbershopId, code]).
  */
 export async function moveCategory(
   barbershopId: string,
@@ -390,21 +483,22 @@ export async function moveCategory(
   client?: DbClient
 ): Promise<FinancialCategory> {
   if (
-    targetParentCategoryId !== undefined &&
-    targetParentCategoryId !== null &&
-    typeof targetParentCategoryId !== "string"
+    targetParentCategoryId === undefined ||
+    targetParentCategoryId === null ||
+    typeof targetParentCategoryId !== "string" ||
+    targetParentCategoryId.trim().length === 0
   ) {
     throw new FinancialCategoryError(
-      "INVALID_PARENT_ID",
-      "parentCategoryId deve ser uma string ou null.",
+      "FINANCIAL_CATEGORY_PARENT_REQUIRED",
+      "É obrigatório selecionar uma categoria pai de destino.",
       400
     );
   }
 
-  const normalizedParentId = (targetParentCategoryId as string | null | undefined) || null;
+  const normalizedParentId = targetParentCategoryId.trim();
 
   return withFinancialCategoryMutationTransaction(barbershopId, client, async (tx) => {
-    // 3. Reler source dentro da transação após lock
+    // 1. Reler source dentro da transação após lock
     const source = await tx.financialCategory.findFirst({
       where: { id: categoryId, barbershopId },
     });
@@ -417,77 +511,98 @@ export async function moveCategory(
       );
     }
 
+    // 2. Proteger todas as categorias oficiais contra movimentação
+    if (isOfficialCategoryCode(source.code)) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_OFFICIAL_STRUCTURE_IMMUTABLE",
+        `A categoria oficial "${source.code} - ${source.name}" possui posição canônica fixa e não pode ser movida.`,
+        409
+      );
+    }
+
     if (source.parentCategoryId === normalizedParentId) {
       return source;
     }
 
-    // 4. Reler árvore completa do tenant após lock
+    // 3. Reler árvore completa do tenant após lock
     const allCategories = await tx.financialCategory.findMany({
       where: { barbershopId },
     });
 
-    let targetParentDepth = 0;
+    // 4. Validar parent de destino
+    const parent = allCategories.find((c) => c.id === normalizedParentId);
 
-    if (normalizedParentId) {
-      // 5. Validar parent
-      const parent = allCategories.find((c) => c.id === normalizedParentId);
-
-      if (!parent || !parent.isActive) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_PARENT_NOT_FOUND",
-          "Categoria pai de destino não encontrada ou inativa.",
-          404
-        );
-      }
-
-      if (parent.id === source.id) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_CYCLE",
-          "Uma categoria não pode ser pai de si mesma.",
-          409
-        );
-      }
-
-      // 7. Validar classification
-      if (parent.classification !== source.classification) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_CLASSIFICATION_MISMATCH",
-          "A classificação da categoria deve ser igual à do pai.",
-          409
-        );
-      }
-
-      // 6. Validar cycle
-      let curr: FinancialCategory | undefined = parent;
-      const visited = new Set<string>();
-      while (curr && curr.parentCategoryId) {
-        if (visited.has(curr.id)) break;
-        visited.add(curr.id);
-
-        if (curr.parentCategoryId === source.id) {
-          throw new FinancialCategoryError(
-            "FINANCIAL_CATEGORY_CYCLE",
-            "A movimentação criaria um ciclo na hierarquia.",
-            409
-          );
-        }
-        curr = allCategories.find((c) => c.id === curr!.parentCategoryId);
-      }
-
-      // 8. Validar parent-in-use
-      const parentInUse = await isCategoryInUse(tx, barbershopId, parent.id);
-      if (parentInUse) {
-        throw new FinancialCategoryError(
-          "FINANCIAL_CATEGORY_PARENT_IN_USE",
-          "A categoria pai de destino está em uso para lançamentos.",
-          409
-        );
-      }
-
-      targetParentDepth = calculateCategoryDepth(allCategories, parent.id);
+    if (!parent || !parent.isActive) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_PARENT_NOT_FOUND",
+        "Categoria pai de destino não encontrada ou inativa.",
+        404
+      );
     }
 
-    // 9. Validar subtree depth
+    if (isTerminal99Bucket(parent.code)) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_TERMINAL_BUCKET",
+        `A categoria "${parent.code}" é um bucket reservado (.99) e não pode receber subcategorias.`,
+        409
+      );
+    }
+
+    if (isOfficialCategoryCode(parent.code) && !isOfficialRootCode(parent.code)) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_OFFICIAL_NON_ROOT_CHILD_BLOCKED",
+        `A categoria oficial folha "${parent.code} - ${parent.name}" é estrutural e não pode receber subcategorias.`,
+        409
+      );
+    }
+
+    if (parent.id === source.id) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_CYCLE",
+        "Uma categoria não pode ser pai de si mesma.",
+        409
+      );
+    }
+
+    // 5. Validar classification
+    if (parent.classification !== source.classification) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_CLASSIFICATION_MISMATCH",
+        "A classificação da categoria deve ser igual à do pai.",
+        409
+      );
+    }
+
+    // 6. Validar cycle
+    let curr: FinancialCategory | undefined = parent;
+    const visited = new Set<string>();
+    while (curr && curr.parentCategoryId) {
+      if (visited.has(curr.id)) break;
+      visited.add(curr.id);
+
+      if (curr.parentCategoryId === source.id) {
+        throw new FinancialCategoryError(
+          "FINANCIAL_CATEGORY_CYCLE",
+          "A movimentação criaria um ciclo na hierarquia.",
+          409
+        );
+      }
+      curr = allCategories.find((c) => c.id === curr!.parentCategoryId);
+    }
+
+    // 7. Validar parent-in-use
+    const parentInUse = await isCategoryInUse(tx, barbershopId, parent.id);
+    if (parentInUse) {
+      throw new FinancialCategoryError(
+        "FINANCIAL_CATEGORY_PARENT_IN_USE",
+        "A categoria pai de destino está em uso para lançamentos.",
+        409
+      );
+    }
+
+    const targetParentDepth = calculateCategoryDepth(allCategories, parent.id);
+
+    // 8. Validar subtree depth
     const sourceSubtreeHeight = calculateSubtreeHeight(allCategories, source.id);
     const finalMaxDepth = targetParentDepth + sourceSubtreeHeight;
 
@@ -499,13 +614,148 @@ export async function moveCategory(
       );
     }
 
-    // 10. Executar update usando chave composta tenant-safe
-    return tx.financialCategory.update({
+    // 9. Gerar novo código hierárquico para o nó de origem
+    const newSourceCode = await generateNextHierarchicalCategoryCode(tx, barbershopId, parent);
+
+    // 10. Coletar todos os nós da subárvore do source (em largura/nível para recodificação ordenada)
+    // Map de parentId -> filhos
+    const childrenByParent = new Map<string, FinancialCategory[]>();
+    for (const cat of allCategories) {
+      if (cat.parentCategoryId) {
+        if (!childrenByParent.has(cat.parentCategoryId)) {
+          childrenByParent.set(cat.parentCategoryId, []);
+        }
+        childrenByParent.get(cat.parentCategoryId)!.push(cat);
+      }
+    }
+
+    // Função para coletar nós da subárvore
+    const subtreeNodes: FinancialCategory[] = [];
+    const queue = [source.id];
+    while (queue.length > 0) {
+      const currentParentId = queue.shift()!;
+      const children = childrenByParent.get(currentParentId) || [];
+      // Ordenar deterministicamente por code ASC, name ASC, id ASC
+      children.sort((a, b) => a.code.localeCompare(b.code) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      for (const ch of children) {
+        subtreeNodes.push(ch);
+        queue.push(ch.id);
+      }
+    }
+
+    // 11. Para evitar violação de unicidade [barbershopId, code], atribuir códigos temporários
+    // primeiro ao source e a todos os nós da subárvore usando namespace reservado e verificação prévia.
+    const allToRecode = [source, ...subtreeNodes];
+    let operationId = randomUUID();
+    let temporaryCodes = allToRecode.map((node) => `__TB_MOVE_TMP__${operationId}__${node.id}`);
+
+    // Pre-check de colisão inesperada com códigos existentes no tenant
+    let existingTmpCollision = await tx.financialCategory.findFirst({
+      where: {
+        barbershopId,
+        code: { in: temporaryCodes },
+      },
+    });
+
+    if (existingTmpCollision) {
+      operationId = randomUUID();
+      temporaryCodes = allToRecode.map((node) => `__TB_MOVE_TMP__${operationId}__${node.id}`);
+      existingTmpCollision = await tx.financialCategory.findFirst({
+        where: {
+          barbershopId,
+          code: { in: temporaryCodes },
+        },
+      });
+      if (existingTmpCollision) {
+        throw new FinancialCategoryError(
+          "FINANCIAL_CATEGORY_TEMPORARY_CODE_COLLISION",
+          "Conflito inesperado ao alocar códigos temporários para recodificação da árvore.",
+          409
+        );
+      }
+    }
+
+    for (let i = 0; i < allToRecode.length; i++) {
+      const node = allToRecode[i];
+      await tx.financialCategory.update({
+        where: { id_barbershopId: { id: node.id, barbershopId } },
+        data: {
+          code: temporaryCodes[i],
+        },
+      });
+    }
+
+    // 12. Atualizar o source para o novo pai e novo código
+    const updatedSource = await tx.financialCategory.update({
       where: { id_barbershopId: { id: source.id, barbershopId } },
       data: {
         parentCategoryId: normalizedParentId,
+        code: newSourceCode,
       },
     });
+
+    // 13. Recodificar recursivamente os filhos da subárvore
+    // Mapear id -> novo código definitivo
+    const finalCodeById = new Map<string, string>();
+    finalCodeById.set(source.id, newSourceCode);
+
+    // Processar nível a nível:
+    const recodeQueue = [source.id];
+    while (recodeQueue.length > 0) {
+      const currentParentId = recodeQueue.shift()!;
+      const parentCode = finalCodeById.get(currentParentId)!;
+      const children = childrenByParent.get(currentParentId) || [];
+      children.sort((a, b) => a.code.localeCompare(b.code) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+      // Separar bucket terminal .99 legado (se existir) de filhos normais
+      const legacy99Children = children.filter((c) => isTerminal99Bucket(c.code));
+      const normalChildren = children.filter((c) => !isTerminal99Bucket(c.code));
+
+      if (legacy99Children.length > 1) {
+        throw new FinancialCategoryError(
+          "FINANCIAL_CATEGORY_AMBIGUOUS_99_BUCKET",
+          `A categoria possui mais de um bucket reservado .99 sob o mesmo nó (${parentCode}).`,
+          409
+        );
+      }
+
+      if (normalChildren.length > 98) {
+        throw new FinancialCategoryError(
+          "CATEGORY_SLOTS_EXHAUSTED",
+          `A subárvore sob "${parentCode}" excede o limite de 98 categorias irmãs (01 a 98).`,
+          409
+        );
+      }
+
+      let slotIndex = 1;
+      for (const child of normalChildren) {
+        const childCode = `${parentCode}.${String(slotIndex).padStart(2, "0")}`;
+        slotIndex++;
+        finalCodeById.set(child.id, childCode);
+
+        await tx.financialCategory.update({
+          where: { id_barbershopId: { id: child.id, barbershopId } },
+          data: { code: childCode },
+        });
+
+        recodeQueue.push(child.id);
+      }
+
+      if (legacy99Children.length === 1) {
+        const child99 = legacy99Children[0];
+        const child99Code = `${parentCode}.99`;
+        finalCodeById.set(child99.id, child99Code);
+
+        await tx.financialCategory.update({
+          where: { id_barbershopId: { id: child99.id, barbershopId } },
+          data: { code: child99Code },
+        });
+
+        recodeQueue.push(child99.id);
+      }
+    }
+
+    return updatedSource;
   });
 }
 

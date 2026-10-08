@@ -200,46 +200,217 @@ describe("Fase 2 — Plano Financeiro / Categorias", () => {
     });
   });
 
-  describe("VALIDAÇÃO DE PAYLOADS E CUSTOM CODE RETRY", () => {
+  describe("VALIDAÇÃO DE PAYLOADS E HIERARQUIA CANÔNICA (BLOCO C)", () => {
     it("rejeita payload inválido no POST (400)", async () => {
-      await expect(createCategory(TENANT_A, { name: "", classification: FinancialCategoryClassification.REVENUE })).rejects.toThrow(FinancialCategoryError);
-      await expect(createCategory(TENANT_A, { name: "Nome", classification: "INVALID" as unknown as FinancialCategoryClassification })).rejects.toThrow(FinancialCategoryError);
-      await expect(createCategory(TENANT_A, { name: "Nome", classification: FinancialCategoryClassification.REVENUE, parentCategoryId: 123 as unknown as string })).rejects.toThrow(FinancialCategoryError);
+      await expect(createCategory(TENANT_A, { name: "", classification: FinancialCategoryClassification.REVENUE, parentCategoryId: "p-1" })).rejects.toThrow(FinancialCategoryError);
+      await expect(createCategory(TENANT_A, { name: "Nome", classification: "INVALID" as unknown as FinancialCategoryClassification, parentCategoryId: "p-1" })).rejects.toThrow(FinancialCategoryError);
+      await expect(createCategory(TENANT_A, { name: "Nome", classification: FinancialCategoryClassification.REVENUE, parentCategoryId: "" })).rejects.toThrow("É obrigatório selecionar uma categoria pai");
     });
 
     it("rejeita payload inválido no MOVE e RETIRE (400)", async () => {
-      await expect(moveCategory(TENANT_A, "cat-1", 123 as unknown as string)).rejects.toThrow(FinancialCategoryError);
+      await expect(moveCategory(TENANT_A, "cat-1", null)).rejects.toThrow(FinancialCategoryError);
       await expect(retireCategory(TENANT_A, "cat-1", 123 as unknown as string)).rejects.toThrow(FinancialCategoryError);
       await expect(updateCategory(TENANT_A, "cat-1", { name: "" })).rejects.toThrow(FinancialCategoryError);
     });
 
-    it("tenta gerar custom code novamente em colisão e obtém sucesso na segunda tentativa", async () => {
-      prismaMock.financialCategory.findUnique
-        .mockResolvedValueOnce(mockCat({ id: "colisao-1" })) // Colisão na 1ª tentativa
-        .mockResolvedValueOnce(null); // Livre na 2ª tentativa
+    it("cria filho com primeiro slot livre 01 sob raiz 03", async () => {
+      const parent = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parent);
+      prismaMock.financialCategory.findMany.mockResolvedValue([parent]);
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
 
       prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
         Promise.resolve(mockCat({ id: "created-id", ...args.data }))
       );
 
       const created = await createCategory(TENANT_A, {
-        name: "Serviço Retry",
-        classification: FinancialCategoryClassification.REVENUE,
+        name: "Nova Despesa",
+        classification: FinancialCategoryClassification.FIXED_EXPENSE,
+        parentCategoryId: "p-03",
       });
 
-      expect(created.name).toBe("Serviço Retry");
-      expect(prismaMock.financialCategory.findUnique).toHaveBeenCalledTimes(2);
+      expect(created.code).toBe("03.01");
+      expect(created.parentCategoryId).toBe("p-03");
     });
 
-    it("lança FINANCIAL_CATEGORY_CODE_CONFLICT (409) após esgotar todas as tentativas de custom code", async () => {
-      prismaMock.financialCategory.findUnique.mockResolvedValue(mockCat({ id: "colisao-eterna" }));
+    it("preenche menor gap numérico livre (ex: 03.01 e 03.03 ocupados -> gera 03.02)", async () => {
+      const parent = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const child1 = mockCat({ id: "c-03-01", code: "03.01", parentCategoryId: "p-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const child3 = mockCat({ id: "c-03-03", code: "03.03", parentCategoryId: "p-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parent);
+      prismaMock.financialCategory.findMany
+        .mockResolvedValueOnce([parent, child1, child3]) // allCategories for depth
+        .mockResolvedValueOnce([child1, child3]) // existingChildren
+        .mockResolvedValueOnce([child1, child3]); // collidingCategories
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(mockCat({ id: "created-id", ...args.data }))
+      );
+
+      const created = await createCategory(TENANT_A, {
+        name: "Despesa Gap",
+        classification: FinancialCategoryClassification.FIXED_EXPENSE,
+        parentCategoryId: "p-03",
+      });
+
+      expect(created.code).toBe("03.02");
+    });
+
+    it("reserva códigos de categorias inativas (isActive=false não libera o slot)", async () => {
+      const parent = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const inactiveChild = mockCat({ id: "c-03-01", code: "03.01", parentCategoryId: "p-03", isActive: false, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parent);
+      prismaMock.financialCategory.findMany
+        .mockResolvedValueOnce([parent, inactiveChild])
+        .mockResolvedValueOnce([inactiveChild])
+        .mockResolvedValueOnce([inactiveChild]);
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(mockCat({ id: "created-id", ...args.data }))
+      );
+
+      const created = await createCategory(TENANT_A, {
+        name: "Nova Após Inativa",
+        classification: FinancialCategoryClassification.FIXED_EXPENSE,
+        parentCategoryId: "p-03",
+      });
+
+      expect(created.code).toBe("03.02");
+    });
+
+    it("nunca atribui o slot 99 e lança CATEGORY_SLOTS_EXHAUSTED se 01..98 estiverem ocupados", async () => {
+      const parent = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const fullChildren: FinancialCategory[] = [];
+      for (let i = 1; i <= 98; i++) {
+        fullChildren.push(
+          mockCat({
+            id: `c-03-${i}`,
+            code: `03.${String(i).padStart(2, "0")}`,
+            parentCategoryId: "p-03",
+            classification: FinancialCategoryClassification.FIXED_EXPENSE,
+          })
+        );
+      }
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parent);
+      prismaMock.financialCategory.findMany
+        .mockResolvedValueOnce([parent, ...fullChildren])
+        .mockResolvedValueOnce(fullChildren)
+        .mockResolvedValueOnce(fullChildren);
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
 
       await expect(
         createCategory(TENANT_A, {
-          name: "Serviço Esgotado",
-          classification: FinancialCategoryClassification.REVENUE,
+          name: "Excedente",
+          classification: FinancialCategoryClassification.FIXED_EXPENSE,
+          parentCategoryId: "p-03",
         })
-      ).rejects.toThrow("Não foi possível gerar um código único para a categoria após várias tentativas.");
+      ).rejects.toThrow("Não há slots numéricos disponíveis (01 a 98)");
+    });
+
+    it("impede criação sob categoria de bucket terminal (.99)", async () => {
+      const parent99 = mockCat({ id: "p-03-99", code: "03.99", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parent99);
+      prismaMock.financialCategory.findMany.mockResolvedValue([parent99]);
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      await expect(
+        createCategory(TENANT_A, {
+          name: "Sub de outras",
+          classification: FinancialCategoryClassification.FIXED_EXPENSE,
+          parentCategoryId: "p-03-99",
+        })
+      ).rejects.toThrow("é um bucket reservado (.99) e não pode receber subcategorias");
+    });
+
+    it("impede criação sob pai com formato de código inválido (ex: legado CUSTOM-)", async () => {
+      const legacyParent = mockCat({ id: "p-legacy", code: "CUSTOM-12345678", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(legacyParent);
+      prismaMock.financialCategory.findMany.mockResolvedValue([legacyParent]);
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      await expect(
+        createCategory(TENANT_A, {
+          name: "Filho de Legacy",
+          classification: FinancialCategoryClassification.FIXED_EXPENSE,
+          parentCategoryId: "p-legacy",
+        })
+      ).rejects.toThrow("não segue o padrão hierárquico oficial");
+    });
+
+    it("cria filho com código nível 3 (ex: 03.07.01) sob categoria customizada nível 2", async () => {
+      const root = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const customL2 = mockCat({ id: "c-03-07", code: "03.07", parentCategoryId: "p-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(customL2);
+      prismaMock.financialCategory.findMany
+        .mockResolvedValueOnce([root, customL2]) // allCategories
+        .mockResolvedValueOnce([]) // existingChildren
+        .mockResolvedValueOnce([]); // collidingCategories
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(mockCat({ id: "c-03-07-01", ...args.data }))
+      );
+
+      const res = await createCategory(TENANT_A, {
+        name: "Subcustomizada L3",
+        classification: FinancialCategoryClassification.FIXED_EXPENSE,
+        parentCategoryId: "c-03-07",
+      });
+
+      expect(res.code).toBe("03.07.01");
+    });
+
+    it("bloqueia criação sob categoria oficial folha (ex: 03.01) com FINANCIAL_CATEGORY_OFFICIAL_NON_ROOT_CHILD_BLOCKED", async () => {
+      const root = mockCat({ id: "p-03", code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const officialLeaf = mockCat({ id: "c-03-01", code: "03.01", parentCategoryId: "p-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(officialLeaf);
+      prismaMock.financialCategory.findMany.mockResolvedValue([root, officialLeaf]);
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      await expect(
+        createCategory(TENANT_A, {
+          name: "Sub folha oficial",
+          classification: FinancialCategoryClassification.FIXED_EXPENSE,
+          parentCategoryId: "c-03-01",
+        })
+      ).rejects.toMatchObject({
+        code: "FINANCIAL_CATEGORY_OFFICIAL_NON_ROOT_CHILD_BLOCKED",
+      });
     });
   });
 
@@ -257,24 +428,266 @@ describe("Fase 2 — Plano Financeiro / Categorias", () => {
       });
     });
 
-    it("moveCategory usa selector composto tenant-safe id_barbershopId", async () => {
-      const source = mockCat({ id: "cat-src", barbershopId: TENANT_A });
-      const parent = mockCat({ id: "cat-parent", barbershopId: TENANT_A });
+    it("moveCategory protege raiz oficial (01..08) contra movimentação", async () => {
+      const officialRoot = mockCat({ id: "cat-01", code: "01", parentCategoryId: null, classification: FinancialCategoryClassification.REVENUE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(officialRoot);
 
-      prismaMock.financialCategory.findFirst.mockResolvedValue(source);
-      prismaMock.financialCategory.findMany.mockResolvedValue([source, parent]);
+      await expect(
+        moveCategory(TENANT_A, "cat-01", "other-parent")
+      ).rejects.toMatchObject({
+        code: "FINANCIAL_CATEGORY_OFFICIAL_STRUCTURE_IMMUTABLE",
+      });
+    });
+
+    it("moveCategory protege categoria oficial folha (ex: 03.01) contra movimentação", async () => {
+      const officialLeaf = mockCat({ id: "cat-03-01", code: "03.01", parentCategoryId: "cat-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(officialLeaf);
+
+      await expect(
+        moveCategory(TENANT_A, "cat-03-01", "other-parent")
+      ).rejects.toMatchObject({
+        code: "FINANCIAL_CATEGORY_OFFICIAL_STRUCTURE_IMMUTABLE",
+      });
+    });
+
+    it("moveCategory protege categoria oficial .99 (ex: 03.99) contra movimentação", async () => {
+      const official99 = mockCat({ id: "cat-03-99", code: "03.99", parentCategoryId: "cat-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      prismaMock.financialCategory.findFirst.mockResolvedValue(official99);
+
+      await expect(
+        moveCategory(TENANT_A, "cat-03-99", "other-parent")
+      ).rejects.toMatchObject({
+        code: "FINANCIAL_CATEGORY_OFFICIAL_STRUCTURE_IMMUTABLE",
+      });
+    });
+
+    it("moveCategory recodifica nó e subárvore com novo prefixo hierárquico", async () => {
+      const source = mockCat({ id: "cat-src", code: "CUSTOM-EXP", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const child = mockCat({ id: "cat-child", code: "CUSTOM-CHILD", parentCategoryId: "cat-src", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const newParent = mockCat({ id: "root-03", code: "03", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(source);
+      });
+      prismaMock.financialCategory.findMany.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve([]); // collidingCategories under newParent
+        }
+        if (args?.where?.parentCategoryId === "root-03") {
+          return Promise.resolve([]); // existingChildren under newParent
+        }
+        return Promise.resolve([source, child, newParent]); // allCategories
+      });
+
       prismaMock.financialTitle.count.mockResolvedValue(0);
       prismaMock.financialRoutine.count.mockResolvedValue(0);
       prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
       prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
-      prismaMock.financialCategory.update.mockResolvedValue({ ...source, parentCategoryId: parent.id });
 
-      await moveCategory(TENANT_A, "cat-src", "cat-parent");
-
-      expect(prismaMock.financialCategory.update).toHaveBeenCalledWith({
-        where: { id_barbershopId: { id: "cat-src", barbershopId: TENANT_A } },
-        data: { parentCategoryId: "cat-parent" },
+      prismaMock.financialCategory.update.mockImplementation((args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        return Promise.resolve({ ...source, ...args.data });
       });
+
+      const moved = await moveCategory(TENANT_A, "cat-src", "root-03");
+
+      expect(moved.code).toBe("03.01");
+      expect(prismaMock.financialCategory.update).toHaveBeenCalledWith({
+        where: { id_barbershopId: { id: "cat-child", barbershopId: TENANT_A } },
+        data: { code: "03.01.01" },
+      });
+    });
+
+    it("moveCategory permite normalizar CUSTOM- legado sob raiz oficial preservando UUID", async () => {
+      const legacy = mockCat({ id: "uuid-legacy", code: "CUSTOM-ABC12345", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const root03 = mockCat({ id: "root-03", code: "03", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(legacy);
+      });
+      prismaMock.financialCategory.findMany.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve([]);
+        }
+        if (args?.where?.parentCategoryId === "root-03") {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([legacy, root03]);
+      });
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      prismaMock.financialCategory.update.mockImplementation((args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        return Promise.resolve({ ...legacy, ...args.data });
+      });
+
+      const moved = await moveCategory(TENANT_A, "uuid-legacy", "root-03");
+
+      expect(moved.id).toBe("uuid-legacy");
+      expect(moved.code).toBe("03.01");
+      expect(moved.parentCategoryId).toBe("root-03");
+    });
+
+    it("moveCategory aloca próximo slot livre no destino sem alterar filhos existentes do destino (isolamento de colisão)", async () => {
+      // 03 -> 03.07 (SOURCE)
+      // 03 -> 03.08 (TARGET) -> 03.08.01 (EXISTING_TARGET_CHILD)
+      const root03 = mockCat({ id: "root-03", code: "03", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const source = mockCat({ id: "cat-src-07", code: "03.07", parentCategoryId: "root-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const target = mockCat({ id: "cat-tgt-08", code: "03.08", parentCategoryId: "root-03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const existingTargetChild = mockCat({ id: "cat-tgt-child-01", code: "03.08.01", parentCategoryId: "cat-tgt-08", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(source);
+      });
+      prismaMock.financialCategory.findMany.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve([existingTargetChild]); // collidingCategories under target
+        }
+        if (args?.where?.parentCategoryId === "cat-tgt-08") {
+          return Promise.resolve([existingTargetChild]); // existingChildren under target
+        }
+        return Promise.resolve([root03, source, target, existingTargetChild]); // allCategories
+      });
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      const updatedEntities: { id: string; code?: string; parentCategoryId?: string }[] = [];
+      prismaMock.financialCategory.update.mockImplementation((args: { where: { id_barbershopId: { id: string } }; data: Record<string, unknown> }) => {
+        const item = { id: args.where.id_barbershopId.id, ...args.data };
+        updatedEntities.push(item);
+        return Promise.resolve(mockCat({ id: args.where.id_barbershopId.id, ...args.data }));
+      });
+
+      const moved = await moveCategory(TENANT_A, "cat-src-07", "cat-tgt-08");
+
+      // SOURCE deve receber primeiro slot livre sob TARGET (03.08.02)
+      expect(moved.code).toBe("03.08.02");
+      expect(moved.id).toBe("cat-src-07");
+
+      // EXISTING_TARGET_CHILD não deve ter sido tocado na lista de atualizações definitivas
+      const existingChildTouch = updatedEntities.find((u) => u.id === "cat-tgt-child-01");
+      expect(existingChildTouch).toBeUndefined();
+    });
+
+    it("moveCategory recodifica múltiplos filhos de forma determinística por [code, name, id]", async () => {
+      const source = mockCat({ id: "cat-src", code: "CUSTOM-SRC", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const target = mockCat({ id: "root-03", code: "03", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      const childB = mockCat({ id: "c-b", code: "CUSTOM-B", name: "B", parentCategoryId: "cat-src", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const childA = mockCat({ id: "c-a", code: "CUSTOM-A", name: "A", parentCategoryId: "cat-src", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const childC = mockCat({ id: "c-c", code: "CUSTOM-C", name: "C", parentCategoryId: "cat-src", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(source);
+      });
+      prismaMock.financialCategory.findMany.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") {
+          return Promise.resolve([]);
+        }
+        if (args?.where?.parentCategoryId === "root-03") {
+          return Promise.resolve([]);
+        }
+        // Retornar lista fora de ordem para testar estabilidade
+        return Promise.resolve([source, target, childB, childC, childA]);
+      });
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      const finalCodes = new Map<string, string>();
+      prismaMock.financialCategory.update.mockImplementation((args: { where: { id_barbershopId: { id: string } }; data: { code?: string } }) => {
+        if (args.data.code && !args.data.code.startsWith("__TB_MOVE_TMP__")) {
+          finalCodes.set(args.where.id_barbershopId.id, args.data.code);
+        }
+        return Promise.resolve(mockCat({ id: args.where.id_barbershopId.id, ...args.data }));
+      });
+
+      await moveCategory(TENANT_A, "cat-src", "root-03");
+
+      // Fonte vira 03.01
+      expect(finalCodes.get("cat-src")).toBe("03.01");
+      // Filhos ordenados determinísticamente: childA ("CUSTOM-A", "A") -> 03.01.01, childB ("CUSTOM-B", "B") -> 03.01.02, childC ("CUSTOM-C", "C") -> 03.01.03
+      expect(finalCodes.get("c-a")).toBe("03.01.01");
+      expect(finalCodes.get("c-b")).toBe("03.01.02");
+      expect(finalCodes.get("c-c")).toBe("03.01.03");
+    });
+
+    it("isolamento de tenant: tenants A e B podem ter o mesmo código sem colisão", async () => {
+      const parentTenantA = mockCat({ id: "p-a", barbershopId: TENANT_A, code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const parentTenantB = mockCat({ id: "p-b", barbershopId: TENANT_B, code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      // No Tenant A, já existe 03.01
+      const childA1 = mockCat({ id: "c-a-1", barbershopId: TENANT_A, code: "03.01", parentCategoryId: "p-a", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockResolvedValue(parentTenantB);
+      prismaMock.financialCategory.findMany
+        .mockResolvedValueOnce([parentTenantB]) // allCategories do Tenant B
+        .mockResolvedValueOnce([]) // existingChildren do Tenant B (nenhum ainda)
+        .mockResolvedValueOnce([]); // collidingCategories do Tenant B
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      prismaMock.financialCategory.create.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(mockCat({ id: "created-b", ...args.data }))
+      );
+
+      // Criar no Tenant B: deve conseguir gerar 03.01 mesmo que Tenant A já possua 03.01
+      const createdB = await createCategory(TENANT_B, {
+        name: "Aluguel Tenant B",
+        classification: FinancialCategoryClassification.FIXED_EXPENSE,
+        parentCategoryId: "p-b",
+      });
+
+      expect(createdB.code).toBe("03.01");
+      expect(createdB.barbershopId).toBe(TENANT_B);
+    });
+
+    it("falha no meio da transação de recodificação aciona rollback sem vazar códigos temporários", async () => {
+      const source = mockCat({ id: "cat-src", code: "CUSTOM-SRC", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const target = mockCat({ id: "root-03", code: "03", parentCategoryId: null, classification: FinancialCategoryClassification.FIXED_EXPENSE });
+      const child = mockCat({ id: "cat-child", code: "CUSTOM-CHILD", parentCategoryId: "cat-src", classification: FinancialCategoryClassification.FIXED_EXPENSE });
+
+      prismaMock.financialCategory.findFirst.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") return Promise.resolve(null);
+        return Promise.resolve(source);
+      });
+      prismaMock.financialCategory.findMany.mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.code && typeof args.where.code === "object") return Promise.resolve([]);
+        if (args?.where?.parentCategoryId === "root-03") return Promise.resolve([]);
+        return Promise.resolve([source, target, child]);
+      });
+
+      prismaMock.financialTitle.count.mockResolvedValue(0);
+      prismaMock.financialRoutine.count.mockResolvedValue(0);
+      prismaMock.financialCategorySystemMapping.count.mockResolvedValue(0);
+      prismaMock.financialEntryAllocation.count.mockResolvedValue(0);
+
+      // Simular erro durante a transação
+      prismaMock.financialCategory.update.mockRejectedValueOnce(new Error("Database write failure during recode"));
+
+      await expect(moveCategory(TENANT_A, "cat-src", "root-03")).rejects.toThrow("Database write failure during recode");
     });
   });
 
@@ -411,6 +824,7 @@ describe("Fase 2 — Plano Financeiro / Categorias", () => {
         createCategory(TENANT_A, {
           name: "Categoria Bloqueada",
           classification: FinancialCategoryClassification.REVENUE,
+          parentCategoryId: "p-01",
         })
       ).rejects.toThrow("PostgreSQL Advisory Lock Connection Failure");
 

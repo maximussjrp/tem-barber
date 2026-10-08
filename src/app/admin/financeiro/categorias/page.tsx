@@ -28,6 +28,29 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
   ADJUSTMENT: "Ajustes",
 };
 
+const OFFICIAL_CATEGORY_CODES = new Set<string>([
+  "01", "01.01", "01.02", "01.03", "01.04", "01.99",
+  "02", "02.01", "02.02", "02.03", "02.04", "02.05", "02.99",
+  "03", "03.01", "03.02", "03.03", "03.04", "03.05", "03.06", "03.99",
+  "04", "04.01", "04.02", "04.03", "04.99",
+  "05", "05.01", "05.02", "05.99",
+  "06", "06.01", "06.99",
+  "07", "07.01",
+  "08", "08.01", "08.02",
+]);
+
+const OFFICIAL_ROOT_CODES = new Set<string>([
+  "01", "02", "03", "04", "05", "06", "07", "08"
+]);
+
+function isValidHierarchicalCategoryCode(code: string): boolean {
+  return /^\d{2}(\.\d{2}){0,2}$/.test(code);
+}
+
+function isTerminal99Bucket(code: string): boolean {
+  return /(^|\.)99$/.test(code);
+}
+
 export default function CategoriasPage() {
   const [tree, setTree] = useState<CategoryNode[]>([]);
   const [leafCategories, setLeafCategories] = useState<LeafCategoryOption[]>([]);
@@ -120,16 +143,62 @@ export default function CategoriasPage() {
   };
   traverse(tree);
 
-  // Eligible parents for Move and Create (backend is 1-indexed: root=1, child=2, grandchild=3; so parent can be depth 1 or 2)
+  // Calcula conjunto de IDs de descendentes de um nó
+  const getDescendantIds = (targetId: string): Set<string> => {
+    const descendants = new Set<string>();
+    const queue = [targetId];
+    while (queue.length > 0) {
+      const parentId = queue.shift()!;
+      for (const node of flattenedNodes) {
+        if (node.parentCategoryId === parentId && !descendants.has(node.id)) {
+          descendants.add(node.id);
+          queue.push(node.id);
+        }
+      }
+    }
+    return descendants;
+  };
+
+  // Calcula a altura da subárvore de um nó (se for folha, altura = 1)
+  const getSubtreeHeight = (targetId: string): number => {
+    const children = flattenedNodes.filter((c) => c.parentCategoryId === targetId);
+    if (children.length === 0) return 1;
+    let maxHeight = 0;
+    for (const ch of children) {
+      const h = getSubtreeHeight(ch.id);
+      if (h > maxHeight) maxHeight = h;
+    }
+    return 1 + maxHeight;
+  };
+
+  // Eligible parents for Move and Create
   const eligibleParentsForTarget = (target?: FlattenedCategoryWithDepth | null) => {
+    const descendantIds = target ? getDescendantIds(target.id) : new Set<string>();
+    const sourceHeight = target ? getSubtreeHeight(target.id) : 1;
+
     return flattenedNodes.filter((c) => {
       if (!c.isActive) return false;
-      if (target) {
-        if (c.id === target.id) return false;
-        if (c.classification !== target.classification) return false;
+      // 1. .99 buckets cannot receive subcategories
+      if (isTerminal99Bucket(c.code)) return false;
+      // 2. Códigos não hierárquicos (como CUSTOM-* legados) não podem ser destino/pai
+      if (!isValidHierarchicalCategoryCode(c.code)) return false;
+      // 3. Categorias oficiais non-root NÃO podem receber filhos custom
+      if (OFFICIAL_CATEGORY_CODES.has(c.code) && !OFFICIAL_ROOT_CODES.has(c.code)) {
+        return false;
       }
-      // Parent depth can be <= 2 (or < 3) so that children can reach depth 3
-      return c.depth <= 2;
+      // 4. Se estamos movendo um alvo específico:
+      if (target) {
+        // Não pode ser si mesmo nem descendente
+        if (c.id === target.id || descendantIds.has(c.id)) return false;
+        // Mesma classificação
+        if (c.classification !== target.classification) return false;
+        // Altura combinada não pode ultrapassar max depth 3
+        if (c.depth + sourceHeight > 3) return false;
+      } else {
+        // Para criação nova (altura da folha = 1): parent depth pode ser no máximo 2
+        if (c.depth >= 3) return false;
+      }
+      return true;
     });
   };
 
@@ -148,6 +217,10 @@ export default function CategoriasPage() {
       setCreateError("O nome da categoria é obrigatório.");
       return;
     }
+    if (!createParentId) {
+      setCreateError("Selecione uma categoria pai obrigatória.");
+      return;
+    }
     setIsSubmittingCreate(true);
     setCreateError(null);
 
@@ -158,7 +231,7 @@ export default function CategoriasPage() {
         body: JSON.stringify({
           name: createName.trim(),
           classification: createClassification,
-          parentCategoryId: createParentId || null,
+          parentCategoryId: createParentId,
         }),
       });
 
@@ -215,6 +288,10 @@ export default function CategoriasPage() {
   const handleMoveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!moveTarget) return;
+    if (!moveParentId) {
+      setMoveError("Selecione uma categoria pai de destino obrigatória.");
+      return;
+    }
     setIsSubmittingMove(true);
     setMoveError(null);
 
@@ -223,7 +300,7 @@ export default function CategoriasPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          parentCategoryId: moveParentId || null,
+          parentCategoryId: moveParentId,
         }),
       });
 
@@ -425,17 +502,19 @@ export default function CategoriasPage() {
                           Renomear
                         </button>
 
-                        <button
-                          onClick={() => {
-                            setMoveTarget(item);
-                            setMoveParentId(item.parentCategoryId || "");
-                            setMoveError(null);
-                          }}
-                          className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-                          title="Mover"
-                        >
-                          Mover
-                        </button>
+                        {!OFFICIAL_CATEGORY_CODES.has(item.code) && (
+                          <button
+                            onClick={() => {
+                              setMoveTarget(item);
+                              setMoveParentId("");
+                              setMoveError(null);
+                            }}
+                            className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+                            title="Mover"
+                          >
+                            Mover
+                          </button>
+                        )}
 
                         <button
                           onClick={() => {
@@ -504,27 +583,28 @@ export default function CategoriasPage() {
 
               <div>
                 <label htmlFor="create-parent-select" className="block text-xs font-medium text-zinc-400 mb-1">
-                  Categoria Pai (Opcional - Raiz por padrão)
+                  Categoria Pai *
                 </label>
                 <select
                   id="create-parent-select"
                   aria-label="Categoria Pai"
+                  required
                   value={createParentId}
                   onChange={(e) => setCreateParentId(e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500"
                 >
-                  <option value="">Nenhuma (Categoria Raiz)</option>
+                  <option value="">Selecione a categoria pai...</option>
                   {eligibleParentsForTarget()
                     .filter((c) => c.classification === createClassification)
                     .map((c) => (
                       <option key={c.id} value={c.id}>
                         {"— ".repeat(Math.max(0, c.depth - 1))}
-                        {c.name}
+                        {c.code} — {c.name}
                       </option>
                     ))}
                 </select>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  A hierarquia suporta no máximo 3 níveis.
+                  Toda categoria criada deve possuir um pai oficial ou intermediário (máximo 3 níveis).
                 </p>
               </div>
 
@@ -612,19 +692,22 @@ export default function CategoriasPage() {
 
             <form onSubmit={handleMoveSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">
-                  Novo Pai
+                <label htmlFor="move-parent-select" className="block text-xs font-medium text-zinc-400 mb-1">
+                  Novo Pai *
                 </label>
                 <select
+                  id="move-parent-select"
+                  aria-label="Novo Pai"
+                  required
                   value={moveParentId}
                   onChange={(e) => setMoveParentId(e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500"
                 >
-                  <option value="">Nenhum (Raiz)</option>
+                  <option value="">Selecione a categoria de destino...</option>
                   {eligibleParentsForTarget(moveTarget).map((c) => (
                     <option key={c.id} value={c.id}>
                       {"— ".repeat(Math.max(0, c.depth - 1))}
-                      {c.name}
+                      {c.code} — {c.name}
                     </option>
                   ))}
                 </select>
