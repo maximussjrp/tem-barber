@@ -16,6 +16,17 @@ import { todayIsoBR, shiftDateISO } from "@/lib/time-utils";
 
 type PresetPeriod = "CURRENT_MONTH" | "NEXT_30" | "NEXT_60" | "NEXT_90" | "CUSTOM";
 
+const CLASSIFICATION_LABELS: Record<string, string> = {
+  REVENUE: "Receita",
+  VARIABLE_COST: "Custo variável",
+  FIXED_EXPENSE: "Despesa fixa",
+  INVESTMENT: "Investimento",
+  NON_OPERATING_IN: "Entrada não operacional",
+  NON_OPERATING_OUT: "Saída não operacional",
+  TRANSFER: "Transferência",
+  ADJUSTMENT: "Ajuste",
+};
+
 export default function FluxoCaixaPage() {
   const [leafCategories, setLeafCategories] = useState<LeafCategoryOption[]>([]);
 
@@ -476,9 +487,9 @@ export default function FluxoCaixaPage() {
             </div>
 
             {/* Desktop Table */}
-            <div className="hidden md:block overflow-x-auto">
+            <div className="hidden md:block max-h-[500px] overflow-y-auto overflow-x-auto border border-zinc-800/60 rounded-lg">
               <table className="w-full text-left text-xs border-collapse">
-                <thead>
+                <thead className="sticky top-0 bg-zinc-900 z-10">
                   <tr className="border-b border-zinc-800 text-zinc-400">
                     <th className="py-2.5 px-3 font-semibold">Data</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Realizado Entradas</th>
@@ -522,7 +533,7 @@ export default function FluxoCaixaPage() {
             </div>
 
             {/* Mobile Cards */}
-            <div className="md:hidden space-y-3">
+            <div className="md:hidden max-h-[500px] overflow-y-auto pr-1 space-y-3">
               {report.daily
                 .filter(
                   (d) =>
@@ -661,7 +672,7 @@ export default function FluxoCaixaPage() {
                     <tr className="border-b border-zinc-800 text-zinc-400">
                       <th className="py-2.5 px-3 font-semibold">Código</th>
                       <th className="py-2.5 px-3 font-semibold">Categoria</th>
-                      <th className="py-2.5 px-3 font-semibold">Classificação</th>
+                      <th className="py-2.5 px-3 font-semibold">Tipo</th>
                       <th className="py-2.5 px-3 font-semibold text-right">Realizado Entrada</th>
                       <th className="py-2.5 px-3 font-semibold text-right">Realizado Saída</th>
                       <th className="py-2.5 px-3 font-semibold text-right">Projetado Entrada</th>
@@ -676,7 +687,7 @@ export default function FluxoCaixaPage() {
                           {cat.name}
                         </td>
                         <td className="py-2.5 px-3 text-zinc-400 font-sans">
-                          {cat.classification}
+                          {CLASSIFICATION_LABELS[cat.classification] || cat.classification}
                         </td>
                         <td className="py-2.5 px-3 text-right text-emerald-400">
                           {parseNumber(cat.realizedIn) > 0 ? `+ ${formatCurrencyBRL(cat.realizedIn)}` : "—"}

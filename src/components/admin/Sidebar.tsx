@@ -129,6 +129,11 @@ const navItems = [
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
+        label: "Relatório Gerencial",
+        href: "/admin/financeiro/relatorio-gerencial",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
         label: "Contas Recorrentes",
         href: "/admin/financeiro/recorrentes",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],

@@ -1,8 +1,10 @@
 import prisma from "@/lib/prisma";
 import { toCents } from "@/lib/operations/money";
 import { todayIsoBR, localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
-import { calculateRoutineDueOnCivil } from "./routines";
-import { formatUTCToCivilDate } from "./titles";
+import {
+  getFinancialTitlesForecast,
+  getFinancialRoutinesForecast,
+} from "./forecast";
 import { Prisma } from "@prisma/client";
 
 // ============================================================================
@@ -625,73 +627,47 @@ export async function getCashFlowReport(
   }
 
   // --------------------------------------------------------------------------
-  // 3. PREVISÃO & VENCIDOS: FinancialTitles (Canônico)
+  // 3. PREVISÃO & VENCIDOS: FinancialTitles (Canônico via Forecast Engine)
   // --------------------------------------------------------------------------
-  // Buscar todos os títulos não cancelados da barbearia que possuem pendência
-  // ou que caem no período.
-  const titles = await tx.financialTitle.findMany({
-    where: {
+  const titles = await getFinancialTitlesForecast(
+    {
       barbershopId,
-      cancelledAt: null,
-      ...(categoryId ? { categoryId } : {}),
-      ...(direction ? { kind: direction === "IN" ? "RECEIVABLE" : "PAYABLE" } : {}),
+      startDate,
+      endDate,
+      today,
+      categoryId: categoryId || undefined,
+      direction: direction || undefined,
     },
-    include: {
-      category: {
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          classification: true,
-        },
-      },
-      settlements: {
-        where: {
-          reversals: { none: {} }, // Ignora settlements estornados
-        },
-        select: {
-          principalAmount: true,
-        },
-      },
-    },
-  });
+    tx
+  );
 
   let overdueReceivableCents = 0;
   let overduePayableCents = 0;
+  let committedProjectedCents = 0;
 
   const upcomingList: UpcomingCashFlowItem[] = [];
 
   for (const t of titles) {
-    const origCents = toCents(t.originalAmount);
-    const settledCents = t.settlements.reduce(
-      (acc, s) => acc + toCents(s.principalAmount),
-      0
-    );
-    const outstandingCents = Math.max(0, origCents - settledCents);
-
-    // Se estiver quitado (PAID), não projeta
-    if (outstandingCents <= 0) continue;
-
-    const dueOnStr = typeof t.dueOn === "string" ? t.dueOn : formatUTCToCivilDate(t.dueOn); // YYYY-MM-DD
     const isReceivable = t.kind === "RECEIVABLE";
 
     // Checar se é VENCIDO: dueOn < today
-    if (dueOnStr < today) {
+    if (t.isOverdue) {
       if (isReceivable) {
-        overdueReceivableCents += outstandingCents;
+        overdueReceivableCents += t.outstandingCents;
       } else {
-        overduePayableCents += outstandingCents;
+        overduePayableCents += t.outstandingCents;
       }
     }
 
     // Checar se cai no período visual/solicitado: startDate <= dueOn <= endDate
-    if (dueOnStr >= startDate && dueOnStr <= endDate) {
-      const dayItem = dailyMap.get(dueOnStr);
+    if (t.isInPeriod) {
+      committedProjectedCents += t.outstandingCents;
+      const dayItem = dailyMap.get(t.dueOnStr);
       if (dayItem) {
         if (isReceivable) {
-          dayItem.projectedInCents += outstandingCents;
+          dayItem.projectedInCents += t.outstandingCents;
         } else {
-          dayItem.projectedOutCents += outstandingCents;
+          dayItem.projectedOutCents += t.outstandingCents;
         }
       }
 
@@ -711,22 +687,21 @@ export async function getCashFlowReport(
       }
       const b = categoryBreakdownMap.get(cat.id)!;
       if (isReceivable) {
-        b.projectedInCents += outstandingCents;
+        b.projectedInCents += t.outstandingCents;
       } else {
-        b.projectedOutCents += outstandingCents;
+        b.projectedOutCents += t.outstandingCents;
       }
     }
 
-    // Se a data de vencimento for no futuro ou hoje ou vencer dentro do período, pode ser candidato a upcoming
     // Apenas títulos que vencem a partir do máximo entre today e startDate (e até endDate) entram em upcoming
-    if (dueOnStr >= today && dueOnStr >= startDate && dueOnStr <= endDate) {
+    if (t.isUpcoming) {
       upcomingList.push({
         id: t.id,
         source: "TITLE",
         kind: t.kind,
         title: t.title,
-        dueOn: dueOnStr,
-        amount: formatCentsToString(outstandingCents),
+        dueOn: t.dueOnStr,
+        amount: formatCentsToString(t.outstandingCents),
         category: t.category,
         confidence: "COMMITTED",
         isOverdue: false,
@@ -735,176 +710,69 @@ export async function getCashFlowReport(
   }
 
   // --------------------------------------------------------------------------
-  // 4. PREVISÃO VIRTUAL EM MEMÓRIA: FinancialRoutine (Recorrências Futuras)
+  // 4. PREVISÃO VIRTUAL EM MEMÓRIA: FinancialRoutine (Recorrências Futuras via Forecast Engine)
   // --------------------------------------------------------------------------
-  // Buscar rotinas ativas
-  const activeRoutines = await tx.financialRoutine.findMany({
-    where: {
+  const routinesForecast = await getFinancialRoutinesForecast(
+    {
       barbershopId,
-      isActive: true,
-      ...(categoryId ? { categoryId } : {}),
-      ...(direction ? { kind: direction === "IN" ? "RECEIVABLE" : "PAYABLE" } : {}),
+      startDate,
+      endDate,
+      today,
+      categoryId: categoryId || undefined,
+      direction: direction || undefined,
     },
-    include: {
-      category: {
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          classification: true,
-        },
-      },
-    },
-  });
+    tx
+  );
 
-  // Para evitar duplicar títulos já materializados (inclusive CANCELLED), buscar todos os títulos que vieram de rotina
-  const existingRoutineTitles = await tx.financialTitle.findMany({
-    where: {
-      barbershopId,
-      routineId: { not: null },
-      referenceMonth: { not: null },
-    },
-    select: {
-      routineId: true,
-      referenceMonth: true,
-    },
-  });
+  const virtualRoutineCount = routinesForecast.virtualRoutineCount;
+  const estimatedRoutineCount = routinesForecast.estimatedRoutineCount;
+  const unprojectableRoutineCount = routinesForecast.unprojectableRoutineCount;
+  committedProjectedCents += routinesForecast.committedProjectedCents;
+  const estimatedProjectedCents = routinesForecast.estimatedProjectedCents;
 
-  const materializedRoutineMonthSet = new Set<string>();
-  for (const et of existingRoutineTitles) {
-    if (et.routineId && et.referenceMonth) {
-      materializedRoutineMonthSet.add(`${et.routineId}:${et.referenceMonth}`);
-    }
-  }
-
-  let virtualRoutineCount = 0;
-  let estimatedRoutineCount = 0;
-  let unprojectableRoutineCount = 0;
-
-  let committedProjectedCents = 0;
-  let estimatedProjectedCents = 0;
-
-  // Somar títulos da seção 3 em committed
-  for (const t of titles) {
-    const origCents = toCents(t.originalAmount);
-    const settledCents = t.settlements.reduce(
-      (acc, s) => acc + toCents(s.principalAmount),
-      0
-    );
-    const outstandingCents = Math.max(0, origCents - settledCents);
-    const dueOnStr = typeof t.dueOn === "string" ? t.dueOn : formatUTCToCivilDate(t.dueOn);
-    if (outstandingCents > 0 && dueOnStr >= startDate && dueOnStr <= endDate) {
-      committedProjectedCents += outstandingCents;
-    }
-  }
-
-  // Meses de referência cruzados com o período
-  const periodMonths = generateReferenceMonths(startDate, endDate);
-
-  for (const routine of activeRoutines) {
-    for (const refMonth of periodMonths) {
-      // 9.4 Não duplicar se já houver FinancialTitle para routineId + refMonth
-      if (materializedRoutineMonthSet.has(`${routine.id}:${refMonth}`)) {
-        continue;
-      }
-
-      // Calcular data civil calculada
-      const dueOnStr = calculateRoutineDueOnCivil(refMonth, routine.dueDay);
-
-      // 10. Recorrência histórica: virtual forecasts somente quando dueOn >= today
-      if (dueOnStr < today) {
-        continue;
-      }
-
-      // Validar limites de vigência da rotina (@db.Date preservando data civil)
-      const routineStartStr = typeof routine.startDate === "string"
-        ? routine.startDate
-        : formatUTCToCivilDate(routine.startDate);
-      const routineEndStr = routine.endDate
-        ? typeof routine.endDate === "string"
-          ? routine.endDate
-          : formatUTCToCivilDate(routine.endDate)
-        : null;
-
-      if (dueOnStr < routineStartStr) {
-        continue;
-      }
-      if (routineEndStr && dueOnStr > routineEndStr) {
-        continue;
-      }
-
-      // Validar se dueOn está dentro do intervalo consultado [startDate, endDate]
-      if (dueOnStr < startDate || dueOnStr > endDate) {
-        continue;
-      }
-
-      // Tratar valor por modo: FIXED vs VARIABLE
-      if (routine.amountMode === "VARIABLE" && !routine.baseAmount) {
-        // 9.3 VARIABLE sem base: fail-closed, incrementa unprojectable
-        unprojectableRoutineCount++;
-        continue;
-      }
-
-      const projectedAmount = routine.baseAmount;
-      if (!projectedAmount) continue;
-
-      const routineCents = toCents(projectedAmount);
-      if (routineCents <= 0) continue;
-
-      const isVariable = routine.amountMode === "VARIABLE";
-      const confidence = isVariable ? "ESTIMATED" : "COMMITTED";
-
-      virtualRoutineCount++;
-      if (isVariable) {
-        estimatedRoutineCount++;
-        estimatedProjectedCents += routineCents;
-      } else {
-        committedProjectedCents += routineCents;
-      }
-
-      const isReceivable = routine.kind === "RECEIVABLE";
-      const dayItem = dailyMap.get(dueOnStr);
-      if (dayItem) {
-        if (isReceivable) {
-          dayItem.projectedInCents += routineCents;
-        } else {
-          dayItem.projectedOutCents += routineCents;
-        }
-      }
-
-      // Category breakdown
-      const cat = routine.category;
-      if (!categoryBreakdownMap.has(cat.id)) {
-        categoryBreakdownMap.set(cat.id, {
-          id: cat.id,
-          code: cat.code,
-          name: cat.name,
-          classification: cat.classification,
-          realizedInCents: 0,
-          realizedOutCents: 0,
-          projectedInCents: 0,
-          projectedOutCents: 0,
-        });
-      }
-      const b = categoryBreakdownMap.get(cat.id)!;
+  for (const routine of routinesForecast.items) {
+    const isReceivable = routine.kind === "RECEIVABLE";
+    const dayItem = dailyMap.get(routine.dueOnStr);
+    if (dayItem) {
       if (isReceivable) {
-        b.projectedInCents += routineCents;
+        dayItem.projectedInCents += routine.amountCents;
       } else {
-        b.projectedOutCents += routineCents;
+        dayItem.projectedOutCents += routine.amountCents;
       }
+    }
 
-      upcomingList.push({
-        id: `routine-virt-${routine.id}-${refMonth}`,
-        source: "ROUTINE_FORECAST",
-        kind: routine.kind,
-        title: `${routine.title} (${refMonth})`,
-        dueOn: dueOnStr,
-        amount: formatCentsToString(routineCents),
-        category: routine.category,
-        confidence,
-        isOverdue: false,
+    // Category breakdown
+    const cat = routine.category;
+    if (!categoryBreakdownMap.has(cat.id)) {
+      categoryBreakdownMap.set(cat.id, {
+        id: cat.id,
+        code: cat.code,
+        name: cat.name,
+        classification: cat.classification,
+        realizedInCents: 0,
+        realizedOutCents: 0,
+        projectedInCents: 0,
+        projectedOutCents: 0,
       });
     }
+    const b = categoryBreakdownMap.get(cat.id)!;
+    if (isReceivable) {
+      b.projectedInCents += routine.amountCents;
+    } else {
+      b.projectedOutCents += routine.amountCents;
+    }
+
+    upcomingList.push({
+      id: routine.id,
+      source: "ROUTINE_FORECAST",
+      kind: routine.kind,
+      title: routine.title,
+      dueOn: routine.dueOnStr,
+      amount: formatCentsToString(routine.amountCents),
+      category: routine.category,
+      confidence: routine.confidence,
+      isOverdue: false,
+    });
   }
 
   // --------------------------------------------------------------------------
