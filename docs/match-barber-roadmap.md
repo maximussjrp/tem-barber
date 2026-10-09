@@ -1039,5 +1039,75 @@ LOCAL_TESTS=PASS
 INITIAL_COMMIT=b672b97b622c9b3817dc1c8ae4caafd445f7eef5
 INITIAL_PUSH=PASS
 POST_PUSH_ARCHITECTURE_FIX=PASS
+FASE_9_STATUS=COMPLETE_LIVE
+PRODUCTION_SHA=10605d5ea06b1806ea8bbba03870aa8a75c1b50b
+```
+
+---
+
+## FASE 9.1 — Evoluções financeiras e relatório gerencial
+
+### 1. Blocos Entregues e Histórico Git
+
+- **Bloco B — Data econômica das baixas**
+  - SHA: `5060e1d8af77f2c2b14206bafa9dbf2c3135c669`
+  - LOCAL_COMMIT: PASS
+  - PUSH: PASS
+- **Bloco C — Numeração hierárquica das categorias**
+  - SHA: `5502106e4db762392f866780e7641f27fdc94c91`
+  - LOCAL_COMMIT: PASS
+  - PUSH: PASS
+- **Bloco D — Responsividade mobile das categorias**
+  - SHA: `19c6a853fa23059b5c4c5f7dbcd27a58da56e8dd`
+  - LOCAL_COMMIT: PASS
+  - PUSH: PASS
+- **Bloco A — Comparativo mensal do relatório gerencial**
+  - SHA: `aa57f90e34b23a8bdebd19a61d01c2e0bded3054`
+  - LOCAL_COMMIT: PASS
+  - PUSH: PASS
+- **Correção final de qualidade (Saneamento de ESLint)**
+  - SHA: `222a9cc501eed84fd36dbcfe23e12c92d0da7797`
+  - Mensagem: `fix(finance): resolve phase 9.1 lint diagnostics`
+  - LOCAL_COMMIT: PASS
+  - PUSH: PASS
+
+```text
+FASE_9_1_STATUS=IMPLEMENTED_REMOTE
 DEPLOY=PENDING_AUTHORIZATION
 ```
+
+### 2. Resultados de Validação
+
+- **Bloco A (Relatório Gerencial)**:
+  - Domínio: 64/64 PASS
+  - UI: 18/18 PASS
+- **Bloco B (Data Econômica das Baixas)**: 16/16 PASS
+- **Bloco C (Categorias Hierárquicas)**: 37/37 PASS
+- **Bloco D (Mobile Categorias)**: 22/22 PASS
+- **Fluxo de Caixa**: 26/27 PASS (falha histórica mantida: `DATE_ONLY_ROUTINE_START_NOT_SHIFTED`)
+- **Prisma Validate**: PASS
+- **Prisma Generate**: PASS
+- **Typecheck**: PASS
+- **Build**: PASS
+- **Lint Consolidado**: Corrigidos 1 erro e 3 warnings em commit próprio (`222a9cc`). Revalidação dos arquivos de escopo: 0 erros, 0 warnings (não implica auditoria de todo o repositório).
+- **Limitações Registradas**:
+  - `POSTGRES_INTEGRATION=ENVIRONMENT_UNAVAILABLE`
+  - `BROWSER_VISUAL_CHECK=ENVIRONMENT_UNAVAILABLE`
+
+### 3. Delta Produção Conhecida → GitHub
+
+- **Produção Conhecida**: `10605d5ea06b1806ea8bbba03870aa8a75c1b50b`
+- **GitHub HEAD**: `222a9cc501eed84fd36dbcfe23e12c92d0da7797`
+- **Arquivos Alterados**: 18 arquivos (+5.579, -612)
+- **Schema & Migrations**: `SCHEMA_DIFF=NONE`, `MIGRATION_DIFF=NONE`
+- **Dependências & Infraestrutura**: `DEPENDENCY_DIFF=NONE`, `INFRA_DIFF=NONE`
+
+### 4. Checklist de Pendências para Produção
+
+- [ ] Revisão do diff do roadmap.
+- [ ] Commit/push do roadmap após autorização.
+- [ ] Pre-deploy somente após autorização.
+- [ ] Conferência do SHA real do servidor.
+- [ ] Deploy app-only somente após autorização.
+- [ ] Smoke tests e verificação pós-deploy.
+- [ ] Atualizar status COMPLETE_LIVE somente com evidências pós-deploy.
