@@ -1,4 +1,5 @@
 import {
+  FinancialSettlement,
   FinancialSettlementMethod,
   Prisma,
 } from "@prisma/client";
@@ -304,10 +305,14 @@ export interface SettlementWithinTxParams {
   canonicalPayload: CanonicalSettlementPayload;
 }
 
+export type SettlementOperationResult =
+  | FinancialSettlement
+  | Prisma.FinancialSettlementGetPayload<{ include: { financialEntry: true } }>;
+
 export async function createSettlementWithinTransaction(
   tx: Prisma.TransactionClient,
   params: SettlementWithinTxParams
-): Promise<{ result: any; isReplay: boolean }> {
+): Promise<{ result: SettlementOperationResult; isReplay: boolean }> {
   const {
     barbershopId,
     titleId,

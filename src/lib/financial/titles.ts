@@ -246,7 +246,7 @@ export async function createTitle(
   } | null = null;
 
   if (input.initialSettlement !== undefined && input.initialSettlement !== null) {
-    const { createSettlementWithinTransaction, resolveSettlementEconomicTimestamp, validateIdempotencyKeyHeader } =
+    const { resolveSettlementEconomicTimestamp, validateIdempotencyKeyHeader } =
       await import("./settlements");
 
     const init = input.initialSettlement;

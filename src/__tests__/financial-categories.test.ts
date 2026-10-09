@@ -632,11 +632,7 @@ describe("Fase 2 — Plano Financeiro / Categorias", () => {
     });
 
     it("isolamento de tenant: tenants A e B podem ter o mesmo código sem colisão", async () => {
-      const parentTenantA = mockCat({ id: "p-a", barbershopId: TENANT_A, code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
       const parentTenantB = mockCat({ id: "p-b", barbershopId: TENANT_B, code: "03", classification: FinancialCategoryClassification.FIXED_EXPENSE });
-
-      // No Tenant A, já existe 03.01
-      const childA1 = mockCat({ id: "c-a-1", barbershopId: TENANT_A, code: "03.01", parentCategoryId: "p-a", classification: FinancialCategoryClassification.FIXED_EXPENSE });
 
       prismaMock.financialCategory.findFirst.mockResolvedValue(parentTenantB);
       prismaMock.financialCategory.findMany
