@@ -68,7 +68,6 @@ export interface CommissionSettingsData {
 
 interface MemberServicesAndCommissionsTabProps {
   memberId: string;
-  isOwnerMember: boolean;
   legacyServices: Array<{ id: string; name: string; price: string; category: { name: string } }>;
   legacySelectedServices: Set<string>;
   onLegacyToggleService: (id: string) => void;
@@ -108,7 +107,6 @@ function getOriginLabel(origin?: string): string {
 
 export function MemberServicesAndCommissionsTab({
   memberId,
-  isOwnerMember,
   legacyServices,
   legacySelectedServices,
   onLegacyToggleService,

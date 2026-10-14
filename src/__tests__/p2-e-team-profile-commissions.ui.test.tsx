@@ -292,21 +292,36 @@ describe("TEM BARBER — Gate P2-E: Interface de Serviços e Comissões no Perfi
     expect(screen.getByText("0%")).toBeInTheDocument();
   });
 
-  // 7. Restaurar padrão remove somente a exceção individual
-  it("7. Ação de Restaurar padrão remove somente a exceção individual", async () => {
+  // 7. Restaurar padrão remove somente a exceção individual e envia individualRule.id no PUT
+  it("7. Ação de Restaurar padrão remove somente a exceção individual e envia individualRule.id no PUT", async () => {
     render(<MemberDetailPage />);
     await waitFor(() => expect(screen.getByText("Carlos Barbeiro")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Serviços e Comissões" }));
 
     await waitFor(() => expect(screen.getByText("Barba Terapia")).toBeInTheDocument());
 
-    // Barba Terapia possui exceção ativa, portanto tem o botão 'Restaurar padrão'
+    // Barba Terapia possui exceção ativa (id: "cfg-srv-2"), portanto tem o botão 'Restaurar padrão'
     const restoreButtons = screen.getAllByRole("button", { name: "Restaurar padrão" });
     expect(restoreButtons.length).toBeGreaterThan(0);
 
     fireEvent.click(restoreButtons[0]);
     // Ao clicar em restaurar, a origem exibida vira Padrão Herdado
     expect(screen.getByText("Padrão Herdado")).toBeInTheDocument();
+
+    // Clicar em Salvar Serviços e Comissões
+    const saveButton = screen.getByRole("button", { name: "Salvar Serviços e Comissões" });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      const putCalls = fetchSpy.mock.calls.filter(
+        (call: any[]) =>
+          call[0] === "/api/admin/team/member-123/commission-settings" &&
+          call[1]?.method === "PUT"
+      );
+      expect(putCalls.length).toBe(1);
+      const body = JSON.parse(putCalls[0][1].body);
+      expect(body.removeServiceRuleIds).toEqual(["cfg-srv-2"]);
+    });
   });
 
   // 8. Comissão padrão de produtos é carregada
@@ -341,20 +356,35 @@ describe("TEM BARBER — Gate P2-E: Interface de Serviços e Comissões no Perfi
     expect(screen.getByText("25%")).toBeInTheDocument();
   });
 
-  // 10. Restauração de produto funciona
-  it("10. Restauração de exceção individual de produto funciona", async () => {
+  // 10. Restauração de produto funciona e envia individualRule.id no PUT
+  it("10. Restauração de exceção individual de produto funciona e envia individualRule.id no PUT", async () => {
     render(<MemberDetailPage />);
     await waitFor(() => expect(screen.getByText("Carlos Barbeiro")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Serviços e Comissões" }));
 
     await waitFor(() => expect(screen.getByText("Óleo para Barba")).toBeInTheDocument());
 
-    // Óleo para Barba tem exceção individual pré-configurada
+    // Óleo para Barba tem exceção individual pré-configurada (id: "cfg-prod-2")
     const restoreButtons = screen.getAllByRole("button", { name: "Restaurar padrão" });
     const productRestoreBtn = restoreButtons[restoreButtons.length - 1];
     fireEvent.click(productRestoreBtn);
 
     expect(screen.getByText("Regra Padrão")).toBeInTheDocument();
+
+    // Clicar em Salvar Serviços e Comissões
+    const saveButton = screen.getByRole("button", { name: "Salvar Serviços e Comissões" });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      const putCalls = fetchSpy.mock.calls.filter(
+        (call: any[]) =>
+          call[0] === "/api/admin/team/member-123/commission-settings" &&
+          call[1]?.method === "PUT"
+      );
+      expect(putCalls.length).toBe(1);
+      const body = JSON.parse(putCalls[0][1].body);
+      expect(body.removeProductRuleIds).toEqual(["cfg-prod-2"]);
+    });
   });
 
   // 11. Elegibilidade do profissional pode ser alterada

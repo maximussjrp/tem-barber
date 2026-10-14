@@ -799,7 +799,6 @@ export default function MemberDetailPage() {
       {activeTab === "servicos" && (
         <MemberServicesAndCommissionsTab
           memberId={memberId}
-          isOwnerMember={isOwner}
           legacyServices={allServices}
           legacySelectedServices={selectedServices}
           onLegacyToggleService={toggleService}

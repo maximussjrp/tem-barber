@@ -399,13 +399,38 @@ export async function PUT(
       }
     }
 
-    // 5. Validação prévia de removeServiceRuleIds
+    // 5. Validação prévia de removeServiceRuleIds (IDs de CommissionConfig)
     if (body.removeServiceRuleIds !== undefined) {
       if (!Array.isArray(body.removeServiceRuleIds)) {
         return NextResponse.json({ error: "removeServiceRuleIds deve ser um array." }, { status: 400 });
       }
+      for (const id of body.removeServiceRuleIds) {
+        if (!id || typeof id !== "string" || !id.trim()) {
+          return NextResponse.json({ error: "ID inválido em removeServiceRuleIds.", code: "INVALID_FIELD_TYPE" }, { status: 400 });
+        }
+      }
       if (new Set(body.removeServiceRuleIds).size !== body.removeServiceRuleIds.length) {
-        return NextResponse.json({ error: "removeServiceRuleIds contém IDs duplicados." }, { status: 400 });
+        return NextResponse.json({ error: "removeServiceRuleIds contém IDs duplicados.", code: "DUPLICATE_REMOVE_RULE_IDS" }, { status: 400 });
+      }
+      if (body.removeServiceRuleIds.length > 0) {
+        const foundServiceConfigs = await prisma.commissionConfig.findMany({
+          where: {
+            id: { in: body.removeServiceRuleIds },
+            barbershopId,
+            memberId,
+            serviceId: { not: null },
+          },
+          select: { id: true },
+        });
+        if (foundServiceConfigs.length !== body.removeServiceRuleIds.length) {
+          return NextResponse.json(
+            {
+              error: "Um ou mais IDs em removeServiceRuleIds não são regras individuais de serviço válidas para este colaborador.",
+              code: "INVALID_REMOVE_SERVICE_RULE_ID",
+            },
+            { status: 400 }
+          );
+        }
       }
     }
 
@@ -463,13 +488,38 @@ export async function PUT(
       }
     }
 
-    // 8. Validação prévia de removeProductRuleIds
+    // 8. Validação prévia de removeProductRuleIds (IDs de CommissionConfig)
     if (body.removeProductRuleIds !== undefined) {
       if (!Array.isArray(body.removeProductRuleIds)) {
         return NextResponse.json({ error: "removeProductRuleIds deve ser um array." }, { status: 400 });
       }
+      for (const id of body.removeProductRuleIds) {
+        if (!id || typeof id !== "string" || !id.trim()) {
+          return NextResponse.json({ error: "ID inválido em removeProductRuleIds.", code: "INVALID_FIELD_TYPE" }, { status: 400 });
+        }
+      }
       if (new Set(body.removeProductRuleIds).size !== body.removeProductRuleIds.length) {
-        return NextResponse.json({ error: "removeProductRuleIds contém IDs duplicados." }, { status: 400 });
+        return NextResponse.json({ error: "removeProductRuleIds contém IDs duplicados.", code: "DUPLICATE_REMOVE_RULE_IDS" }, { status: 400 });
+      }
+      if (body.removeProductRuleIds.length > 0) {
+        const foundProductConfigs = await prisma.commissionConfig.findMany({
+          where: {
+            id: { in: body.removeProductRuleIds },
+            barbershopId,
+            memberId,
+            productId: { not: null },
+          },
+          select: { id: true },
+        });
+        if (foundProductConfigs.length !== body.removeProductRuleIds.length) {
+          return NextResponse.json(
+            {
+              error: "Um ou mais IDs em removeProductRuleIds não são exceções individuais de produto válidas para este colaborador.",
+              code: "INVALID_REMOVE_PRODUCT_RULE_ID",
+            },
+            { status: 400 }
+          );
+        }
       }
     }
 
@@ -493,12 +543,14 @@ export async function PUT(
 
       // 9.2. Remover regras individuais de serviços (restaurar padrão)
       if (body.removeServiceRuleIds !== undefined && body.removeServiceRuleIds.length > 0) {
-        for (const serviceId of body.removeServiceRuleIds) {
-          const scopeKey = buildCommissionScopeKey({ memberId, serviceId });
-          await tx.commissionConfig.deleteMany({
-            where: { barbershopId, scopeKey },
-          });
-        }
+        await tx.commissionConfig.deleteMany({
+          where: {
+            id: { in: body.removeServiceRuleIds },
+            barbershopId,
+            memberId,
+            serviceId: { not: null },
+          },
+        });
       }
 
       // 9.3. Criar ou atualizar regras individuais de serviços
@@ -537,12 +589,14 @@ export async function PUT(
 
       // 9.5. Remover regras individuais de produtos (restaurar padrão)
       if (body.removeProductRuleIds !== undefined && body.removeProductRuleIds.length > 0) {
-        for (const productId of body.removeProductRuleIds) {
-          const scopeKey = buildCommissionScopeKey({ memberId, productId });
-          await tx.commissionConfig.deleteMany({
-            where: { barbershopId, scopeKey },
-          });
-        }
+        await tx.commissionConfig.deleteMany({
+          where: {
+            id: { in: body.removeProductRuleIds },
+            barbershopId,
+            memberId,
+            productId: { not: null },
+          },
+        });
       }
 
       // 9.6. Criar ou atualizar regras individuais de produtos específicos

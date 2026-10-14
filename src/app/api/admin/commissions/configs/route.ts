@@ -9,6 +9,24 @@ export async function GET() {
   const { error, data } = await getAdminSession();
   if (error) return error;
 
+  if (data!.role === "OWNER" || data!.role === "SUPER_ADMIN") {
+    // Acesso permitido
+  } else if (data!.role === "MANAGER") {
+    if (!data!.memberId) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+    const hasPermission = await checkMemberPermission(
+      data!.memberId,
+      data!.role,
+      "COMMISSIONS_MANAGE"
+    );
+    if (!hasPermission) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+  } else {
+    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+  }
+
   const configs = await prisma.commissionConfig.findMany({
     where: { barbershopId: data!.barbershopId! },
     include: {

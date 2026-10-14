@@ -47,7 +47,7 @@ vi.mock("@/lib/api-auth", () => ({
 
 import { GET as getCommissionSettings, PUT as putCommissionSettings } from "@/app/api/admin/team/[id]/commission-settings/route";
 import { PUT as putLegacyServices } from "@/app/api/admin/team/[id]/services/route";
-import { POST as postCommissionConfig } from "@/app/api/admin/commissions/configs/route";
+import { GET as getCommissionConfigs, POST as postCommissionConfig } from "@/app/api/admin/commissions/configs/route";
 import { PATCH as patchCommissionConfig } from "@/app/api/admin/commissions/configs/[id]/route";
 
 function createJsonRequest(url: string, method: string, body?: unknown) {
@@ -275,9 +275,16 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       );
     });
 
-    it("3. Restaura regra padrão removendo a exceção individual", async () => {
+    it("3. Restaura regra padrão removendo a exceção individual por ID de CommissionConfig", async () => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+        if (where?.id?.in?.includes("cfg-member-service-1") && where?.serviceId && where?.memberId === barberId) {
+          return Promise.resolve([{ id: "cfg-member-service-1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
       const payload = {
-        removeServiceRuleIds: ["svc-1"],
+        removeServiceRuleIds: ["cfg-member-service-1"],
       };
 
       const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
@@ -286,10 +293,146 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(res.status).toBe(200);
       expect(prismaMock.commissionConfig.deleteMany).toHaveBeenCalledWith({
         where: {
+          id: { in: ["cfg-member-service-1"] },
           barbershopId: shopId,
-          scopeKey: `member:${barberId}:service:svc-1`,
+          memberId: barberId,
+          serviceId: { not: null },
         },
       });
+    });
+
+    it("3b. Restaura exceção individual de produto por ID de CommissionConfig", async () => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+        if (where?.id?.in?.includes("cfg-member-product-1") && where?.productId && where?.memberId === barberId) {
+          return Promise.resolve([{ id: "cfg-member-product-1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const payload = {
+        removeProductRuleIds: ["cfg-member-product-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.commissionConfig.deleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["cfg-member-product-1"] },
+          barbershopId: shopId,
+          memberId: barberId,
+          productId: { not: null },
+        },
+      });
+    });
+
+    it("3c. Negativo: config de outro tenant não pode ser removida", async () => {
+      // O mock simula que o ID pertence a outro tenant (não encontrado para este shopId)
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const payload = {
+        removeServiceRuleIds: ["cfg-other-tenant"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_SERVICE_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("3d. Negativo: config de outro membro não pode ser removida", async () => {
+      // O mock simula que o ID pertence a outro membro (não encontrado para memberId: barberId)
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const payload = {
+        removeServiceRuleIds: ["cfg-other-member"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_SERVICE_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("3e. Negativo: config de produto não pode ser removida via removeServiceRuleIds", async () => {
+      // findMany com serviceId: { not: null } não encontrará uma regra de produto
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const payload = {
+        removeServiceRuleIds: ["cfg-prod-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_SERVICE_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("3f. Negativo: config de serviço não pode ser removida via removeProductRuleIds", async () => {
+      // findMany com productId: { not: null } não encontrará uma regra de serviço
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const payload = {
+        removeProductRuleIds: ["cfg-svc-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_PRODUCT_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("3g. Negativo: product default (productId=null) não pode ser removido via removeProductRuleIds", async () => {
+      // findMany com productId: { not: null } não retornará a regra de product default
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const payload = {
+        removeProductRuleIds: ["cfg-prod-default-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_PRODUCT_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("3h. Negativo: lista contendo um ID inválido deve abortar o PUT inteiro", async () => {
+      // Simula que dos 2 IDs fornecidos, apenas 1 é válido
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+        if (where?.id?.in?.includes("cfg-valid-1")) {
+          return Promise.resolve([{ id: "cfg-valid-1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const payload = {
+        removeServiceRuleIds: ["cfg-valid-1", "cfg-invalid-2"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_REMOVE_SERVICE_RULE_ID");
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
     });
 
     it("4. Permite comissão individual de 0% como valor válido sem desativar elegibilidade", async () => {
@@ -486,6 +629,30 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       });
       const patchRes = await patchCommissionConfig(patchReq, { params: Promise.resolve({ id: "cfg-1" }) });
       expect(patchRes.status).toBe(403);
+    });
+
+    it("10e. GET legado /api/admin/commissions/configs respeita verificação de COMMISSIONS_MANAGE para MANAGER e OWNER", async () => {
+      // 1. MANAGER sem permissão -> 403
+      sessionMock.data.role = "MANAGER";
+      sessionMock.data.memberId = "manager-member-1";
+      prismaMock.memberPermissionOverride.findMany.mockResolvedValue([]); // Sem permissão
+
+      const resMgrNoPerm = await getCommissionConfigs();
+      expect(resMgrNoPerm.status).toBe(403);
+
+      // 2. MANAGER com permissão -> 200
+      prismaMock.memberPermissionOverride.findMany.mockResolvedValue([
+        { permissionKey: "COMMISSIONS_MANAGE", allowed: true },
+      ]);
+      prismaMock.commissionConfig.findMany.mockResolvedValue([]);
+
+      const resMgrWithPerm = await getCommissionConfigs();
+      expect(resMgrWithPerm.status).toBe(200);
+
+      // 3. OWNER -> 200
+      sessionMock.data.role = "OWNER";
+      const resOwner = await getCommissionConfigs();
+      expect(resOwner.status).toBe(200);
     });
 
     it("11. Proteção do OWNER: MANAGER não altera elegibilidade de OWNER mesmo em solicitação aparentemente sem mudança (403)", async () => {

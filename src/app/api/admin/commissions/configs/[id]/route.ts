@@ -2,7 +2,7 @@ import { CommissionConfigType } from "@prisma/client";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
-import { CommissionError, upsertCommissionConfig } from "@/lib/operations/commissions";
+import { CommissionError } from "@/lib/operations/commissions";
 import { checkMemberPermission } from "@/lib/permissions/engine";
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
