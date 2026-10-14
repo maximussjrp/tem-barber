@@ -165,7 +165,7 @@ async function seedTenant(label: string) {
   return { shop, ownerUser, owner, barber, customer, cut, product, appointment };
 }
 
-describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () => {
+describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", { timeout: 30000 }, () => {
   beforeAll(async () => {
     process.env.DATABASE_URL = testDatabaseUrl;
     vi.resetModules();

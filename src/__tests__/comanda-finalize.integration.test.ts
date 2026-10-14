@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vites
 import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
 import { todayIsoBR } from "@/lib/time-utils";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 const { getServerSessionMock } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -96,6 +97,7 @@ async function seedTenant(label: string) {
       state: "SP",
     },
   });
+  await bootstrapFinancialPlan(prisma, shop.id);
   await prisma.tenantSubscription.create({
     data: {
       barbershopId: shop.id,
@@ -434,6 +436,7 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", { tim
         unitPrice: "20.00",
         total: "40.00",
         productId: product.id,
+        executorId: tenant.barber.id,
       }
     });
 

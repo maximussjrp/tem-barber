@@ -1,4 +1,4 @@
-import { CommissionConfigType, ComandaItemType } from "@prisma/client";
+import { CommissionConfigType, ComandaItemType, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
@@ -118,7 +118,7 @@ export async function GET(
   // 2. Resolver a comissão efetiva para cada serviço utilizando resolveCommissionConfig
   const servicesWithEffectiveCommissions = await Promise.all(
     availableServices.map(async (service) => {
-      const resolved = await resolveCommissionConfig(prisma as any, {
+      const resolved = await resolveCommissionConfig(prisma as unknown as Prisma.TransactionClient, {
         barbershopId,
         memberId,
         serviceId: service.id,
@@ -162,7 +162,7 @@ export async function GET(
     (c) => c.scopeKey === memberProductDefaultScopeKey
   );
 
-  const resolvedProductDefault = await resolveCommissionConfig(prisma as any, {
+  const resolvedProductDefault = await resolveCommissionConfig(prisma as unknown as Prisma.TransactionClient, {
     barbershopId,
     memberId,
     itemType: ComandaItemType.PRODUCT,
@@ -171,7 +171,7 @@ export async function GET(
   // 4. Resolver comissão para cada produto disponível
   const productsWithEffectiveCommissions = await Promise.all(
     availableProducts.map(async (product) => {
-      const resolved = await resolveCommissionConfig(prisma as any, {
+      const resolved = await resolveCommissionConfig(prisma as unknown as Prisma.TransactionClient, {
         barbershopId,
         memberId,
         productId: product.id,

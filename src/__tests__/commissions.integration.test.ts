@@ -4,6 +4,7 @@ import { ComandaItemStatus } from "@prisma/client";
 import { addProductItem, addServiceItem, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { upsertCommissionConfig } from "@/lib/operations/commissions";
 import { closeComanda, refundPayment, registerPayment } from "@/lib/operations/payments";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const canRunIntegration =
@@ -57,12 +58,13 @@ async function seedTenant(label: string) {
       state: "SP",
     },
   });
+  await bootstrapFinancialPlan(prisma, shop.id);
   const ownerUser = await prisma.user.create({ data: { name: `Owner ${label}`, phone: `11881${label.charCodeAt(0)}` } });
   const managerUser = await prisma.user.create({ data: { name: `Manager ${label}`, phone: `11882${label.charCodeAt(0)}` } });
   const barberUser = await prisma.user.create({ data: { name: `Barber ${label}`, phone: `11883${label.charCodeAt(0)}` } });
-  const owner = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: ownerUser.id, role: "OWNER" } });
-  const manager = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: managerUser.id, role: "MANAGER" } });
-  const barber = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: barberUser.id, role: "BARBER" } });
+  const owner = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: ownerUser.id, role: "OWNER", createdAt: new Date("2026-07-01T00:00:00.000Z") } });
+  const manager = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: managerUser.id, role: "MANAGER", createdAt: new Date("2026-07-01T00:00:00.000Z") } });
+  const barber = await prisma.barbershopMember.create({ data: { barbershopId: shop.id, userId: barberUser.id, role: "BARBER", createdAt: new Date("2026-07-01T00:00:00.000Z") } });
   const category = await prisma.category.create({ data: { barbershopId: shop.id, name: "Servicos", slug: `servicos-${label}` } });
   const service = await prisma.service.create({
     data: { barbershopId: shop.id, categoryId: category.id, name: "Corte", price: "200.00", durationMin: 30 },

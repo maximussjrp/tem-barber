@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const canRunIntegration =
@@ -96,6 +97,7 @@ async function seedUser(name: string, phone: string) {
 
 async function seedTenantWithClub(label: string) {
   const shop = await seedBarbershop(label);
+  await bootstrapFinancialPlan(prisma, shop.id);
   
   const ownerUser = await seedUser(`Owner ${label}`, buildSeedPhone(label, "11"));
   const barberUser = await seedUser(`Barbeiro ${label}`, buildSeedPhone(label, "22"));

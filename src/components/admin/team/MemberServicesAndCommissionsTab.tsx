@@ -138,35 +138,83 @@ export function MemberServicesAndCommissionsTab({
   const [productOverrides, setProductOverrides] = useState<Record<string, RuleDraft | "RESTORE">>({});
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
-  const loadCommissionSettings = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/team/${memberId}/commission-settings`);
-      if (res.status === 403) {
-        setHasCommissionAccess(false);
-        return;
-      }
-      if (!res.ok) {
-        throw new Error("Erro ao carregar serviços e comissões.");
-      }
-      const data: CommissionSettingsData = await res.json();
-      setInitialData(data);
-      setHasCommissionAccess(true);
-      setSelectedServices(new Set(data.selectedServiceIds));
-      setIsCommissionEligible(data.isCommissionEligible);
-      setServiceOverrides({});
-      setProductDefaultOverride(null);
-      setProductOverrides({});
-    } catch (e: any) {
-      onError(e.message || "Erro ao carregar comissões.");
-    } finally {
-      setLoading(false);
-    }
-  }, [memberId, onError]);
+interface ServiceRulePayload {
+  serviceId: string;
+  type: "PERCENTAGE" | "FIXED_VALUE";
+  value: number;
+  active: boolean;
+}
+
+interface ProductRulePayload {
+  productId: string;
+  type: "PERCENTAGE" | "FIXED_VALUE";
+  value: number;
+  active: boolean;
+}
+
+interface ProductDefaultRulePayload {
+  type: "PERCENTAGE" | "FIXED_VALUE";
+  value: number;
+  active: boolean;
+}
+
+interface CommissionSettingsPayload {
+  selectedServiceIds?: string[];
+  isCommissionEligible?: boolean;
+  serviceRules?: ServiceRulePayload[];
+  removeServiceRuleIds?: string[];
+  productDefaultRule?: ProductDefaultRulePayload | null;
+  productRules?: ProductRulePayload[];
+  removeProductRuleIds?: string[];
+}
+
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const reloadSettings = useCallback(() => {
+    setReloadKey((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
-    loadCommissionSettings();
-  }, [loadCommissionSettings]);
+    let ignore = false;
+
+    async function fetchSettings() {
+      try {
+        const res = await fetch(`/api/admin/team/${memberId}/commission-settings`);
+        if (ignore) return;
+        if (res.status === 403) {
+          setHasCommissionAccess(false);
+          return;
+        }
+        if (!res.ok) {
+          throw new Error("Erro ao carregar serviços e comissões.");
+        }
+        const data: CommissionSettingsData = await res.json();
+        if (ignore) return;
+        setInitialData(data);
+        setHasCommissionAccess(true);
+        setSelectedServices(new Set(data.selectedServiceIds));
+        setIsCommissionEligible(data.isCommissionEligible);
+        setServiceOverrides({});
+        setProductDefaultOverride(null);
+        setProductOverrides({});
+      } catch (e: unknown) {
+        if (!ignore) {
+          const msg = e instanceof Error ? e.message : "Erro ao carregar comissões.";
+          onError(msg);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchSettings();
+
+    return () => {
+      ignore = true;
+    };
+  }, [memberId, onError, reloadKey]);
 
   // ─────────────────────────────────────────
   // Fallback para perfil sem permissão financeira
@@ -340,7 +388,7 @@ export function MemberServicesAndCommissionsTab({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload: Record<string, any> = {};
+      const payload: CommissionSettingsPayload = {};
 
       // 1. selectedServiceIds (somente se alterou)
       const initialSelected = new Set(initialData.selectedServiceIds);
@@ -363,7 +411,7 @@ export function MemberServicesAndCommissionsTab({
       }
 
       // 3. serviceRules e removeServiceRuleIds
-      const serviceRules: any[] = [];
+      const serviceRules: ServiceRulePayload[] = [];
       const removeServiceRuleIds: string[] = [];
 
       for (const [srvId, action] of Object.entries(serviceOverrides)) {
@@ -406,7 +454,7 @@ export function MemberServicesAndCommissionsTab({
       }
 
       // 5. productRules e removeProductRuleIds
-      const productRules: any[] = [];
+      const productRules: ProductRulePayload[] = [];
       const removeProductRuleIds: string[] = [];
 
       for (const [prodId, action] of Object.entries(productOverrides)) {
@@ -449,9 +497,11 @@ export function MemberServicesAndCommissionsTab({
       }
 
       onSuccess("Serviços e comissões atualizados com sucesso!");
-      await loadCommissionSettings();
-    } catch (e: any) {
-      onError(e.message || "Erro ao salvar configurações.");
+      setLoading(true);
+      reloadSettings();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erro ao salvar configurações.";
+      onError(msg);
     } finally {
       setSaving(false);
     }

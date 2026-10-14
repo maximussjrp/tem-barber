@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { CommissionConfigType, MemberRole } from "@prisma/client";
+import { MemberRole } from "@prisma/client";
 
 // Hoisted Prisma mock
 const { prismaMock, sessionMock } = vi.hoisted(() => ({
@@ -78,7 +78,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       (callback: (tx: typeof prismaMock) => unknown) => callback(prismaMock)
     );
 
-    prismaMock.barbershopMember.findFirst.mockImplementation(({ where }: any) => {
+    prismaMock.barbershopMember.findFirst.mockImplementation(({ where }: { where: { id?: string; barbershopId?: string } }) => {
       if (where.id === barberId && where.barbershopId === shopId) {
         return Promise.resolve({
           id: barberId,
@@ -134,29 +134,29 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       { id: "prod-2", barbershopId: shopId, name: "Óleo de Barba", salePrice: 25, isActive: true },
     ]);
 
-    prismaMock.barbershopMember.findFirstOrThrow = vi.fn().mockImplementation(({ where }: any) => {
+    prismaMock.barbershopMember.findFirstOrThrow = vi.fn().mockImplementation(({ where }: { where: { id: string; barbershopId: string } }) => {
       if (where.id === barberId && where.barbershopId === shopId) {
         return Promise.resolve({ id: barberId, barbershopId: shopId });
       }
       return Promise.reject(new Error("Member not found"));
     });
 
-    prismaMock.service.findFirst = vi.fn().mockImplementation(({ where }: any) => {
+    prismaMock.service.findFirst = vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
       if (where.id === "svc-1") return Promise.resolve({ id: "svc-1", categoryId: "cat-1", name: "Corte Tradicional" });
       if (where.id === "svc-2") return Promise.resolve({ id: "svc-2", categoryId: "cat-1", name: "Barba Terapia" });
       return Promise.resolve(null);
     });
-    prismaMock.service.findFirstOrThrow = vi.fn().mockImplementation(({ where }: any) => {
+    prismaMock.service.findFirstOrThrow = vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
       if (where.id === "svc-1" || where.id === "svc-2") return Promise.resolve({ id: where.id });
       return Promise.reject(new Error("Service not found"));
     });
 
-    prismaMock.product.findFirstOrThrow = vi.fn().mockImplementation(({ where }: any) => {
+    prismaMock.product.findFirstOrThrow = vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
       if (where.id === "prod-1" || where.id === "prod-2") return Promise.resolve({ id: where.id });
       return Promise.reject(new Error("Product not found"));
     });
 
-    prismaMock.careerLevel.findFirst = vi.fn().mockImplementation(({ where }: any) => {
+    prismaMock.careerLevel.findFirst = vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
       if (where.id === "level-1") {
         return Promise.resolve({
           id: "level-1",
@@ -173,10 +173,10 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
     prismaMock.barberService.findMany.mockResolvedValue([{ serviceId: "svc-1" }]);
 
     prismaMock.commissionConfig.findMany.mockResolvedValue([]);
-    prismaMock.commissionConfig.upsert.mockImplementation((args: any) =>
+    prismaMock.commissionConfig.upsert.mockImplementation((args: { create: Record<string, unknown> }) =>
       Promise.resolve({ id: `cfg-${Math.random()}`, ...args.create })
     );
-    prismaMock.commissionConfig.update.mockImplementation((args: any) =>
+    prismaMock.commissionConfig.update.mockImplementation((args: { where: { id: string }; data: Record<string, unknown> }) =>
       Promise.resolve({ id: args.where.id, ...args.data })
     );
   });
@@ -195,7 +195,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(json.services).toHaveLength(2);
 
       // Svc-1 should inherit career level (40%) since no individual config exists
-      const svc1 = json.services.find((s: any) => s.id === "svc-1");
+      const svc1 = json.services.find((s: { id: string }) => s.id === "svc-1");
       expect(svc1.isSelected).toBe(true);
       expect(svc1.effectiveCommission.origin).toBe("CAREER_LEVEL_DEFAULT");
       expect(svc1.effectiveCommission.value).toBe(40);
@@ -222,7 +222,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
         },
       ];
 
-      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { active?: boolean } }) => {
         if (where?.active === true) {
           // Chamado por resolveCommissionConfig: regras inativas NÃO entram
           return Promise.resolve(allConfigs.filter((c) => c.active === true));
@@ -237,7 +237,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(res.status).toBe(200);
       const json = await res.json();
 
-      const svc1 = json.services.find((s: any) => s.id === "svc-1");
+      const svc1 = json.services.find((s: { id: string }) => s.id === "svc-1");
       expect(svc1.individualRule).not.toBeNull();
       expect(svc1.individualRule.active).toBe(false);
       expect(svc1.individualRule.value).toBe(70);
@@ -276,7 +276,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
     });
 
     it("3. Restaura regra padrão removendo a exceção individual por ID de CommissionConfig", async () => {
-      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { id?: { in?: string[] }; serviceId?: unknown; memberId?: string } }) => {
         if (where?.id?.in?.includes("cfg-member-service-1") && where?.serviceId && where?.memberId === barberId) {
           return Promise.resolve([{ id: "cfg-member-service-1" }]);
         }
@@ -302,7 +302,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
     });
 
     it("3b. Restaura exceção individual de produto por ID de CommissionConfig", async () => {
-      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { id?: { in?: string[] }; productId?: unknown; memberId?: string } }) => {
         if (where?.id?.in?.includes("cfg-member-product-1") && where?.productId && where?.memberId === barberId) {
           return Promise.resolve([{ id: "cfg-member-product-1" }]);
         }
@@ -414,7 +414,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
 
     it("3h. Negativo: lista contendo um ID inválido deve abortar o PUT inteiro", async () => {
       // Simula que dos 2 IDs fornecidos, apenas 1 é válido
-      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: any) => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { id?: { in?: string[] } } }) => {
         if (where?.id?.in?.includes("cfg-valid-1")) {
           return Promise.resolve([{ id: "cfg-valid-1" }]);
         }
@@ -550,7 +550,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
 
   describe("5. Transacionalidade, Segurança e RBAC", () => {
     it("8. Em caso de falha transacional, nenhuma persistência parcial ocorre (rollback)", async () => {
-      prismaMock.service.count.mockImplementation(async ({ where }: any) => where.id.in.length);
+      prismaMock.service.count.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.length);
       prismaMock.commissionConfig.upsert.mockRejectedValueOnce(new Error("DB_WRITE_ERROR"));
 
       const payload = {
@@ -721,7 +721,7 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
     it("13d. Rejeita payload com active em formato string dentro das regras (400)", async () => {
       const payload = {
         serviceRules: [
-          { serviceId: "svc-1", type: "PERCENTAGE", value: 50, active: "false" as any },
+          { serviceId: "svc-1", type: "PERCENTAGE", value: 50, active: "false" as unknown as boolean },
         ],
       };
 
@@ -845,10 +845,11 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(res.status).toBe(200);
 
       // Verify that NO historical financial or commission models were touched
-      expect((prismaMock as any).commissionEntry?.update).toBeUndefined();
-      expect((prismaMock as any).commissionCycle?.update).toBeUndefined();
-      expect((prismaMock as any).commissionPayableItem?.update).toBeUndefined();
-      expect((prismaMock as any).commissionPayout?.update).toBeUndefined();
+      const dynamicPrisma = prismaMock as unknown as Record<string, { update?: unknown }>;
+      expect(dynamicPrisma.commissionEntry?.update).toBeUndefined();
+      expect(dynamicPrisma.commissionCycle?.update).toBeUndefined();
+      expect(dynamicPrisma.commissionPayableItem?.update).toBeUndefined();
+      expect(dynamicPrisma.commissionPayout?.update).toBeUndefined();
     });
   });
 
