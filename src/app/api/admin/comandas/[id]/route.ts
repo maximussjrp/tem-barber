@@ -49,9 +49,27 @@ export async function GET(
     customerCreditBalance = Number(account.balance);
   }
 
+  const availableSellers = await prisma.barbershopMember.findMany({
+    where: {
+      barbershopId: data!.barbershopId,
+      isActive: true,
+      ...(data!.role === "BARBER" ? { id: data!.memberId } : {}),
+    },
+    select: {
+      id: true,
+      user: {
+        select: { name: true },
+      },
+    },
+    orderBy: {
+      user: { name: "asc" },
+    },
+  });
+
   return NextResponse.json({
     ...comanda,
     customerCreditBalance,
+    availableSellers,
     permissions: {
       canReopen: comanda.status === "CLOSED" && canReopenComandas(data!.role),
       canRefund: canRefundPayments(data!.role),

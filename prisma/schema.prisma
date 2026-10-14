@@ -81,6 +81,7 @@ model User {
   staffAccessTokens                   StaffAccessToken[]                  @relation("UserStaffAccessTokens")
   createdStaffAccessTokens            StaffAccessToken[]                  @relation("CreatedStaffAccessTokens")
   permissionOverridesUpdated          MemberPermissionOverride[]          @relation("PermissionOverrideUpdatedBy")
+  commissionEligibilityEvents         MemberCommissionEligibilityEvent[]
 
   @@map("users")
 }
@@ -187,6 +188,7 @@ model Barbershop {
   tipPayoutReversals                 TipPayoutReversal[]
   staffAccessTokens                  StaffAccessToken[]
   memberPermissionOverrides          MemberPermissionOverride[]
+  commissionEligibilityEvents        MemberCommissionEligibilityEvent[]
 
   @@map("barbershops")
 }
@@ -222,7 +224,8 @@ model BarbershopMember {
   role         MemberRole @default(BARBER)
   bio          String?
   ratingAvg    Float      @default(0.0) @map("rating_avg")
-  isActive     Boolean    @default(true) @map("is_active")
+  isActive             Boolean    @default(true) @map("is_active")
+  isCommissionEligible Boolean    @default(true) @map("is_commission_eligible")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -239,6 +242,7 @@ model BarbershopMember {
   commissionEntries                 CommissionEntry[]
   commissionPeriods                 CommissionPeriod[]
   commissionAdjustments             CommissionAdjustment[]
+  commissionEligibilityEvents       MemberCommissionEligibilityEvent[]
   clubPointEntries                  ClubPointEntry[]
   clubSettlementMembers             ClubSettlementMember[]
   preferredWaitlistEntries          OnlineWaitlistEntry[]               @relation("WaitlistPreferredMember")
@@ -270,6 +274,24 @@ model BarbershopMember {
   @@unique([barbershopId, userId])
   @@index([careerLevelId])
   @@map("barbershop_members")
+}
+
+model MemberCommissionEligibilityEvent {
+  id           String   @id @default(uuid())
+  barbershopId String   @map("barbershop_id")
+  memberId     String   @map("member_id")
+  enabled      Boolean
+  isRegistrationBaseline Boolean @default(false) @map("is_registration_baseline")
+  effectiveAt  DateTime @default(now()) @map("effective_at")
+  actorUserId  String   @map("actor_user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  barbershop Barbershop       @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  member     BarbershopMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  actor      User             @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([barbershopId, memberId, effectiveAt])
+  @@map("member_commission_eligibility_events")
 }
 
 // ----------------------------------------------------

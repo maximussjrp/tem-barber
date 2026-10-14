@@ -41,6 +41,7 @@ type Comanda = {
   paidTotal: string;
   remainingTotal: string;
   customerCreditBalance?: number;
+  availableSellers?: { id: string; user: { name: string } }[];
   items: Item[];
   payments: Payment[];
   createdAt: string;
@@ -102,6 +103,7 @@ export default function ComandaDetailPage() {
   const [selectedExecutorId, setSelectedExecutorId] = useState("");
   
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [selectedSellerId, setSelectedSellerId] = useState("");
   const [productQuantity, setProductQuantity] = useState("1");
   
   const [discountAmount, setDiscountAmount] = useState("");
@@ -228,6 +230,10 @@ export default function ComandaDetailPage() {
   async function handleAddProduct(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedProductId) return;
+    if (!selectedSellerId) {
+      setError("Selecione o vendedor do produto.");
+      return;
+    }
     const qty = Number(productQuantity);
     if (qty <= 0) {
       setError("Quantidade deve ser maior que zero");
@@ -247,6 +253,7 @@ export default function ComandaDetailPage() {
     const ok = await mutate(`/api/admin/comandas/${id}/items`, {
       type: "PRODUCT",
       productId: selectedProductId,
+      executorId: selectedSellerId,
       quantity: qty,
       clubBenefitRequested,
       requestedClubPlanBenefitId: requestedClubPlanBenefitId || undefined,
@@ -254,6 +261,7 @@ export default function ComandaDetailPage() {
     if (ok) {
       setShowProductModal(false);
       setSelectedProductId("");
+      setSelectedSellerId("");
       setProductQuantity("1");
       setClubBenefitRequested(false);
       setRequestedClubPlanBenefitId("");
@@ -522,11 +530,21 @@ export default function ComandaDetailPage() {
                           executorId: item.executor?.id || item.executorId || "",
                         });
                       } else if (item.type === "PRODUCT" && item.productId) {
-                        await mutate(`/api/admin/comandas/${id}/items`, {
-                          type: "PRODUCT",
-                          productId: item.productId,
-                          quantity: 1,
-                        });
+                        const sellerId = item.executor?.id || item.executorId;
+                        const isSellerAvailable = sellerId && comanda.availableSellers?.some(s => s.id === sellerId);
+                        if (isSellerAvailable) {
+                          await mutate(`/api/admin/comandas/${id}/items`, {
+                            type: "PRODUCT",
+                            productId: item.productId,
+                            executorId: sellerId,
+                            quantity: 1,
+                          });
+                        } else {
+                          setSelectedProductId(item.productId);
+                          setSelectedSellerId("");
+                          setProductQuantity("1");
+                          setShowProductModal(true);
+                        }
                       }
                     }}
                   />
@@ -882,6 +900,20 @@ export default function ComandaDetailPage() {
                     const stockInfo = p.trackStock ? ` (Estoque: ${Math.max(0, available)})` : "";
                     return <option key={p.id} value={p.id} disabled={p.trackStock && available <= 0}>{p.name} - {brl(p.salePrice)}{stockInfo}</option>;
                   })}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Vendedor</label>
+                <select
+                  value={selectedSellerId}
+                  onChange={e => setSelectedSellerId(e.target.value)}
+                  required
+                  className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                >
+                  <option value="">Selecione...</option>
+                  {comanda?.availableSellers?.map(s => (
+                    <option key={s.id} value={s.id}>{s.user.name}</option>
+                  ))}
                 </select>
               </div>
               <div>

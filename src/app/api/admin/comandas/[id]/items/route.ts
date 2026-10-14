@@ -85,10 +85,17 @@ export async function POST(
       }
       if (body.type === "PRODUCT") {
         if (!body.productId) throw new Error("productId obrigatorio.");
+        if (!body.executorId || typeof body.executorId !== "string" || !body.executorId.trim()) {
+          throw new OperationalError("SELLER_REQUIRED", "executorId obrigatorio para venda de produto.", 400);
+        }
+        if (data!.role === "BARBER" && body.executorId.trim() !== data!.memberId) {
+          throw new OperationalError("BARBER_SELLER_MISMATCH", "Barbeiro só pode registrar produtos para si mesmo.", 403);
+        }
         return addProductItem(tx, {
           comandaId: id,
           barbershopId: data!.barbershopId,
           productId: body.productId,
+          executorId: body.executorId.trim(),
           quantity: body.quantity,
           discountAmount: body.discountAmount,
           surchargeAmount: body.surchargeAmount,

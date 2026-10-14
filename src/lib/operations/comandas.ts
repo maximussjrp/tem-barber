@@ -498,6 +498,7 @@ export async function addProductItem(
     comandaId: string;
     barbershopId: string;
     productId: string;
+    executorId: string;
     quantity?: number;
     discountAmount?: string | number;
     surchargeAmount?: string | number;
@@ -506,6 +507,8 @@ export async function addProductItem(
   }
 ) {
   await assertEditableComanda(tx, input.barbershopId, input.comandaId);
+  await resolveExecutor(tx, input.barbershopId, input.executorId);
+
   const product = await tx.product.findFirst({
     where: { id: input.productId, barbershopId: input.barbershopId, isActive: true },
   });
@@ -550,6 +553,7 @@ export async function addProductItem(
       surchargeAmount: input.surchargeAmount ?? 0,
       total,
       productId: product.id,
+      executorId: input.executorId,
       clubBenefitRequested: input.clubBenefitRequested ?? false,
       requestedClubPlanBenefitId: input.requestedClubPlanBenefitId ?? null,
     },

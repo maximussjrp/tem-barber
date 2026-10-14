@@ -120,7 +120,11 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
             <span className={item.status === "DONE" ? "text-success" : item.status === "CANCELLED" ? "text-danger" : "text-warning"}>
               {item.status === "DONE" ? "Concluído" : item.status === "CANCELLED" ? "Cancelado" : "Pendente"}
             </span>
-            {item.executor && ` • ${item.executor.user.name}`}
+            {item.executor && (
+              item.type === "PRODUCT"
+                ? ` • Vendedor: ${item.executor.user.name}`
+                : ` • ${item.executor.user.name}`
+            )}
           </p>
           {(item.type === "SERVICE" || item.type === "PRODUCT") && (
             <div className="flex items-center gap-2 mt-1">

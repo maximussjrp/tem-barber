@@ -153,7 +153,14 @@ describeIf("release operacional 1B - comissoes", () => {
       executorId: tenant.barber.id,
       discountAmount: "20.00",
     });
-    await prisma.$transaction((tx) => addProductItem(tx, { barbershopId: tenant.shop.id, comandaId: tenant.comanda.id, productId: tenant.product.id }));
+    await prisma.$transaction((tx) =>
+      addProductItem(tx, {
+        barbershopId: tenant.shop.id,
+        comandaId: tenant.comanda.id,
+        productId: tenant.product.id,
+        executorId: tenant.barber.id,
+      })
+    );
     await prisma.comandaItem.create({
       data: {
         barbershopId: tenant.shop.id,

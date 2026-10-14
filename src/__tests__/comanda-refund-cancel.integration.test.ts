@@ -313,14 +313,16 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
     const comanda = await createComanda.json();
 
     // Adicionar um produto com controle de estoque
-    await itemsRoute.POST(
+    const addItemRes = await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
         productId: tenant.product.id,
         quantity: 2,
+        executorId: tenant.barber.id,
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    expect(addItemRes.status).toBe(201);
 
     // Concluir os itens
     await prisma.comandaItem.updateMany({
@@ -422,14 +424,16 @@ describeIf("Fluxo de Estorno de Pagamento e Cancelamento Seguro de Comanda", () 
     );
     const comanda = await createComanda.json();
 
-    await itemsRoute.POST(
+    const addItemRes = await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
         productId: tenant.product.id,
         quantity: 1,
+        executorId: tenant.barber.id,
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    expect(addItemRes.status).toBe(201);
 
     // Concluir itens
     await prisma.comandaItem.updateMany({

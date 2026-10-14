@@ -189,11 +189,26 @@ export async function POST(request: Request) {
       });
 
       // 7.3. Vincular o Usuário à Barbearia como Proprietário (OWNER)
+      const registrationTimestamp = new Date();
       const member = await tx.barbershopMember.create({
         data: {
           barbershopId: barbershop.id,
           userId: user.id,
           role: "OWNER",
+          isCommissionEligible: false,
+        },
+      });
+
+      // 7.3.1. Registrar o evento inicial de elegibilidade desativada para o proprietário
+      await tx.memberCommissionEligibilityEvent.create({
+        data: {
+          barbershopId: barbershop.id,
+          memberId: member.id,
+          enabled: false,
+          isRegistrationBaseline: true,
+          effectiveAt: registrationTimestamp,
+          actorUserId: user.id,
+          createdAt: registrationTimestamp,
         },
       });
 

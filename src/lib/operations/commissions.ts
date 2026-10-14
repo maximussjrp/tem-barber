@@ -202,6 +202,116 @@ export function isCommissionEligibleItem(item: {
   return false;
 }
 
+/**
+ * Determina a data de referência para verificação da elegibilidade de comissão de um item.
+ * Para serviços: ComandaItem.completedAt (desde que concluído).
+ * Para produtos: ComandaItem.createdAt (momento da inclusão do item na comanda).
+ */
+export function getItemCommissionReferenceDate(item: {
+  type: ComandaItemType;
+  completedAt?: Date | null;
+  createdAt?: Date | null;
+}): Date | null {
+  if (item.type === ComandaItemType.SERVICE) {
+    return item.completedAt ?? null;
+  }
+  if (item.type === ComandaItemType.PRODUCT) {
+    return item.createdAt ?? null;
+  }
+  return item.completedAt ?? item.createdAt ?? null;
+}
+
+/**
+ * Determina temporalmente se um membro era elegível para receber comissão em determinada data de referência.
+ *
+ * Regras:
+ * 1. Filtro estrito de tenant (barbershopId) e memberId.
+ * 2. Consulta o último evento temporalmente válido (effectiveAt <= referenceDate).
+ * 3. Se houver evento com effectiveAt <= referenceDate, seu campo enabled dita a elegibilidade.
+ * 4. Se NÃO houver eventos com effectiveAt <= referenceDate:
+ *    - Se o membro nunca teve nenhum evento registrado na barbearia, preserva a compatibilidade histórica
+ *      (membro antigo preexistente antes da introdução da rastreabilidade temporal).
+ *    - Se o membro já possui eventos registrados posteriores à data (ex: novo OWNER criado com enabled: false),
+ *      respeita o evento inicial mais antigo (enabled: false) por falta de autorização temporal.
+ * 5. Não cria nem modifica eventos no banco.
+ */
+export async function isMemberCommissionEligibleAt(
+  tx: Prisma.TransactionClient,
+  input: {
+    barbershopId: string;
+    memberId: string;
+    referenceDate: Date;
+  }
+): Promise<boolean> {
+  const { barbershopId, memberId, referenceDate } = input;
+
+  // Se o modelo não estiver disponível no client/mock, delegar para a compatibilidade legada
+  if (!tx.memberCommissionEligibilityEvent?.findFirst) {
+    const member = await tx.barbershopMember.findFirst({
+      where: { id: memberId, barbershopId },
+      select: { isCommissionEligible: true },
+    });
+    return member?.isCommissionEligible ?? true;
+  }
+
+  // 1. Buscar o último evento com effectiveAt <= referenceDate
+  const effectiveEvent = await tx.memberCommissionEligibilityEvent.findFirst({
+    where: {
+      barbershopId,
+      memberId,
+      effectiveAt: { lte: referenceDate },
+    },
+    orderBy: [
+      { effectiveAt: "desc" },
+      { createdAt: "desc" },
+    ],
+  });
+
+  if (effectiveEvent) {
+    return effectiveEvent.enabled;
+  }
+
+  // 2. Não há eventos anteriores ou na data referenceDate.
+  // Consultar o membro para verificar se é um novo OWNER com evento inicial de desativação
+  // ou se a operação é anterior à existência do próprio membro.
+  const member = await tx.barbershopMember.findFirst({
+    where: { id: memberId, barbershopId },
+    select: { isCommissionEligible: true, role: true, createdAt: true },
+  });
+
+  if (!member) {
+    return false;
+  }
+
+  // Não presumir elegibilidade para operações datadas antes da existência do próprio membro (se createdAt estiver disponível)
+  if (member.createdAt && referenceDate < member.createdAt) {
+    return false;
+  }
+
+  // 3. Se ainda não existir evento aplicável (effectiveAt <= referenceDate):
+  // Verificar o primeiro evento registrado para este membro no tenant.
+  const firstEvent = await tx.memberCommissionEligibilityEvent.findFirst({
+    where: {
+      barbershopId,
+      memberId,
+    },
+    orderBy: [
+      { effectiveAt: "asc" },
+      { createdAt: "asc" },
+    ],
+  });
+
+  // Se o primeiro evento tiver isRegistrationBaseline: true, utilizar o enabled desse evento inicial
+  // (ex: OWNER recém-cadastrado cujo baseline de criação foi definido com enabled: false).
+  if (firstEvent && (firstEvent as any).isRegistrationBaseline) {
+    return firstEvent.enabled;
+  }
+
+  // Se não existir baseline de cadastro ou não existir nenhum evento,
+  // aplicar compatibilidade histórica (comissão habilitada = true).
+  return true;
+}
+
 export interface ItemEconomicBase {
   itemId: string;
   itemType: ComandaItemType;
@@ -830,18 +940,28 @@ export async function generateCommissionsForComanda(
       );
     }
 
-    const config = await resolveCommissionConfig(tx, {
-      barbershopId,
-      memberId: executorId,
-      serviceId: item.serviceId,
-      productId: item.productId,
-      itemType: item.type,
-    });
+    // Regra P2-D: Se o item NÃO possui CommissionEntry prévia, verificar a elegibilidade temporal.
+    // Para serviços: item.completedAt (desde que concluído).
+    // Para produtos: item.createdAt (momento da inclusão do item na comanda).
+    if (!existing) {
+      const refDate = getItemCommissionReferenceDate(item);
+      if (!refDate) {
+        continue;
+      }
+      const isEligibleAtDate = await isMemberCommissionEligibleAt(tx, {
+        barbershopId,
+        memberId: executorId,
+        referenceDate: refDate,
+      });
+      if (!isEligibleAtDate) {
+        continue;
+      }
+    }
 
-    let ruleType = config?.type;
-    let ruleValue = config?.value;
-    let ruleSnapshot = config?.configSnapshot;
-    let ruleConfigId = config?.configId ?? null;
+    let ruleType: CommissionConfigType | undefined;
+    let ruleValue: Prisma.Decimal | undefined;
+    let ruleSnapshot: any;
+    let ruleConfigId: string | null = null;
 
     // Invariant: At execution eligibility, the rule snapshot is frozen.
     // If an existing entry already has a frozen configSnapshot and the executor has not changed,
@@ -854,6 +974,21 @@ export async function generateCommissionsForComanda(
         ruleSnapshot = snap;
         ruleConfigId = snap.id ?? snap.configId ?? existing.configId ?? null;
       }
+    }
+
+    if (!ruleType || ruleValue === undefined) {
+      const config = await resolveCommissionConfig(tx, {
+        barbershopId,
+        memberId: executorId,
+        serviceId: item.serviceId,
+        productId: item.productId,
+        itemType: item.type,
+      });
+
+      ruleType = config?.type;
+      ruleValue = config?.value;
+      ruleSnapshot = config?.configSnapshot;
+      ruleConfigId = config?.configId ?? null;
     }
 
     if (!ruleType || ruleValue === undefined) continue;
@@ -2253,6 +2388,22 @@ export async function correctCommissionExecutor(
           422
         );
       }
+    }
+
+    // Regra P2-D: O novo executor deve ser elegível para comissão na data do fato gerador
+    const itemRefDate = getItemCommissionReferenceDate(itemRecord) ?? currentOldEntry.createdAt;
+    const isNewExecutorEligible = await isMemberCommissionEligibleAt(tx, {
+      barbershopId: input.barbershopId,
+      memberId: input.newExecutorMemberId,
+      referenceDate: itemRefDate,
+    });
+
+    if (!isNewExecutorEligible) {
+      throw new CommissionError(
+        "EXECUTOR_NOT_COMMISSION_ELIGIBLE",
+        "O novo executor não era elegível para comissão na data do fato gerador.",
+        422
+      );
     }
 
     // Conservative historical rule reconstruction at attributionTime

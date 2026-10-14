@@ -339,7 +339,7 @@ describeIf("correcoes e melhorias do modulo de comissoes", () => {
     
     // Adiciona produto com executor (vendedor)
     await prisma.$transaction((tx) =>
-      addProductItem(tx, { barbershopId: t.shop.id, comandaId: t.comanda.id, productId: t.product.id, quantity: 2 })
+      addProductItem(tx, { barbershopId: t.shop.id, comandaId: t.comanda.id, productId: t.product.id, executorId: t.barber1.id, quantity: 2 })
     );
     const prodItem = await prisma.comandaItem.findFirstOrThrow({ where: { comandaId: t.comanda.id, type: "PRODUCT" } });
     await prisma.comandaItem.update({

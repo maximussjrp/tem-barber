@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       {
         OR: [
           { appointment: { memberId: data!.memberId } },
-          { items: { some: { executorId: data!.memberId } } },
+          { items: { some: { type: "SERVICE", executorId: data!.memberId } } },
         ],
       },
     ];

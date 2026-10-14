@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
+import { checkMemberPermission } from "@/lib/permissions/engine";
 
 async function guardMember(memberId: string, barbershopId: string) {
   const m = await prisma.barbershopMember.findUnique({ where: { id: memberId } });
@@ -34,6 +35,26 @@ export async function PUT(
 ) {
   const { error, data } = await getAdminSession();
   if (error) return error;
+
+  // Permissões: OWNER e SUPER_ADMIN têm acesso direto. MANAGER exige SERVICES_MANAGE.
+  if (data!.role === "OWNER" || data!.role === "SUPER_ADMIN") {
+    // Permitido
+  } else if (data!.role === "MANAGER") {
+    if (!data!.memberId) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+    const hasPermission = await checkMemberPermission(
+      data!.memberId,
+      data!.role,
+      "SERVICES_MANAGE"
+    );
+    if (!hasPermission) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+  } else {
+    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+  }
+
   const { id } = await params;
 
   if (!(await guardMember(id, data!.barbershopId!))) {

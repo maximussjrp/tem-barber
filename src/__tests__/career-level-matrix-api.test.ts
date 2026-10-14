@@ -246,6 +246,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       careerLevelId: null,
       ratingAvg: 5.0,
       isActive: true,
+      isCommissionEligible: true,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -269,6 +270,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       careerLevelId: "level-valid",
       ratingAvg: 5.0,
       isActive: true,
+      isCommissionEligible: true,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -299,6 +301,7 @@ describe("PR #15 — Career Levels & Commission Matrix API Tests", () => {
       careerLevelId: null,
       ratingAvg: 5.0,
       isActive: true,
+      isCommissionEligible: true,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

@@ -39,7 +39,7 @@ export async function POST(
           where: { id, barbershopId: data!.barbershopId },
           select: {
             appointment: { select: { memberId: true } },
-            items: { select: { executorId: true } },
+            items: { select: { executorId: true, type: true } },
           },
         });
 

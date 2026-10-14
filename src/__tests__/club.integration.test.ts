@@ -238,6 +238,7 @@ async function seedComandaItem(params: {
       comandaId: comanda.id,
       barbershopId: params.barbershopId,
       productId: params.productId!,
+      executorId: params.executorId,
       quantity: 1,
     });
     // Forçar status para DONE e associar executor para bater com premissas

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/Avatar";
 import { PERMISSION_DEFINITIONS, PermissionCategory } from "@/lib/permissions/types";
+import { MemberServicesAndCommissionsTab } from "@/components/admin/team/MemberServicesAndCommissionsTab";
 
 // ─────────── Types ───────────
 interface Service { id: string; name: string; price: string; category: { name: string } }
@@ -135,10 +136,14 @@ export default function MemberDetailPage() {
   const [savingTimeOff, setSavingTimeOff] = useState(false);
   const [deletingTimeOffId, setDeletingTimeOffId] = useState<string | null>(null);
 
-  function showSuccess(msg: string) {
+  const showSuccess = useCallback((msg: string) => {
     setSuccess(msg);
     setTimeout(() => setSuccess(null), 3000);
-  }
+  }, []);
+
+  const handleError = useCallback((msg: string) => {
+    setError(msg);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -456,7 +461,7 @@ export default function MemberDetailPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "perfil", label: "Perfil" },
     { key: "acesso", label: "Acesso" },
-    { key: "servicos", label: "Serviços" },
+    { key: "servicos", label: "Serviços e Comissões" },
     { key: "horarios", label: "Horários" },
     { key: "folgas", label: "Folgas" },
   ];
@@ -790,54 +795,19 @@ export default function MemberDetailPage() {
         </div>
       )}
 
-      {/* ── Tab: Serviços ── */}
+      {/* ── Tab: Serviços e Comissões ── */}
       {activeTab === "servicos" && (
-        <div>
-          <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden mb-4">
-            <div className="px-5 py-3 border-b border-stone-800">
-              <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Selecione os serviços que este colaborador realiza
-              </p>
-            </div>
-            {allServices.length === 0 ? (
-              <p className="text-stone-600 text-sm p-5 text-center">
-                Nenhum serviço cadastrado. <Link href="/admin/servicos" className="text-amber-400 hover:underline">Criar serviços →</Link>
-              </p>
-            ) : (
-              <ul className="divide-y divide-stone-800">
-                {allServices.map((s) => (
-                  <li key={s.id} className="px-5 py-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedServices.has(s.id)}
-                        onChange={() => toggleService(s.id)}
-                        className="w-4 h-4 accent-amber-500"
-                        title={`Selecionar serviço ${s.name}`}
-                      />
-                      <div className="flex-1">
-                        <p className="text-stone-200 text-sm">{s.name}</p>
-                        <p className="text-stone-500 text-xs">{s.category.name}</p>
-                      </div>
-                      <span className="text-amber-400 text-sm font-medium">
-                        R$ {Number(s.price).toFixed(2).replace(".", ",")}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="flex justify-end">
-            <button
-              onClick={saveServices}
-              disabled={savingServices}
-              className="bg-gradient-to-r from-amber-600 to-amber-500 text-stone-950 font-bold px-8 py-3 rounded-lg text-sm transition-all disabled:opacity-50"
-            >
-              {savingServices ? "Salvando..." : "Salvar Serviços"}
-            </button>
-          </div>
-        </div>
+        <MemberServicesAndCommissionsTab
+          memberId={memberId}
+          isOwnerMember={isOwner}
+          legacyServices={allServices}
+          legacySelectedServices={selectedServices}
+          onLegacyToggleService={toggleService}
+          onLegacySaveServices={saveServices}
+          savingLegacyServices={savingServices}
+          onSuccess={showSuccess}
+          onError={handleError}
+        />
       )}
 
       {/* ── Tab: Horários ── */}

@@ -363,14 +363,16 @@ describeIf("Fluxo de Finalização de Comanda Simplificada e Relatórios", { tim
     await markServicesDone(comanda.id);
 
     // Adicionar produto
-    await itemsRoute.POST(
+    const addItemRes = await itemsRoute.POST(
       jsonRequest(`http://localhost/api/admin/comandas/${comanda.id}/items`, {
         type: "PRODUCT",
         productId: product.id,
         quantity: 1,
+        executorId: tenant.barber.id,
       }),
       { params: Promise.resolve({ id: comanda.id }) }
     );
+    expect(addItemRes.status).toBe(201);
 
     // Finalizar com Dinheiro sem abrir o caixa
     const finalizeRes = await finalizeRoute.POST(

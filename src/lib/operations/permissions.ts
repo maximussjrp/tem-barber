@@ -12,7 +12,7 @@ export interface OperationalSession {
 
 export interface LegacyOwnComanda {
   appointment?: { memberId: string } | null;
-  items: Array<{ executorId: string | null }>;
+  items: Array<{ executorId: string | null; type?: string }>;
 }
 
 export async function requireOperationalSession() {
@@ -34,11 +34,14 @@ export function canManageComandas(role: string) {
 /**
  * Temporary ownership definition until Comanda has a responsibleMemberId.
  * Empty standalone comandas never grant ownership implicitly.
+ * A BARBER has ownership only if they are the appointment professional OR
+ * the executor of at least one SERVICE item. Being a seller of a PRODUCT item
+ * does NOT grant comanda ownership.
  */
 export function isLegacyOwnComanda(comanda: LegacyOwnComanda, memberId: string) {
   return (
     comanda.appointment?.memberId === memberId ||
-    comanda.items.some((item) => item.executorId === memberId)
+    comanda.items.some((item) => item.executorId === memberId && (!item.type || item.type === "SERVICE"))
   );
 }
 

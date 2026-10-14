@@ -7,6 +7,7 @@ const { prismaMock } = vi.hoisted(() => ({
     user: { findFirst: vi.fn(), create: vi.fn() },
     barbershop: { findUnique: vi.fn(), create: vi.fn() },
     barbershopMember: { create: vi.fn() },
+    memberCommissionEligibilityEvent: { create: vi.fn() },
     category: { create: vi.fn() },
     service: { create: vi.fn() },
     barberService: { create: vi.fn() },
@@ -69,6 +70,7 @@ describe("cadastro publico de barbearia", () => {
     prismaMock.user.create.mockResolvedValue({ id: "user-1", name: "Proprietário" });
     prismaMock.barbershop.create.mockResolvedValue({ id: "shop-1", name: "Barbearia Nova", slug: "barbearia-nova" });
     prismaMock.barbershopMember.create.mockResolvedValue({ id: "member-1" });
+    prismaMock.memberCommissionEligibilityEvent.create.mockResolvedValue({ id: "event-1" });
     prismaMock.category.create.mockResolvedValue({ id: "category-1" });
     prismaMock.service.create.mockResolvedValue({ id: "service-1" });
     prismaMock.barberService.create.mockResolvedValue({ id: "barber-service-1" });
@@ -125,6 +127,16 @@ describe("cadastro publico de barbearia", () => {
     }));
     const trialEnd = prismaMock.tenantSubscription.upsert.mock.calls[0][0].create.trialEndsAt as Date;
     expect(trialEnd.getTime()).toBeGreaterThan(Date.now());
+
+    expect(prismaMock.memberCommissionEligibilityEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        barbershopId: "shop-1",
+        memberId: "member-1",
+        enabled: false,
+        isRegistrationBaseline: true,
+        actorUserId: "user-1",
+      }),
+    });
   });
 
   it("faz rollback quando a criacao do trial falha", async () => {
