@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { ComandaItemStatus } from "@prisma/client";
 import { addProductItem, addServiceItem, recalculateComandaTotals } from "@/lib/operations/comandas";
@@ -10,6 +10,24 @@ import {
 import { closeComanda, refundPayment, registerPayment } from "@/lib/operations/payments";
 import { checkMemberPermission } from "@/lib/permissions/engine";
 import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
+
+const { getAdminSessionMock } = vi.hoisted(() => ({
+  getAdminSessionMock: vi.fn(),
+}));
+
+vi.mock("@/lib/api-auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api-auth")>();
+  return {
+    ...actual,
+    getAdminSession: getAdminSessionMock,
+  };
+});
+
+vi.mock("@/lib/prisma", () => ({
+  get default() {
+    return prisma;
+  },
+}));
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const canRunIntegration =
@@ -65,6 +83,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
     const adapter = new PrismaPg(pool);
     prisma = new PrismaClient({ adapter });
     await prisma.$connect();
+    (globalThis as any).prismaGlobal = prisma;
   });
 
   afterAll(async () => {
@@ -286,7 +305,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Ciclo Real", slug: "shop-real-cycle", phone: "11999990031", zipCode: "01001-000", street: "Rua", number: "8", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Cycle", phone: "11999990032" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barbeiro Corte", phone: "11999990033" } });
@@ -416,7 +435,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Idemp", slug: "shop-idemp", phone: "11999990041", zipCode: "01001-000", street: "Rua", number: "9", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Idemp", phone: "11999990042" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barber Idemp", phone: "11999990043" } });
@@ -536,7 +555,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Zero", slug: "shop-zero", phone: "11999990051", zipCode: "01001-000", street: "Rua", number: "10", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Zero", phone: "11999990052" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barber Zero", phone: "11999990053" } });
@@ -659,7 +678,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
       const srv1 = await prisma.service.create({
         data: { barbershopId: shop.id, categoryId: cat.id, name: "Corte RB 1", price: 50, durationMin: 30 },
       });
-      const srv2 = await prisma.service.create({
+      await prisma.service.create({
         data: { barbershopId: shop.id, categoryId: cat.id, name: "Corte RB 2", price: 60, durationMin: 30 },
       });
 
@@ -696,7 +715,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Cash Real", slug: "shop-cash-real", phone: "11999990073", zipCode: "01001-000", street: "Rua", number: "13", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Cash", phone: "11999990074" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barber Cash", phone: "11999990075" } });
@@ -782,7 +801,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Cancel", slug: "shop-cancel", phone: "11999990076", zipCode: "01001-000", street: "Rua", number: "14", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Cancel", phone: "11999990077" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barber Cancel", phone: "11999990078" } });
@@ -860,7 +879,7 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
         data: { name: "Shop Preserv", slug: "shop-preserv", phone: "11999990081", zipCode: "01001-000", street: "Rua", number: "15", neighborhood: "Bairro", city: "SP", state: "SP" },
       });
       const uOwner = await prisma.user.create({ data: { name: "Owner Preserv", phone: "11999990082" } });
-      const owner = await prisma.barbershopMember.create({
+      await prisma.barbershopMember.create({
         data: { barbershopId: shop.id, userId: uOwner.id, role: "OWNER", isCommissionEligible: true },
       });
       const uBarber = await prisma.user.create({ data: { name: "Barber Preserv", phone: "11999990083" } });
@@ -946,6 +965,245 @@ describeIf("TEM BARBER — Gate P2-F: Validação Real no PostgreSQL Isolado", (
       const entry = await prisma.commissionEntry.findFirstOrThrow({ where: { barbershopId: shop.id } });
       expect(Number(entry.generatedAmount)).toBe(50);
       expect(Number(entry.releasedAmount)).toBe(50);
+    });
+
+    it("5.5 Criação, atualização e desativação de regras por categoria no PostgreSQL com isolamento entre barbearias", async () => {
+      // 1. Criar duas barbearias distintas (A e B)
+      const shopA = await prisma.barbershop.create({
+        data: { name: "Shop Cat A", slug: "shop-cat-a", phone: "11999990081", zipCode: "01001-000", street: "Rua A", number: "1", neighborhood: "Bairro", city: "SP", state: "SP" },
+      });
+      const shopB = await prisma.barbershop.create({
+        data: { name: "Shop Cat B", slug: "shop-cat-b", phone: "11999990082", zipCode: "01001-000", street: "Rua B", number: "2", neighborhood: "Bairro", city: "SP", state: "SP" },
+      });
+
+      const uBarberA = await prisma.user.create({ data: { name: "Barber Cat A", phone: "11999990083" } });
+      const barberA = await prisma.barbershopMember.create({
+        data: { barbershopId: shopA.id, userId: uBarberA.id, role: "BARBER", isCommissionEligible: true },
+      });
+
+      const uBarberB = await prisma.user.create({ data: { name: "Barber Cat B", phone: "11999990084" } });
+      const barberB = await prisma.barbershopMember.create({
+        data: { barbershopId: shopB.id, userId: uBarberB.id, role: "BARBER", isCommissionEligible: true },
+      });
+
+      const catA1 = await prisma.category.create({ data: { barbershopId: shopA.id, name: "Cabelo A", slug: "cabelo-a" } });
+      const catA2 = await prisma.category.create({ data: { barbershopId: shopA.id, name: "Química A", slug: "quimica-a" } });
+      const catB1 = await prisma.category.create({ data: { barbershopId: shopB.id, name: "Cabelo B", slug: "cabelo-b" } });
+
+      // 2. Criação de regra por categoria para barberA em catA1 (active: true, 45%)
+      const scopeKeyA1 = `member:${barberA.id}:category:${catA1.id}`;
+      const ruleA1 = await prisma.commissionConfig.create({
+        data: {
+          barbershopId: shopA.id,
+          memberId: barberA.id,
+          categoryId: catA1.id,
+          type: "PERCENTAGE",
+          value: 45,
+          active: true,
+          scopeKey: scopeKeyA1,
+        },
+      });
+      expect(ruleA1.id).toBeDefined();
+      expect(ruleA1.active).toBe(true);
+      expect(Number(ruleA1.value)).toBe(45);
+
+      // 3. Atualização para desativar a regra (active: false, mantendo o valor histórico)
+      const updatedA1 = await prisma.commissionConfig.update({
+        where: { id: ruleA1.id },
+        data: { active: false },
+      });
+      expect(updatedA1.active).toBe(false);
+
+      // 4. Criação de segunda regra em catA2 (active: true, 35%)
+      const scopeKeyA2 = `member:${barberA.id}:category:${catA2.id}`;
+      const ruleA2 = await prisma.commissionConfig.create({
+        data: {
+          barbershopId: shopA.id,
+          memberId: barberA.id,
+          categoryId: catA2.id,
+          type: "PERCENTAGE",
+          value: 35,
+          active: true,
+          scopeKey: scopeKeyA2,
+        },
+      });
+      expect(ruleA2.active).toBe(true);
+
+      // 5. Reativação explícita de ruleA1 (active: true, alterando taxa para 48%)
+      const reactivatedA1 = await prisma.commissionConfig.update({
+        where: { id: ruleA1.id },
+        data: { active: true, value: 48 },
+      });
+      expect(reactivatedA1.active).toBe(true);
+      expect(Number(reactivatedA1.value)).toBe(48);
+
+      // 6. Verificação estrita de isolamento entre barbearias (cross-tenant)
+      expect(catB1.barbershopId).toBe(shopB.id);
+      expect(catA1.barbershopId).toBe(shopA.id);
+      const shopBConfigs = await prisma.commissionConfig.findMany({
+        where: { barbershopId: shopB.id },
+      });
+      expect(shopBConfigs.length).toBe(0);
+
+      const barberBConfigs = await prisma.commissionConfig.findMany({
+        where: { memberId: barberB.id },
+      });
+      expect(barberBConfigs.length).toBe(0);
+
+      const shopAConfigs = await prisma.commissionConfig.findMany({
+        where: { barbershopId: shopA.id },
+      });
+      expect(shopAConfigs.length).toBe(2);
+      expect(shopAConfigs.every((c) => c.barbershopId === shopA.id)).toBe(true);
+    });
+
+    it("5.6 Isolamento multi-tenant real no handler PUT: rejeição HTTP 400 (INVALID_SCOPE) em tentativa cross-tenant com rollback e preservação de permissões", async () => {
+      const { PUT } = await import("@/app/api/admin/team/[id]/commission-settings/route");
+
+      // 1. Criar barbearias A e B com colaboradores e categorias distintas
+      const shopA = await prisma.barbershop.create({
+        data: { name: "Shop Tenant A", slug: "shop-tenant-a", phone: "11999990101", zipCode: "01001-000", street: "Rua A", number: "100", neighborhood: "Bairro", city: "SP", state: "SP" },
+      });
+      const uOwnerA = await prisma.user.create({ data: { name: "Owner A", phone: "11999990102" } });
+      const ownerA = await prisma.barbershopMember.create({
+        data: { barbershopId: shopA.id, userId: uOwnerA.id, role: "OWNER", isCommissionEligible: true },
+      });
+      const uBarberA = await prisma.user.create({ data: { name: "Barber A", phone: "11999990103" } });
+      const barberA = await prisma.barbershopMember.create({
+        data: { barbershopId: shopA.id, userId: uBarberA.id, role: "BARBER", isCommissionEligible: true },
+      });
+
+      const shopB = await prisma.barbershop.create({
+        data: { name: "Shop Tenant B", slug: "shop-tenant-b", phone: "11999990201", zipCode: "01001-000", street: "Rua B", number: "200", neighborhood: "Bairro", city: "SP", state: "SP" },
+      });
+      const uOwnerB = await prisma.user.create({ data: { name: "Owner B", phone: "11999990202" } });
+      await prisma.barbershopMember.create({
+        data: { barbershopId: shopB.id, userId: uOwnerB.id, role: "OWNER", isCommissionEligible: true },
+      });
+      const uBarberB = await prisma.user.create({ data: { name: "Barber B", phone: "11999990203" } });
+      const barberB = await prisma.barbershopMember.create({
+        data: { barbershopId: shopB.id, userId: uBarberB.id, role: "BARBER", isCommissionEligible: true },
+      });
+
+      const catA = await prisma.category.create({
+        data: { barbershopId: shopA.id, name: "Categoria Legítima A", slug: "cat-legit-a" },
+      });
+      const catB = await prisma.category.create({
+        data: { barbershopId: shopB.id, name: "Categoria Externa B", slug: "cat-externa-b" },
+      });
+
+      // 2. Autenticação na sessão de Barbearia A (OWNER)
+      getAdminSessionMock.mockResolvedValue({
+        data: {
+          userId: uOwnerA.id,
+          role: "OWNER",
+          memberId: ownerA.id,
+          barbershopId: shopA.id,
+        },
+        error: null,
+      });
+
+      // 3. Tentativa cross-tenant: sessão de A tenta salvar regra com categoria pertencente a B
+      const crossTenantReq = new Request(
+        `http://localhost/api/admin/team/${barberA.id}/commission-settings`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            categoryRules: [
+              {
+                categoryId: catB.id, // Pertence à Shop B!
+                type: "PERCENTAGE",
+                value: 40,
+                active: true,
+              },
+            ],
+          }),
+        }
+      );
+
+      const crossTenantRes = await PUT(crossTenantReq, {
+        params: Promise.resolve({ id: barberA.id }),
+      });
+
+      // Validação: HTTP 400 com INVALID_SCOPE
+      expect(crossTenantRes.status).toBe(400);
+      const crossTenantJson = await crossTenantRes.json();
+      expect(crossTenantJson.code).toBe("INVALID_SCOPE");
+      expect(crossTenantJson.error).toContain("categoryRules não pertencem à barbearia");
+
+      // Validação: Nenhuma criação, alteração ou exclusão de regras em A ou B (transacionalidade e integridade)
+      const configsAAfterFail = await prisma.commissionConfig.findMany({ where: { barbershopId: shopA.id } });
+      const configsBAfterFail = await prisma.commissionConfig.findMany({ where: { barbershopId: shopB.id } });
+      expect(configsAAfterFail.length).toBe(0);
+      expect(configsBAfterFail.length).toBe(0);
+
+      // 4. Configuração legítima de categoria de A continua funcionando com persistência no PostgreSQL
+      const legitReq = new Request(
+        `http://localhost/api/admin/team/${barberA.id}/commission-settings`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            categoryRules: [
+              {
+                categoryId: catA.id, // Categoria legítima da Shop A
+                type: "PERCENTAGE",
+                value: 45,
+                active: true,
+              },
+            ],
+          }),
+        }
+      );
+
+      const legitRes = await PUT(legitReq, {
+        params: Promise.resolve({ id: barberA.id }),
+      });
+
+      expect(legitRes.status).toBe(200);
+      const legitJson = await legitRes.json();
+      expect(legitJson.success).toBe(true);
+
+      // Validação: Regra de A foi persistida corretamente no banco
+      const persistedConfigsA = await prisma.commissionConfig.findMany({ where: { barbershopId: shopA.id } });
+      expect(persistedConfigsA.length).toBe(1);
+      expect(persistedConfigsA[0].categoryId).toBe(catA.id);
+      expect(persistedConfigsA[0].memberId).toBe(barberA.id);
+      expect(Number(persistedConfigsA[0].value)).toBe(45);
+      expect(persistedConfigsA[0].active).toBe(true);
+      expect(persistedConfigsA[0].scopeKey).toBe(`member:${barberA.id}:category:${catA.id}`);
+
+      // Shop B e Barber B permanecem estritamente isolados com 0 regras
+      const persistedConfigsB = await prisma.commissionConfig.findMany({ where: { barbershopId: shopB.id } });
+      expect(persistedConfigsB.length).toBe(0);
+
+      // 5. Preservação de permissões: Colaborador com role BARBER sem privilégio é rejeitado com HTTP 403
+      getAdminSessionMock.mockResolvedValueOnce({
+        data: {
+          userId: uBarberB.id,
+          role: "BARBER",
+          memberId: barberB.id,
+          barbershopId: shopB.id,
+        },
+        error: null,
+      });
+
+      const forbiddenReq = new Request(
+        `http://localhost/api/admin/team/${barberB.id}/commission-settings`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            categoryRules: [{ categoryId: catB.id, type: "PERCENTAGE", value: 35 }],
+          }),
+        }
+      );
+
+      const forbiddenRes = await PUT(forbiddenReq, {
+        params: Promise.resolve({ id: barberB.id }),
+      });
+      expect(forbiddenRes.status).toBe(403);
     });
   });
 });

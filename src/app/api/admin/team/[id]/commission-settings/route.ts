@@ -31,10 +31,26 @@ interface ProductDefaultRuleInput {
   active?: boolean;
 }
 
+interface MemberDefaultRuleInput {
+  type: CommissionConfigType;
+  value: number | string;
+  active?: boolean;
+}
+
+interface CategoryRuleInput {
+  categoryId: string;
+  type: CommissionConfigType;
+  value: number | string;
+  active?: boolean;
+}
+
 interface PutCommissionSettingsBody {
   selectedServiceIds?: string[];
   serviceRules?: ServiceRuleInput[];
   removeServiceRuleIds?: string[];
+  memberDefaultRule?: MemberDefaultRuleInput | null;
+  categoryRules?: CategoryRuleInput[];
+  removeCategoryRuleIds?: string[];
   productDefaultRule?: ProductDefaultRuleInput | null;
   productRules?: ProductRuleInput[];
   removeProductRuleIds?: string[];
@@ -83,7 +99,7 @@ export async function GET(
     where: { id: memberId, barbershopId },
     include: {
       user: { select: { name: true, email: true, phone: true } },
-      careerLevel: { select: { id: true, name: true, defaultCommissionRate: true } },
+      careerLevel: { select: { id: true, name: true, defaultCommissionRate: true, active: true } },
     },
   });
 
@@ -92,26 +108,47 @@ export async function GET(
   }
 
   // 1. Serviços disponíveis na barbearia e serviços selecionados do colaborador
-  const [availableServices, selectedBarberServices, availableProducts, existingConfigs] =
-    await Promise.all([
-      prisma.service.findMany({
-        where: { barbershopId, isActive: true },
-        include: { category: { select: { id: true, name: true } } },
-        orderBy: [{ categoryId: "asc" }, { name: "asc" }],
-      }),
-      prisma.barberService.findMany({
-        where: { barberId: memberId },
-        select: { serviceId: true },
-      }),
-      prisma.product.findMany({
-        where: { barbershopId, isActive: true },
-        select: { id: true, name: true, salePrice: true },
-        orderBy: { name: "asc" },
-      }),
-      prisma.commissionConfig.findMany({
-        where: { barbershopId, memberId },
-      }),
-    ]);
+  const [
+    availableServices,
+    selectedBarberServices,
+    availableProducts,
+    existingConfigs,
+    careerLevels,
+    barbershopDefaultConfig,
+    categories,
+  ] = await Promise.all([
+    prisma.service.findMany({
+      where: { barbershopId, isActive: true },
+      include: { category: { select: { id: true, name: true } } },
+      orderBy: [{ categoryId: "asc" }, { name: "asc" }],
+    }),
+    prisma.barberService.findMany({
+      where: { barberId: memberId },
+      select: { serviceId: true },
+    }),
+    prisma.product.findMany({
+      where: { barbershopId, isActive: true },
+      select: { id: true, name: true, salePrice: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.commissionConfig.findMany({
+      where: { barbershopId, memberId },
+    }),
+    prisma.careerLevel.findMany({
+      where: { barbershopId, active: true },
+      select: { id: true, name: true, defaultCommissionRate: true, sortOrder: true },
+      orderBy: { sortOrder: "asc" },
+    }),
+    prisma.commissionConfig.findFirst({
+      where: { barbershopId, scopeKey: buildCommissionScopeKey({}), active: true },
+    }),
+    prisma.category?.findMany
+      ? prisma.category.findMany({
+          where: { barbershopId },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+  ]);
 
   const selectedServiceIdSet = new Set(selectedBarberServices.map((bs) => bs.serviceId));
 
@@ -226,15 +263,112 @@ export async function GET(
       active: c.active,
     }));
 
+  // 5. Resolver comissão padrão do membro (MEMBER_DEFAULT)
+  const memberDefaultScopeKey = buildCommissionScopeKey({ memberId });
+  const individualMemberDefaultConfig = existingConfigs.find(
+    (c) => c.scopeKey === memberDefaultScopeKey
+  );
+
+  const isCareerLevelActive = targetMember.careerLevel?.active === true;
+  const hasActiveCareerRate =
+    isCareerLevelActive &&
+    targetMember.careerLevel?.defaultCommissionRate !== null &&
+    targetMember.careerLevel?.defaultCommissionRate !== undefined;
+
+  let memberDefaultEffective: {
+    type: CommissionConfigType;
+    value: number;
+    origin: string;
+    isCustomized: boolean;
+  };
+
+  if (individualMemberDefaultConfig && individualMemberDefaultConfig.active) {
+    memberDefaultEffective = {
+      type: individualMemberDefaultConfig.type,
+      value: Number(individualMemberDefaultConfig.value),
+      origin: "MEMBER_DEFAULT",
+      isCustomized: true,
+    };
+  } else if (hasActiveCareerRate) {
+    memberDefaultEffective = {
+      type: "PERCENTAGE",
+      value: Number(targetMember.careerLevel!.defaultCommissionRate),
+      origin: "CAREER_LEVEL_DEFAULT",
+      isCustomized: false,
+    };
+  } else if (barbershopDefaultConfig && barbershopDefaultConfig.active) {
+    memberDefaultEffective = {
+      type: barbershopDefaultConfig.type,
+      value: Number(barbershopDefaultConfig.value),
+      origin: "BARBERSHOP_DEFAULT",
+      isCustomized: false,
+    };
+  } else {
+    memberDefaultEffective = {
+      type: "PERCENTAGE",
+      value: 0,
+      origin: "BARBERSHOP_DEFAULT",
+      isCustomized: false,
+    };
+  }
+
+  const inheritedDefault = hasActiveCareerRate
+    ? {
+        type: "PERCENTAGE" as CommissionConfigType,
+        value: Number(targetMember.careerLevel!.defaultCommissionRate),
+        origin: "CAREER_LEVEL_DEFAULT",
+      }
+    : barbershopDefaultConfig && barbershopDefaultConfig.active
+    ? {
+        type: barbershopDefaultConfig.type,
+        value: Number(barbershopDefaultConfig.value),
+        origin: "BARBERSHOP_DEFAULT",
+      }
+    : {
+        type: "PERCENTAGE" as CommissionConfigType,
+        value: 0,
+        origin: "BARBERSHOP_DEFAULT",
+      };
+
+  const memberDefaultRule = {
+    effective: memberDefaultEffective,
+    inheritedDefault,
+    individualRule: individualMemberDefaultConfig
+      ? {
+          id: individualMemberDefaultConfig.id,
+          type: individualMemberDefaultConfig.type,
+          value: Number(individualMemberDefaultConfig.value),
+          active: individualMemberDefaultConfig.active,
+        }
+      : null,
+  };
+
+  // 6. Regras legadas/individuais por categoria
+  const categoryMap = new Map(categories.map((cat) => [cat.id, cat.name]));
+  const categoryRules = existingConfigs
+    .filter((c) => c.categoryId !== null)
+    .map((c) => ({
+      id: c.id,
+      categoryId: c.categoryId!,
+      categoryName: categoryMap.get(c.categoryId!) ?? "Categoria",
+      type: c.type,
+      value: Number(c.value),
+      active: c.active,
+    }));
+
   return NextResponse.json({
     memberId: targetMember.id,
     memberName: targetMember.user?.name ?? "",
     role: targetMember.role,
     careerLevelId: targetMember.careerLevelId,
     careerLevelName: targetMember.careerLevel?.name ?? null,
+    careerLevels,
+    categories,
     isCommissionEligible: targetMember.isCommissionEligible,
+    memberDefaultRule,
     selectedServiceIds: Array.from(selectedServiceIdSet),
     services: servicesWithEffectiveCommissions,
+    categoryRules,
     productDefaultRule: {
       effective: resolvedProductDefault
         ? {
@@ -434,6 +568,95 @@ export async function PUT(
       }
     }
 
+    // 5.1. Validação prévia de memberDefaultRule
+    if (body.memberDefaultRule !== undefined && body.memberDefaultRule !== null) {
+      if (!Object.values(CommissionConfigType).includes(body.memberDefaultRule.type)) {
+        return NextResponse.json({ error: "Tipo de comissão inválido em memberDefaultRule." }, { status: 400 });
+      }
+      if (body.memberDefaultRule.active !== undefined && typeof body.memberDefaultRule.active !== "boolean") {
+        return NextResponse.json({ error: "active em memberDefaultRule deve ser um booleano.", code: "INVALID_FIELD_TYPE" }, { status: 400 });
+      }
+      validateCommissionConfig({
+        type: body.memberDefaultRule.type,
+        value: body.memberDefaultRule.value,
+        memberId,
+      });
+    }
+
+    // 5.2. Validação prévia de categoryRules
+    if (body.categoryRules !== undefined) {
+      if (!Array.isArray(body.categoryRules)) {
+        return NextResponse.json({ error: "categoryRules deve ser um array." }, { status: 400 });
+      }
+      const categoryIds = body.categoryRules.map((r) => r.categoryId);
+      if (new Set(categoryIds).size !== categoryIds.length) {
+        return NextResponse.json({ error: "Regras de categoria duplicadas.", code: "DUPLICATE_RULES" }, { status: 400 });
+      }
+      for (const rule of body.categoryRules) {
+        if (!rule.categoryId || typeof rule.categoryId !== "string") {
+          return NextResponse.json({ error: "categoryId inválido em categoryRules." }, { status: 400 });
+        }
+        if (!Object.values(CommissionConfigType).includes(rule.type)) {
+          return NextResponse.json({ error: "Tipo de comissão inválido em categoryRules." }, { status: 400 });
+        }
+        if (rule.active !== undefined && typeof rule.active !== "boolean") {
+          return NextResponse.json({ error: "active em categoryRules deve ser um booleano.", code: "INVALID_FIELD_TYPE" }, { status: 400 });
+        }
+        validateCommissionConfig({
+          type: rule.type,
+          value: rule.value,
+          memberId,
+          categoryId: rule.categoryId,
+        });
+      }
+      if (categoryIds.length > 0) {
+        const validCount = await prisma.category.count({
+          where: { id: { in: categoryIds }, barbershopId },
+        });
+        if (validCount !== categoryIds.length) {
+          return NextResponse.json(
+            { error: "Uma ou mais categorias em categoryRules não pertencem à barbearia.", code: "INVALID_SCOPE" },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    // 5.3. Validação prévia de removeCategoryRuleIds (IDs de CommissionConfig)
+    if (body.removeCategoryRuleIds !== undefined) {
+      if (!Array.isArray(body.removeCategoryRuleIds)) {
+        return NextResponse.json({ error: "removeCategoryRuleIds deve ser um array." }, { status: 400 });
+      }
+      for (const id of body.removeCategoryRuleIds) {
+        if (!id || typeof id !== "string" || !id.trim()) {
+          return NextResponse.json({ error: "ID inválido em removeCategoryRuleIds.", code: "INVALID_FIELD_TYPE" }, { status: 400 });
+        }
+      }
+      if (new Set(body.removeCategoryRuleIds).size !== body.removeCategoryRuleIds.length) {
+        return NextResponse.json({ error: "removeCategoryRuleIds contém IDs duplicados.", code: "DUPLICATE_REMOVE_RULE_IDS" }, { status: 400 });
+      }
+      if (body.removeCategoryRuleIds.length > 0) {
+        const foundCategoryConfigs = await prisma.commissionConfig.findMany({
+          where: {
+            id: { in: body.removeCategoryRuleIds },
+            barbershopId,
+            memberId,
+            categoryId: { not: null },
+          },
+          select: { id: true },
+        });
+        if (foundCategoryConfigs.length !== body.removeCategoryRuleIds.length) {
+          return NextResponse.json(
+            {
+              error: "Um ou mais IDs em removeCategoryRuleIds não são regras de categoria válidas para este colaborador.",
+              code: "INVALID_REMOVE_CATEGORY_RULE_ID",
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     // 6. Validação prévia de productDefaultRule
     if (body.productDefaultRule !== undefined && body.productDefaultRule !== null) {
       if (!Object.values(CommissionConfigType).includes(body.productDefaultRule.type)) {
@@ -560,6 +783,51 @@ export async function PUT(
             barbershopId,
             memberId,
             serviceId: rule.serviceId,
+            type: rule.type,
+            value: rule.value,
+            active: rule.active !== false,
+          });
+        }
+      }
+
+      // 9.3b. Configurar ou remover regra individual padrão do membro (MEMBER_DEFAULT)
+      if (body.memberDefaultRule !== undefined) {
+        const memberDefaultKey = buildCommissionScopeKey({ memberId });
+        if (body.memberDefaultRule === null) {
+          // Remover regra individual padrão do membro (volta a herdar da carreira/barbearia)
+          await tx.commissionConfig.deleteMany({
+            where: { barbershopId, scopeKey: memberDefaultKey },
+          });
+        } else {
+          await upsertCommissionConfig(tx, {
+            barbershopId,
+            memberId,
+            type: body.memberDefaultRule.type,
+            value: body.memberDefaultRule.value,
+            active: body.memberDefaultRule.active !== false,
+          });
+        }
+      }
+
+      // 9.3c. Remover regras individuais de categoria (restaurar padrão)
+      if (body.removeCategoryRuleIds !== undefined && body.removeCategoryRuleIds.length > 0) {
+        await tx.commissionConfig.deleteMany({
+          where: {
+            id: { in: body.removeCategoryRuleIds },
+            barbershopId,
+            memberId,
+            categoryId: { not: null },
+          },
+        });
+      }
+
+      // 9.3d. Criar ou atualizar regras individuais de categoria
+      if (body.categoryRules !== undefined && body.categoryRules.length > 0) {
+        for (const rule of body.categoryRules) {
+          await upsertCommissionConfig(tx, {
+            barbershopId,
+            memberId,
+            categoryId: rule.categoryId,
             type: rule.type,
             value: rule.value,
             active: rule.active !== false,

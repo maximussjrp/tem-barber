@@ -105,7 +105,7 @@ describe("TEM BARBER — C9 Admin Commission UX Suite", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    fetchSpy = vi.fn((url: string, init?: any) => {
+    fetchSpy = vi.fn((url: string) => {
       if (url.includes("/api/admin/commissions/overview")) {
         return Promise.resolve({
           ok: true,
@@ -150,11 +150,12 @@ describe("TEM BARBER — C9 Admin Commission UX Suite", () => {
     vi.restoreAllMocks();
   });
 
-  it("1. primary nav has: Visão Geral / Pagamento de Comissões / Configurações", () => {
+  it("1. primary nav has: Visão Geral / Pagamento de Comissões e link para Equipe", () => {
     render(<CommissionNav />);
     expect(screen.getByText("Visão Geral")).toBeInTheDocument();
     expect(screen.getByText("Pagamento de Comissões")).toBeInTheDocument();
-    expect(screen.getByText("Configurações")).toBeInTheDocument();
+    expect(screen.getByText(/Configurar comissões da equipe/i)).toBeInTheDocument();
+    expect(screen.queryByText("Configurações")).not.toBeInTheDocument();
   });
 
   it("2. no 'Períodos Mensais' primary UX", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { CommissionNav } from "@/components/admin/commissions/CommissionNav";
 
 type Option = { id: string; name: string; user?: { name: string } };
@@ -333,6 +334,21 @@ export default function CommissionConfigsPage() {
       </div>
 
       <CommissionNav />
+
+      {/* Banner Informativo de Fluxo Simplificado */}
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm" data-testid="simplified-flow-banner">
+        <div className="text-stone-300">
+          <span className="font-semibold text-amber-400">💡 Recomendação: </span>
+          Para definir comissões por colaborador, configure diretamente em{" "}
+          <strong className="text-white">Equipe → Colaborador → Serviços e Comissões</strong>. Esta tela é destinada a configurações globais avançadas (níveis de carreira, barbearia e categorias).
+        </div>
+        <Link
+          href="/admin/equipe"
+          className="inline-flex items-center gap-1 shrink-0 px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold text-xs border border-amber-500/40 transition-colors"
+        >
+          Ir para Equipe →
+        </Link>
+      </div>
 
       {/* Tabs */}
       <div className="flex border-b border-[var(--border-subtle)] gap-2">

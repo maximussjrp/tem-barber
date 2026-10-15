@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { MemberRole } from "@prisma/client";
@@ -246,6 +247,107 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(svc1.effectiveCommission.value).toBe(40);
       expect(svc1.effectiveCommission.isCustomized).toBe(false);
     });
+
+    it("1c. GET retorna comissão padrão da barbearia via scopeKey canônica barbershop:default quando membro não possui regra individual nem carreira", async () => {
+      // Simula membro sem nível de carreira
+      prismaMock.barbershopMember.findFirst.mockImplementation(({ where }: { where: { id?: string; barbershopId?: string } }) => {
+        if (where.id === barberId && where.barbershopId === shopId) {
+          return Promise.resolve({
+            id: barberId,
+            barbershopId: shopId,
+            userId: "user-barber-1",
+            role: "BARBER" as MemberRole,
+            isActive: true,
+            isCommissionEligible: true,
+            careerLevelId: null,
+            user: { name: "João Barbeiro", email: "joao@example.com", phone: "1199999999" },
+            careerLevel: null,
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      // Simula regra padrão geral da barbearia ativa com scopeKey canônica "barbershop:default"
+      prismaMock.commissionConfig.findFirst.mockImplementation(({ where }: { where: { barbershopId: string; scopeKey?: string; active?: boolean } }) => {
+        if (where.barbershopId === shopId && where.scopeKey === "barbershop:default" && where.active === true) {
+          return Promise.resolve({
+            id: "cfg-shop-default",
+            barbershopId: shopId,
+            scopeKey: "barbershop:default",
+            type: "PERCENTAGE",
+            value: 35,
+            active: true,
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "GET");
+      const res = await getCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(json.memberDefaultRule.effective.value).toBe(35);
+      expect(json.memberDefaultRule.effective.origin).toBe("BARBERSHOP_DEFAULT");
+      expect(json.memberDefaultRule.effective.isCustomized).toBe(false);
+      expect(json.memberDefaultRule.inheritedDefault.value).toBe(35);
+      expect(json.memberDefaultRule.inheritedDefault.origin).toBe("BARBERSHOP_DEFAULT");
+      expect(json.categories).toBeDefined();
+    });
+
+    it("1d. GET respeita carreira inativa na herança: colaborador vinculado a nível inativo herda padrão da barbearia (35%)", async () => {
+      // Simula membro vinculado a nível de carreira inativo (active: false)
+      prismaMock.barbershopMember.findFirst.mockImplementation(({ where }: { where: { id?: string; barbershopId?: string } }) => {
+        if (where.id === barberId && where.barbershopId === shopId) {
+          return Promise.resolve({
+            id: barberId,
+            barbershopId: shopId,
+            userId: "user-barber-1",
+            role: "BARBER" as MemberRole,
+            isActive: true,
+            isCommissionEligible: true,
+            careerLevelId: "lvl-inactive",
+            user: { name: "João Barbeiro", email: "joao@example.com", phone: "1199999999" },
+            careerLevel: {
+              id: "lvl-inactive",
+              name: "Nível Inativo",
+              defaultCommissionRate: 40,
+              active: false,
+            },
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      // Simula regra padrão geral da barbearia ativa com 35%
+      prismaMock.commissionConfig.findFirst.mockImplementation(({ where }: { where: { barbershopId: string; scopeKey?: string; active?: boolean } }) => {
+        if (where.barbershopId === shopId && where.scopeKey === "barbershop:default" && where.active === true) {
+          return Promise.resolve({
+            id: "cfg-shop-default",
+            barbershopId: shopId,
+            scopeKey: "barbershop:default",
+            type: "PERCENTAGE",
+            value: 35,
+            active: true,
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "GET");
+      const res = await getCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // Como o nível de carreira está inativo (40%), herança deve recair sobre o padrão da barbearia (35%)
+      expect(json.memberDefaultRule.effective.value).toBe(35);
+      expect(json.memberDefaultRule.effective.origin).toBe("BARBERSHOP_DEFAULT");
+      expect(json.memberDefaultRule.effective.isCustomized).toBe(false);
+      expect(json.memberDefaultRule.inheritedDefault.value).toBe(35);
+      expect(json.memberDefaultRule.inheritedDefault.origin).toBe("BARBERSHOP_DEFAULT");
+    });
   });
 
   describe("2. Personalização e Restauração de Serviços (PUT)", () => {
@@ -433,6 +535,220 @@ describe("TEM BARBER — Gate P2-B: Configuração Transacional de Serviços e C
       expect(json.code).toBe("INVALID_REMOVE_SERVICE_RULE_ID");
       expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
       expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("3i. Personaliza memberDefaultRule com PERCENTAGE (MEMBER_DEFAULT)", async () => {
+      const payload = {
+        memberDefaultRule: {
+          type: "PERCENTAGE",
+          value: 45,
+          active: true,
+        },
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+      expect(prismaMock.commissionConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            barbershopId: shopId,
+            memberId: barberId,
+            type: "PERCENTAGE",
+            scopeKey: `member:${barberId}:default`,
+          }),
+        })
+      );
+    });
+
+    it("3j. Restaura memberDefaultRule enviando memberDefaultRule: null", async () => {
+      const payload = {
+        memberDefaultRule: null,
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+      expect(prismaMock.commissionConfig.deleteMany).toHaveBeenCalledWith({
+        where: {
+          barbershopId: shopId,
+          scopeKey: `member:${barberId}:default`,
+        },
+      });
+    });
+
+    it("3k. Remove regra individual de categoria enviando removeCategoryRuleIds", async () => {
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { id?: { in?: string[] }; categoryId?: unknown; memberId?: string } }) => {
+        if (where?.id?.in?.includes("cfg-member-category-1") && where?.categoryId && where?.memberId === barberId) {
+          return Promise.resolve([{ id: "cfg-member-category-1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const payload = {
+        removeCategoryRuleIds: ["cfg-member-category-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.commissionConfig.deleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["cfg-member-category-1"] },
+          barbershopId: shopId,
+          memberId: barberId,
+          categoryId: { not: null },
+        },
+      });
+    });
+
+    it("3l. Suporta payload real unificado enviado pelo frontend simplificado", async () => {
+      prismaMock.barbershopMember.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.service.count.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.length)
+      );
+      prismaMock.commissionConfig.findMany.mockImplementation(({ where }: { where?: { id?: { in?: string[] }; categoryId?: unknown; memberId?: string } }) => {
+        if (where?.id?.in?.includes("cfg-cat-1") && where?.categoryId && where?.memberId === barberId) {
+          return Promise.resolve([{ id: "cfg-cat-1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const frontendPayload = {
+        selectedServiceIds: ["svc-1", "svc-2"],
+        isCommissionEligible: true,
+        memberDefaultRule: {
+          type: "PERCENTAGE",
+          value: 40,
+          active: true,
+        },
+        serviceRules: [
+          { serviceId: "svc-1", type: "PERCENTAGE", value: 50, active: true },
+        ],
+        removeCategoryRuleIds: ["cfg-cat-1"],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", frontendPayload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+      expect(prismaMock.barberService.deleteMany).toHaveBeenCalledWith({ where: { barberId } });
+      expect(prismaMock.barberService.createMany).toHaveBeenCalledWith({
+        data: [
+          { barberId, serviceId: "svc-1" },
+          { barberId, serviceId: "svc-2" },
+        ],
+      });
+      expect(prismaMock.commissionConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            scopeKey: `member:${barberId}:service:svc-1`,
+          }),
+        })
+      );
+      expect(prismaMock.commissionConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            scopeKey: `member:${barberId}:default`,
+          }),
+        })
+      );
+      expect(prismaMock.commissionConfig.deleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["cfg-cat-1"] },
+          barbershopId: shopId,
+          memberId: barberId,
+          categoryId: { not: null },
+        },
+      });
+    });
+
+    it("3m. Cria e edita regras individuais por categoria com scopeKey canônica", async () => {
+      (prismaMock as any).category = {
+        count: vi.fn().mockResolvedValue(1),
+        findMany: vi.fn().mockResolvedValue([{ id: "cat-1", name: "Cabelo" }]),
+        findFirstOrThrow: vi.fn().mockResolvedValue({ id: "cat-1", name: "Cabelo" }),
+      };
+
+      const payload = {
+        categoryRules: [
+          { categoryId: "cat-1", type: "PERCENTAGE" as const, value: 42, active: true },
+        ],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.$transaction).toHaveBeenCalled();
+      expect(prismaMock.commissionConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            barbershopId: shopId,
+            memberId: barberId,
+            categoryId: "cat-1",
+            type: "PERCENTAGE",
+            scopeKey: `member:${barberId}:category:cat-1`,
+          }),
+        })
+      );
+    });
+
+    it("3n. Rejeita regra de categoria de outro tenant com 400 INVALID_SCOPE", async () => {
+      (prismaMock as any).category = {
+        count: vi.fn().mockResolvedValue(0), // Categoria não pertence à barbearia
+      };
+
+      const payload = {
+        categoryRules: [
+          { categoryId: "cat-other-tenant", type: "PERCENTAGE" as const, value: 42 },
+        ],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", payload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("INVALID_SCOPE");
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("3o. Preserva compatibilidade legada quando memberDefaultRule, categoryRules e removeCategoryRuleIds não são informados", async () => {
+      prismaMock.service.count.mockResolvedValue(1);
+      const legacyPayload = {
+        selectedServiceIds: ["svc-1"],
+        serviceRules: [
+          { serviceId: "svc-1", type: "PERCENTAGE", value: 30, active: true },
+        ],
+      };
+
+      const req = createJsonRequest(`http://localhost/api/admin/team/${barberId}/commission-settings`, "PUT", legacyPayload);
+      const res = await putCommissionSettings(req, { params: Promise.resolve({ id: barberId }) });
+
+      expect(res.status).toBe(200);
+      expect(prismaMock.$transaction).toHaveBeenCalled();
+      expect(prismaMock.commissionConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            scopeKey: `member:${barberId}:service:svc-1`,
+          }),
+        })
+      );
+      expect(prismaMock.commissionConfig.upsert).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            scopeKey: `member:${barberId}:default`,
+          }),
+        })
+      );
+      expect(prismaMock.commissionConfig.deleteMany).not.toHaveBeenCalled();
     });
 
     it("4. Permite comissão individual de 0% como valor válido sem desativar elegibilidade", async () => {
