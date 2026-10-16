@@ -1120,9 +1120,6 @@ export function CommissionPaymentHistoryTab({
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-[var(--text-muted)]">
-                        {item.member.role}
-                      </div>
                     </td>
                     <td className="px-4 py-3.5 text-xs text-[var(--text-secondary)]">
                       <span className="font-semibold text-[var(--text-primary)]">
@@ -1194,7 +1191,7 @@ export function CommissionPaymentHistoryTab({
                 </h3>
                 {cycleDetail && (
                   <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                    Colaborador: <strong>{cycleDetail.member.name}</strong>{cycleDetail.member.role ? ` (${cycleDetail.member.role})` : ""}
+                    Colaborador: <strong>{cycleDetail.member.name}</strong>
                   </p>
                 )}
               </div>
