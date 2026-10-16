@@ -2,25 +2,39 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOperationalSession } from "@/lib/api-auth";
 
-export async function GET(_request: NextRequest) {
+export async function GET(request?: NextRequest | Request) {
+  void request;
   const { error, data } = await requireOperationalSession();
   if (error) return error;
 
   const barbershopId = data!.barbershopId;
 
-  // Zero side-effects: fetch active members and their current OPEN cycle
-  const members = await prisma.barbershopMember.findMany({
-    where: { barbershopId, isActive: true },
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      commissionCycles: {
-        where: { status: "OPEN" },
-        orderBy: { cycleNumber: "desc" },
-        take: 1,
+  // Zero side-effects: fetch active members and their current OPEN cycle,
+  // and aggregate authoritative historical payout records across all time
+  const [members, payoutAggregate] = await Promise.all([
+    prisma.barbershopMember.findMany({
+      where: { barbershopId, isActive: true },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        commissionCycles: {
+          where: { status: "OPEN" },
+          orderBy: { cycleNumber: "desc" },
+          take: 1,
+        },
       },
-    },
-    orderBy: { user: { name: "asc" } },
-  });
+      orderBy: { user: { name: "asc" } },
+    }),
+    prisma.commissionPayout.aggregate({
+      where: { barbershopId },
+      _sum: { amount: true },
+      _count: { id: true },
+    }),
+  ]);
+
+  const totalPaidAccumulated = payoutAggregate._sum.amount
+    ? Number(payoutAggregate._sum.amount)
+    : 0;
+  const totalPayoutsCount = payoutAggregate._count.id;
 
   const overview = members.map((m) => {
     const cycle = m.commissionCycles[0] || null;
@@ -45,5 +59,13 @@ export async function GET(_request: NextRequest) {
     };
   });
 
-  return NextResponse.json({ overview });
+  return NextResponse.json({
+    overview,
+    totalPaidAccumulated,
+    totalPayoutsCount,
+    historicalSummary: {
+      totalPaidAccumulated,
+      totalPayoutsCount,
+    },
+  });
 }

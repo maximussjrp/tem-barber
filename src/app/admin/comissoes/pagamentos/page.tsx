@@ -429,7 +429,7 @@ export default function CommissionPaymentsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[var(--text-primary)]">
             Pagamento de Comissões
@@ -443,7 +443,7 @@ export default function CommissionPaymentsPage() {
       <CommissionNav />
 
       {/* Subnav Tabs */}
-      <div className="flex border-b border-[var(--border-subtle)] space-x-6 mb-2">
+      <div className="flex border-b border-[var(--border-subtle)] space-x-6 mb-2 no-print">
         <button
           type="button"
           onClick={() => setActiveTab("payable")}

@@ -423,7 +423,7 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
   return (
     <>
       {/* Mobile top bar */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-surface border-b border-border-subtle">
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-surface border-b border-border-subtle no-print">
         <div className="flex items-center gap-2 min-w-0 pr-4">
           {!showFallback ? (
             <img 
@@ -459,18 +459,20 @@ export function AdminSidebar({ barbershopName, barbershopLogo, subtitle, userNam
       </div>
 
       {/* Mobile Drawer using new Sheet component */}
-      <Sheet
-        isOpen={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        side="left"
-        title="Menu principal"
-        description="Navegação administrativa"
-      >
-        {renderSidebarContent()}
-      </Sheet>
+      <div className="no-print">
+        <Sheet
+          isOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          side="left"
+          title="Menu principal"
+          description="Navegação administrativa"
+        >
+          {renderSidebarContent()}
+        </Sheet>
+      </div>
 
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex fixed top-0 left-0 h-full w-64 flex-col bg-surface border-r border-border-subtle z-30">
+      <aside className="hidden lg:flex fixed top-0 left-0 h-full w-64 flex-col bg-surface border-r border-border-subtle z-30 no-print">
         {renderSidebarContent()}
       </aside>
     </>

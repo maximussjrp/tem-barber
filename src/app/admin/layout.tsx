@@ -11,7 +11,7 @@ export default async function AdminLayout({
   const subtitle = barbershop?.city ? barbershop.city : "Painel de Gestão";
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-stone-950">
+    <div className="flex flex-col lg:flex-row min-h-screen bg-stone-950 print:bg-white print:min-h-0">
       <AdminSidebar
         barbershopName={barbershop?.name ?? "Tem Barber"}
         barbershopLogo={barbershop?.logoUrl}
@@ -21,7 +21,7 @@ export default async function AdminLayout({
         isPlatformAdmin={isPlatform}
       />
       {/* Offset content by sidebar width on desktop */}
-      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden pt-[57px] lg:pt-0">
+      <main className="flex-1 lg:ml-64 min-h-screen overflow-x-hidden pt-[57px] lg:pt-0 print:ml-0 print:pt-0 print:min-h-0 print:overflow-visible">
         {children}
       </main>
     </div>

@@ -12,7 +12,7 @@ export function CommissionNav() {
   ];
 
   return (
-    <nav aria-label="Navegação de Comissões" className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-3 mb-6">
+    <nav aria-label="Navegação de Comissões" className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-3 mb-6 no-print">
       <div className="flex flex-wrap gap-2">
         {tabs.map((tab) => {
           const isActive = tab.exact

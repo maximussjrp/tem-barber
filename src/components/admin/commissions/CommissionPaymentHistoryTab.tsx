@@ -174,31 +174,31 @@ function getPaymentMethodBadge(method: string | null) {
   switch (method) {
     case "PIX":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+        <span className="payment-badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
           PIX
         </span>
       );
     case "CASH":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span className="payment-badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           Dinheiro
         </span>
       );
     case "TRANSFER":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+        <span className="payment-badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
           Transferência
         </span>
       );
     case "OTHER":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+        <span className="payment-badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
           Outro
         </span>
       );
     default:
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
+        <span className="payment-badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
           Não informado
         </span>
       );
@@ -286,7 +286,14 @@ function getAppliedPaymentMethodLabel(method: string): string {
   }
 }
 
-export function CommissionPaymentHistoryTab() {
+export interface CommissionPaymentHistoryTabProps {
+  barbershopName?: string;
+}
+
+export function CommissionPaymentHistoryTab({
+  barbershopName: propBarbershopName,
+}: CommissionPaymentHistoryTabProps = {}) {
+  const [barbershopName, setBarbershopName] = useState<string>(propBarbershopName || "");
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -382,7 +389,7 @@ export function CommissionPaymentHistoryTab() {
   // Request race condition guard
   const activeRequestId = useRef(0);
 
-  // 1. Fetch team members (including inactive) on mount
+  // 1. Fetch team members (including inactive) and barbershop name on mount
   useEffect(() => {
     async function loadMembers() {
       try {
@@ -404,8 +411,25 @@ export function CommissionPaymentHistoryTab() {
         console.error("Falha ao carregar equipe:", err);
       }
     }
+
+    async function loadBarbershop() {
+      if (propBarbershopName) return;
+      try {
+        const res = await fetch("/api/admin/barbershop");
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.name) {
+            setBarbershopName(data.name);
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
     loadMembers();
-  }, []);
+    loadBarbershop();
+  }, [propBarbershopName]);
 
   // 2. Fetch payouts with explicit filters and target page
   async function executeFetch(filters: FilterState, targetPage: number) {
@@ -431,6 +455,10 @@ export function CommissionPaymentHistoryTab() {
       // Discard stale responses from superseded requests
       if (reqId !== activeRequestId.current) {
         return;
+      }
+
+      if (data.barbershop?.name) {
+        setBarbershopName((prev) => prev || data.barbershop.name);
       }
 
       setPayouts(data.payouts || []);
@@ -466,6 +494,9 @@ export function CommissionPaymentHistoryTab() {
         }
         const data = await res.json();
         if (reqId === activeRequestId.current) {
+          if (data.barbershop?.name) {
+            setBarbershopName((prev) => prev || data.barbershop.name);
+          }
           setPayouts(data.payouts || []);
           setTotalPages(data.pagination?.totalPages || 1);
           setTotalRecords(data.pagination?.totalRecords || 0);
@@ -598,6 +629,10 @@ export function CommissionPaymentHistoryTab() {
         return;
       }
 
+      if (data.barbershop?.name && !barbershopName) {
+        setBarbershopName(data.barbershop.name);
+      }
+
       const records: PayoutItem[] = data.payouts || [];
       const expectedTotal: number =
         typeof data.pagination?.totalRecords === "number"
@@ -676,15 +711,31 @@ export function CommissionPaymentHistoryTab() {
       <style>{`
         @media print {
           @page {
-            size: landscape;
-            margin: 1cm;
+            size: A4 landscape;
+            margin: 10mm;
           }
-          body {
-            background: white !important;
-            color: black !important;
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
+          html, body {
+            background: #ffffff !important;
+            color: #111827 !important;
+            font-size: 10pt !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          aside,
+          nav,
+          header,
           .no-print {
             display: none !important;
+          }
+          main,
+          div,
+          .overflow-x-auto,
+          .overflow-hidden {
+            overflow: visible !important;
           }
           .print-only {
             display: block !important;
@@ -692,44 +743,89 @@ export function CommissionPaymentHistoryTab() {
           table {
             border-collapse: collapse !important;
             width: 100% !important;
+            page-break-inside: auto !important;
+          }
+          tr {
+            page-break-inside: avoid !important;
+            page-break-after: auto !important;
+          }
+          thead {
+            display: table-header-group !important;
+          }
+          tfoot {
+            display: table-footer-group !important;
           }
           th, td {
-            border: 1px solid #ddd !important;
+            border: 1px solid #d1d5db !important;
             padding: 6px 8px !important;
-            color: black !important;
-            background: white !important;
+            color: #111827 !important;
+            background: #ffffff !important;
+            font-size: 9pt !important;
+          }
+          th {
+            background-color: #f3f4f6 !important;
+            font-weight: 700 !important;
+            text-transform: uppercase !important;
+          }
+          .payment-badge {
+            background: transparent !important;
+            border: 1px solid #6b7280 !important;
+            color: #111827 !important;
+            font-weight: 600 !important;
           }
         }
       `}</style>
 
       {/* Print Header */}
-      <div className="hidden print-only p-4 border-b border-gray-300 mb-6">
-        <h1 className="text-xl font-bold text-black">Histórico de Pagamentos de Comissões — TEM BARBER</h1>
-        <p className="text-xs text-gray-600 mt-0.5">
-          Relatório emitido em: {new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })} às{" "}
-          {new Date().toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-        </p>
-        <div className="mt-2 text-xs text-gray-700 space-y-0.5">
-          <p>
-            <strong>{getAppliedPeriodLabel(printHeaderFilters)}</strong>
-          </p>
-          <p>
-            <strong>Profissional:</strong> {getAppliedMemberLabel(printHeaderFilters.memberId, members)} |{" "}
-            <strong>Forma de Pagamento:</strong> {getAppliedPaymentMethodLabel(printHeaderFilters.paymentMethod)}
-            {printHeaderFilters.searchQuery ? ` | Busca: "${printHeaderFilters.searchQuery}"` : ""}
-          </p>
-          <p className="mt-1">
-            <strong>Total pago em liquidações:</strong> {brl(printHeaderTotalPaid)} |{" "}
-            <strong>Total de pagamentos:</strong> {printHeaderTotalRecords} registro(s)
-            {displayedPayouts.length < printHeaderTotalRecords && (
-              <span> (Exibindo os primeiros {displayedPayouts.length} registros)</span>
+      <div className="hidden print-only pb-4 mb-4 border-b-2 border-stone-800 text-stone-900">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-stone-950 uppercase">
+              Histórico de Pagamentos de Comissões — {barbershopName || "TEM BARBER"}
+            </h1>
+          </div>
+          <div className="text-right text-[11px] text-stone-600">
+            <p>
+              Data e hora da emissão: {new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })} às{" "}
+              {new Date().toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-stone-800 bg-stone-50 p-3 rounded border border-stone-300">
+          <div className="space-y-1">
+            <p>
+              <strong className="text-stone-900">Período selecionado:</strong> {getAppliedPeriodLabel(printHeaderFilters)}
+            </p>
+            <p>
+              <strong className="text-stone-900">Profissional selecionado:</strong> {getAppliedMemberLabel(printHeaderFilters.memberId, members)}
+            </p>
+            {printHeaderFilters.searchQuery && (
+              <p>
+                <strong className="text-stone-900">Busca:</strong> &quot;{printHeaderFilters.searchQuery}&quot;
+              </p>
             )}
-          </p>
+          </div>
+          <div className="space-y-1">
+            <p>
+              <strong className="text-stone-900">Forma de pagamento:</strong> {getAppliedPaymentMethodLabel(printHeaderFilters.paymentMethod)}
+            </p>
+            <p>
+              <strong className="text-stone-900">Total pago em liquidações:</strong>{" "}
+              <span className="font-bold text-stone-950">{brl(printHeaderTotalPaid)}</span>
+            </p>
+            <p>
+              <strong className="text-stone-900">Quantidade de pagamentos:</strong> {printHeaderTotalRecords} registro(s)
+              {displayedPayouts.length < printHeaderTotalRecords && (
+                <span className="text-[11px] text-stone-600"> (Exibindo primeiros {displayedPayouts.length})</span>
+              )}
+            </p>
+          </div>
         </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 no-print">
         <div className="bg-[var(--surface)] border border-[var(--border-subtle)] p-4 rounded-xl shadow-sm">
           <div className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
             Total pago em liquidações
@@ -769,7 +865,7 @@ export function CommissionPaymentHistoryTab() {
 
       {/* Validation Error Feedback */}
       {validationError && (
-        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-center justify-between">
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-center justify-between no-print">
           <span>{validationError}</span>
           <button
             onClick={() => setValidationError(null)}
@@ -962,13 +1058,13 @@ export function CommissionPaymentHistoryTab() {
 
       {/* Error Feedback */}
       {error && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm">
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm no-print">
           {error}
         </div>
       )}
 
       {/* Table of Historical Payouts */}
-      <div className="bg-[var(--surface)] border border-[var(--border-subtle)] rounded-xl shadow-md overflow-hidden">
+      <div className="bg-[var(--surface)] border border-[var(--border-subtle)] rounded-xl shadow-md overflow-hidden print:border-none print:shadow-none print:bg-transparent print:overflow-visible">
         <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between no-print">
           <h2 className="text-base font-semibold text-[var(--text-primary)]">
             Pagamentos Efetivados
@@ -993,7 +1089,7 @@ export function CommissionPaymentHistoryTab() {
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto print:overflow-visible">
             <table className="w-full text-left text-sm">
               <thead className="bg-[var(--surface-raised)] text-[var(--text-secondary)] text-xs uppercase border-b border-[var(--border-subtle)]">
                 <tr>

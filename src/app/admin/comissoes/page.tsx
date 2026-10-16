@@ -69,6 +69,7 @@ function formatDate(isoStr: string | null | undefined) {
 export default function AdminCommissionsOverviewPage() {
   // Canonical Overview State
   const [overview, setOverview] = useState<MemberOverviewItem[]>([]);
+  const [totalPaidAccumulated, setTotalPaidAccumulated] = useState<number>(0);
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
@@ -94,6 +95,13 @@ export default function AdminCommissionsOverviewPage() {
       if (!res.ok) throw new Error("Erro ao carregar visão geral de comissões.");
       const data = await res.json();
       setOverview(data.overview || []);
+      const accumulated =
+        typeof data.totalPaidAccumulated === "number"
+          ? data.totalPaidAccumulated
+          : typeof data.historicalSummary?.totalPaidAccumulated === "number"
+          ? data.historicalSummary.totalPaidAccumulated
+          : 0;
+      setTotalPaidAccumulated(accumulated);
     } catch (err: any) {
       setOverviewError(err.message || "Erro ao conectar à API de comissões.");
     } finally {
@@ -150,11 +158,6 @@ export default function AdminCommissionsOverviewPage() {
   );
   const totalRemaining = overview.reduce(
     (sum, m) => sum + (m.currentCycle?.remainingBalance || 0),
-    0
-  );
-  // Total pago can be calculated from historical payouts or summary
-  const totalPaid = overview.reduce(
-    (sum, m) => sum + ((m.currentCycle?.status === "PAID" ? m.currentCycle.grossCommission : 0) || 0),
     0
   );
 
@@ -221,12 +224,12 @@ export default function AdminCommissionsOverviewPage() {
 
         <div className="p-4 bg-[var(--surface)] border border-[var(--border-subtle)] rounded-xl shadow-sm">
           <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-            Total pago
+            Total pago acumulado
           </span>
           <div className="text-2xl font-bold text-blue-400 mt-1">
-            {brl(totalPaid)}
+            {brl(totalPaidAccumulated)}
           </div>
-          <span className="text-[11px] text-[var(--text-muted)]">Ciclos liquidados</span>
+          <span className="text-[11px] text-[var(--text-muted)]">Liquidações realizadas no histórico</span>
         </div>
       </div>
 

@@ -324,7 +324,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const [summary, payouts] = await Promise.all([
+    const [summary, payouts, barbershop] = await Promise.all([
       prisma.commissionPayout.aggregate({
         where,
         _sum: { amount: true },
@@ -336,11 +336,18 @@ export async function GET(request: NextRequest) {
         take: MAX_PRINT_LIMIT,
         include: payoutIncludes,
       }),
+      prisma.barbershop
+        ? prisma.barbershop.findUnique({
+            where: { id: barbershopId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     const totalPaidAmount = summary._sum.amount ? Number(summary._sum.amount) : 0;
 
     return NextResponse.json({
+      barbershop: barbershop ? { id: barbershop.id, name: barbershop.name } : null,
       payouts: payouts.map(mapPayout),
       pagination: {
         page: 1,
@@ -362,7 +369,7 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10) || 20));
   const skip = (page - 1) * limit;
 
-  const [summary, totalRecords, payouts] = await Promise.all([
+  const [summary, totalRecords, payouts, barbershop] = await Promise.all([
     prisma.commissionPayout.aggregate({
       where,
       _sum: { amount: true },
@@ -376,12 +383,19 @@ export async function GET(request: NextRequest) {
       take: limit,
       include: payoutIncludes,
     }),
+    prisma.barbershop
+      ? prisma.barbershop.findUnique({
+          where: { id: barbershopId },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   const totalPaidAmount = summary._sum.amount ? Number(summary._sum.amount) : 0;
   const totalPages = Math.ceil(totalRecords / limit) || 1;
 
   return NextResponse.json({
+    barbershop: barbershop ? { id: barbershop.id, name: barbershop.name } : null,
     payouts: payouts.map(mapPayout),
     pagination: {
       page,
