@@ -4,6 +4,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { CommissionNav } from "@/components/admin/commissions/CommissionNav";
+import { CommissionPaymentHistoryTab } from "@/components/admin/commissions/CommissionPaymentHistoryTab";
 
 type MemberOverviewItem = {
   member: {
@@ -106,6 +107,7 @@ function formatDate(isoStr: string | null | undefined) {
 }
 
 export default function CommissionPaymentsPage() {
+  const [activeTab, setActiveTab] = useState<"payable" | "history">("payable");
   const [overview, setOverview] = useState<MemberOverviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -440,126 +442,158 @@ export default function CommissionPaymentsPage() {
 
       <CommissionNav />
 
-      {feedback && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
-          <span>{feedback}</span>
-          <button
-            onClick={() => setFeedback(null)}
-            className="text-xs text-emerald-400 hover:underline cursor-pointer ml-4"
-          >
-            Fechar
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
-          {error}
-        </div>
-      )}
-
-      {/* Main Table of Professionals / Current Cycles */}
-      <div className="bg-[var(--surface)] border border-[var(--border-subtle)] rounded-xl shadow-md overflow-hidden">
-        <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">
-            Ciclos de Comissão em Aberto
-          </h2>
-          <span className="text-xs text-[var(--text-muted)]">
-            {overview.length} profissional(is)
-          </span>
-        </div>
-
-        {loading ? (
-          <div className="p-8 text-center text-sm text-[var(--text-muted)] animate-pulse">
-            Carregando ciclos operacionais...
-          </div>
-        ) : overview.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[var(--text-muted)]">
-            Nenhum profissional com ciclo aberto no momento.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-[var(--surface-raised)] text-[var(--text-secondary)] text-xs uppercase border-b border-[var(--border-subtle)]">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Profissional</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold text-right">Comissões acumuladas</th>
-                  <th className="px-4 py-3 font-semibold text-right">Adiantamentos</th>
-                  <th className="px-4 py-3 font-semibold text-right">Saldo a pagar</th>
-                  <th className="px-4 py-3 font-semibold text-center">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)]">
-                {overview.map((item) => {
-                  const cycle = item.currentCycle;
-                  const remaining = cycle?.remainingBalance || 0;
-                  const isNegative = remaining < 0;
-
-                  return (
-                    <tr key={item.member.id} className="hover:bg-[var(--surface-hover)] transition-colors">
-                      <td className="px-4 py-3.5">
-                        <div className="font-medium text-[var(--text-primary)]">{item.member.name}</div>
-                        <div className="text-xs text-[var(--text-muted)]">
-                          {cycle ? `Ciclo #${cycle.cycleNumber} aberto em ${formatDate(cycle.openedAt)}` : "Sem ciclo ativo"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        {cycle ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                            EM APURAÇÃO
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
-                            SEM CICLO
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-medium text-[var(--text-primary)]">
-                        {brl(cycle?.grossCommission || 0)}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-medium text-amber-400">
-                        {brl(cycle?.advancesTotal || 0)}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-bold">
-                        <span className={isNegative ? "text-rose-400" : remaining === 0 ? "text-[var(--text-muted)]" : "text-emerald-400"}>
-                          {brl(remaining)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center justify-center gap-2 flex-wrap">
-                          <button
-                            onClick={() => handleOpenDetail(item.member.id)}
-                            className="px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
-                          >
-                            Detalhes
-                          </button>
-                          {cycle && (
-                            <>
-                              <button
-                                onClick={() => handleOpenAdvance(item)}
-                                className="px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-medium hover:bg-amber-500/20 transition-colors cursor-pointer"
-                              >
-                                Adiantamento
-                              </button>
-                              <button
-                                onClick={() => handleOpenPayout(item)}
-                                className="px-2.5 py-1.5 rounded-lg bg-[var(--gold)] text-[var(--text-inverse)] text-xs font-semibold hover:bg-[var(--gold-light)] transition-colors cursor-pointer"
-                              >
-                                Revisar pagamento
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* Subnav Tabs */}
+      <div className="flex border-b border-[var(--border-subtle)] space-x-6 mb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab("payable")}
+          className={`pb-3 px-1 text-sm font-semibold border-b-2 transition-colors cursor-pointer ${
+            activeTab === "payable"
+              ? "border-[var(--gold)] text-[var(--gold)]"
+              : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          Comissões a Pagar
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("history")}
+          className={`pb-3 px-1 text-sm font-semibold border-b-2 transition-colors cursor-pointer ${
+            activeTab === "history"
+              ? "border-[var(--gold)] text-[var(--gold)]"
+              : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          Histórico de Pagamentos
+        </button>
       </div>
+
+      {activeTab === "payable" ? (
+        <>
+          {feedback && (
+            <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
+              <span>{feedback}</span>
+              <button
+                onClick={() => setFeedback(null)}
+                className="text-xs text-emerald-400 hover:underline cursor-pointer ml-4"
+              >
+                Fechar
+              </button>
+            </div>
+          )}
+
+          {error && (
+            <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
+              {error}
+            </div>
+          )}
+
+          {/* Main Table of Professionals / Current Cycles */}
+          <div className="bg-[var(--surface)] border border-[var(--border-subtle)] rounded-xl shadow-md overflow-hidden">
+            <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                Ciclos de Comissão em Aberto
+              </h2>
+              <span className="text-xs text-[var(--text-muted)]">
+                {overview.length} profissional(is)
+              </span>
+            </div>
+
+            {loading ? (
+              <div className="p-8 text-center text-sm text-[var(--text-muted)] animate-pulse">
+                Carregando ciclos operacionais...
+              </div>
+            ) : overview.length === 0 ? (
+              <div className="p-8 text-center text-sm text-[var(--text-muted)]">
+                Nenhum profissional com ciclo aberto no momento.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-[var(--surface-raised)] text-[var(--text-secondary)] text-xs uppercase border-b border-[var(--border-subtle)]">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Profissional</th>
+                      <th className="px-4 py-3 font-semibold">Status</th>
+                      <th className="px-4 py-3 font-semibold text-right">Comissões acumuladas</th>
+                      <th className="px-4 py-3 font-semibold text-right">Adiantamentos</th>
+                      <th className="px-4 py-3 font-semibold text-right">Saldo a pagar</th>
+                      <th className="px-4 py-3 font-semibold text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {overview.map((item) => {
+                      const cycle = item.currentCycle;
+                      const remaining = cycle?.remainingBalance || 0;
+                      const isNegative = remaining < 0;
+
+                      return (
+                        <tr key={item.member.id} className="hover:bg-[var(--surface-hover)] transition-colors">
+                          <td className="px-4 py-3.5">
+                            <div className="font-medium text-[var(--text-primary)]">{item.member.name}</div>
+                            <div className="text-xs text-[var(--text-muted)]">
+                              {cycle ? `Ciclo #${cycle.cycleNumber} aberto em ${formatDate(cycle.openedAt)}` : "Sem ciclo ativo"}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            {cycle ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                                EM APURAÇÃO
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
+                                SEM CICLO
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-medium text-[var(--text-primary)]">
+                            {brl(cycle?.grossCommission || 0)}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-medium text-amber-400">
+                            {brl(cycle?.advancesTotal || 0)}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-bold">
+                            <span className={isNegative ? "text-rose-400" : remaining === 0 ? "text-[var(--text-muted)]" : "text-emerald-400"}>
+                              {brl(remaining)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center justify-center gap-2 flex-wrap">
+                              <button
+                                onClick={() => handleOpenDetail(item.member.id)}
+                                className="px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+                              >
+                                Detalhes
+                              </button>
+                              {cycle && (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenAdvance(item)}
+                                    className="px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-medium hover:bg-amber-500/20 transition-colors cursor-pointer"
+                                  >
+                                    Adiantamento
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenPayout(item)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-[var(--gold)] text-[var(--text-inverse)] text-xs font-semibold hover:bg-[var(--gold-light)] transition-colors cursor-pointer"
+                                  >
+                                    Revisar pagamento
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <CommissionPaymentHistoryTab />
+      )}
 
       {/* Advance Dialog */}
       {advanceModal?.isOpen && (
