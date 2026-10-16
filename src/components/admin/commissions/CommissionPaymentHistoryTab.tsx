@@ -714,16 +714,18 @@ export function CommissionPaymentHistoryTab({
             size: A4 landscape;
             margin: 10mm;
           }
-          * {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          html, body {
+          :root, html, body {
+            color-scheme: light !important;
             background: #ffffff !important;
+            background-color: #ffffff !important;
             color: #111827 !important;
             font-size: 10pt !important;
             margin: 0 !important;
             padding: 0 !important;
+          }
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           aside,
           nav,
@@ -740,38 +742,86 @@ export function CommissionPaymentHistoryTab({
           .print-only {
             display: block !important;
           }
-          table {
+
+          /* Exclusive Scoped Print Styles for Commission History Table */
+          .commission-history-print-table {
             border-collapse: collapse !important;
             width: 100% !important;
             page-break-inside: auto !important;
+            background-color: #ffffff !important;
           }
-          tr {
+          .commission-history-print-table tr {
             page-break-inside: avoid !important;
             page-break-after: auto !important;
           }
-          thead {
+          .commission-history-print-table thead {
             display: table-header-group !important;
           }
-          tfoot {
+          .commission-history-print-table tfoot {
             display: table-footer-group !important;
           }
-          th, td {
+          .commission-history-print-table th {
             border: 1px solid #d1d5db !important;
-            padding: 6px 8px !important;
-            color: #111827 !important;
-            background: #ffffff !important;
-            font-size: 9pt !important;
-          }
-          th {
             background-color: #f3f4f6 !important;
+            color: #111827 !important;
+            padding: 6px 8px !important;
+            font-size: 8.5pt !important;
             font-weight: 700 !important;
             text-transform: uppercase !important;
+            letter-spacing: 0.025em !important;
           }
-          .payment-badge {
-            background: transparent !important;
-            border: 1px solid #6b7280 !important;
+          .commission-history-print-table td {
+            border: 1px solid #d1d5db !important;
+            background-color: #ffffff !important;
+            color: #111827 !important;
+            padding: 6px 8px !important;
+            font-size: 8.5pt !important;
+          }
+
+          /* Ensure all nested text in table cells defaults to high-contrast dark text */
+          .commission-history-print-table td div,
+          .commission-history-print-table td span {
+            color: inherit;
+          }
+
+          /* Specific high-contrast text overrides */
+          .commission-history-print-table .commission-print-date {
+            color: #374151 !important;
+            font-weight: 500 !important;
+          }
+          .commission-history-print-table .commission-print-member {
             color: #111827 !important;
             font-weight: 600 !important;
+          }
+          .commission-history-print-table .commission-print-inactive {
+            color: #dc2626 !important;
+            background-color: #fef2f2 !important;
+            border: 1px solid #fca5a5 !important;
+            font-weight: 600 !important;
+          }
+          .commission-history-print-table .commission-print-cycle-number {
+            color: #111827 !important;
+            font-weight: 700 !important;
+          }
+          .commission-history-print-table .commission-print-cycle-date {
+            color: #4b5563 !important;
+            font-size: 8pt !important;
+          }
+          .commission-history-print-table .commission-print-amount {
+            color: #047857 !important;
+            font-weight: 700 !important;
+          }
+          .commission-history-print-table .payment-badge {
+            background-color: #f3f4f6 !important;
+            border: 1px solid #d1d5db !important;
+            color: #1f2937 !important;
+            font-weight: 600 !important;
+            font-size: 8pt !important;
+            padding: 2px 6px !important;
+          }
+          .commission-history-print-table .commission-print-creator {
+            color: #4b5563 !important;
+            font-size: 8pt !important;
           }
         }
       `}</style>
@@ -1090,7 +1140,7 @@ export function CommissionPaymentHistoryTab({
           </div>
         ) : (
           <div className="overflow-x-auto print:overflow-visible">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm commission-history-print-table">
               <thead className="bg-[var(--surface-raised)] text-[var(--text-secondary)] text-xs uppercase border-b border-[var(--border-subtle)]">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Data do Pagamento</th>
@@ -1108,34 +1158,34 @@ export function CommissionPaymentHistoryTab({
                     key={item.id}
                     className="hover:bg-[var(--surface-hover)] transition-colors"
                   >
-                    <td className="px-4 py-3.5 whitespace-nowrap text-xs text-[var(--text-primary)] font-medium">
+                    <td className="px-4 py-3.5 whitespace-nowrap text-xs text-[var(--text-primary)] font-medium commission-print-date">
                       {formatDateTime(item.paidAt)}
                     </td>
                     <td className="px-4 py-3.5">
-                      <div className="font-medium text-[var(--text-primary)] flex items-center gap-1.5">
+                      <div className="font-medium text-[var(--text-primary)] flex items-center gap-1.5 commission-print-member">
                         <span>{item.member.name}</span>
                         {!item.member.isActive && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 commission-print-inactive">
                             Inativo
                           </span>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-xs text-[var(--text-secondary)]">
-                      <span className="font-semibold text-[var(--text-primary)]">
+                      <span className="font-semibold text-[var(--text-primary)] commission-print-cycle-number">
                         {`Ciclo #${item.cycle.cycleNumber}`}
                       </span>
-                      <div className="text-[11px] text-[var(--text-muted)]">
+                      <div className="text-[11px] text-[var(--text-muted)] commission-print-cycle-date">
                         Aberto em {formatDateOnly(item.cycle.openedAt)}
                       </div>
                     </td>
-                    <td className="px-4 py-3.5 text-right font-bold text-emerald-400 whitespace-nowrap">
+                    <td className="px-4 py-3.5 text-right font-bold text-emerald-400 whitespace-nowrap commission-print-amount">
                       {brl(item.amount)}
                     </td>
                     <td className="px-4 py-3.5 text-center">
                       {getPaymentMethodBadge(item.paymentMethod)}
                     </td>
-                    <td className="px-4 py-3.5 text-xs text-[var(--text-muted)]">
+                    <td className="px-4 py-3.5 text-xs text-[var(--text-muted)] commission-print-creator">
                       {item.createdBy?.name || "Sistema"}
                     </td>
                     <td className="px-4 py-3.5 text-center no-print">
