@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { requireAdmin } from "@/lib/admin-guard";
+import { redirect } from "next/navigation";
+import { requireManagerialAdmin } from "@/lib/admin-guard";
 import prisma from "@/lib/prisma";
 import { buildOnboardingSteps, countCompletedOnboardingSteps } from "@/lib/onboarding";
 import { OnboardingPublicLink } from "@/components/admin/OnboardingPublicLink";
@@ -19,7 +20,10 @@ function StatusBadge({ done }: { done: boolean }) {
 }
 
 export default async function OnboardingPage() {
-  const { barbershop, barbershopId } = await requireAdmin();
+  const { barbershop, barbershopId, isPlatform } = await requireManagerialAdmin();
+  if (!barbershopId) {
+    return redirect(isPlatform ? "/admin/platform" : "/acesso-negado");
+  }
 
   const [activeServicesCount, activeWorkingHoursCount, schedulableProfessionalsCount] =
     await Promise.all([

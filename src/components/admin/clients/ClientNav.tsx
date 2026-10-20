@@ -10,7 +10,7 @@ export function ClientNav() {
 
   const role = (session?.user as { role?: string } | undefined)?.role;
   const isPlatform = role === "SUPER_ADMIN";
-  const canAccessReactivation = !role || isPlatform || role === "OWNER" || role === "MANAGER";
+  const canAccessReactivation = isPlatform || role === "OWNER" || role === "MANAGER";
 
   const tabs = [
     { label: "Base de clientes", href: "/admin/clientes", exact: true },

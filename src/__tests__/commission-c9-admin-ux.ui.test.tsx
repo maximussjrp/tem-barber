@@ -19,6 +19,14 @@ vi.mock("next/navigation", () => ({
   redirect: (url: string) => mockRedirect(url),
 }));
 
+vi.mock("@/lib/admin-guard", () => ({
+  requireManagerialAdmin: vi.fn().mockResolvedValue({
+    role: "OWNER",
+    barbershopId: "shop-1",
+    isPlatform: false,
+  }),
+}));
+
 import { CommissionNav } from "@/components/admin/commissions/CommissionNav";
 import AdminCommissionsOverviewPage from "@/app/admin/comissoes/page";
 import CommissionPaymentsPage from "@/app/admin/comissoes/pagamentos/page";
@@ -171,8 +179,8 @@ describe("TEM BARBER — C9 Admin Commission UX Suite", () => {
     expect(screen.queryByText("Liberada")).not.toBeInTheDocument();
   });
 
-  it("4. /periodos redirects to /pagamentos", () => {
-    CommissionPeriodsPage();
+  it("4. /periodos redirects to /pagamentos", async () => {
+    await CommissionPeriodsPage();
     expect(mockRedirect).toHaveBeenCalledWith("/admin/comissoes/pagamentos");
   });
 

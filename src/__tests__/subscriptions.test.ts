@@ -21,7 +21,12 @@ vi.mock("next/navigation", () => ({ redirect: redirectMock, notFound: vi.fn() })
 
 // Import files to test
 import { isPlatformAdmin, isSubscriptionActive } from "@/lib/subscription-utils";
-import { requireAdmin } from "@/lib/admin-guard";
+import {
+  requireAdmin,
+  requireBillingAdmin,
+  requireManagerialAdmin,
+  RECEPTIONIST_HOME_PATH,
+} from "@/lib/admin-guard";
 import { requireMember } from "@/lib/member-guard";
 import { getAdminSession } from "@/lib/api-auth";
 import { PUT as updateSubscriptionApi } from "@/app/api/admin/platform-subscriptions/route";
@@ -463,5 +468,179 @@ describe("Phase 3.0 — Subscription Controls and Platform Admin", () => {
     const res = await getBarbershopApi(req, { params: Promise.resolve({ slug: "barbearia-courtesy" }) });
 
     expect(res.status).not.toBe(403);
+  });
+
+  describe("SEC-RBAC-001 — Guard Managerial, SUPER_ADMIN Sem Tenant & Interrupção Real NEXT_REDIRECT", () => {
+    beforeEach(() => {
+      redirectMock.mockImplementation((url: string) => {
+        throw new Error(`NEXT_REDIRECT:${url}`);
+      });
+    });
+
+    // 21. SEC-RBAC-001: requireManagerialAdmin interrompe com NEXT_REDIRECT para /admin/agendamentos quando RECEPTIONIST tem assinatura ativa
+    it("SEC-RBAC-001: requireManagerialAdmin rejeita RECEPTIONIST lançando NEXT_REDIRECT:/admin/agendamentos quando assinatura está ativa", async () => {
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "rec-id", email: "rec@barber.com", role: "RECEPTIONIST" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue({
+        id: "member-rec-id",
+        barbershopId: "shop-id",
+        role: "RECEPTIONIST",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        status: "ACTIVE",
+        currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      });
+
+      await expect(requireManagerialAdmin()).rejects.toThrow(`NEXT_REDIRECT:${RECEPTIONIST_HOME_PATH}`);
+      expect(redirectMock).toHaveBeenCalledTimes(1);
+      expect(redirectMock).toHaveBeenCalledWith(RECEPTIONIST_HOME_PATH);
+    });
+
+    // 22. SEC-RBAC-001: requireAdmin preserva acesso operacional da RECEPTIONIST quando assinatura está ativa
+    it("SEC-RBAC-001: requireAdmin permite RECEPTIONIST em rotas operacionais quando assinatura está ativa", async () => {
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "rec-id", email: "rec@barber.com", role: "RECEPTIONIST" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue({
+        id: "member-rec-id",
+        barbershopId: "shop-id",
+        role: "RECEPTIONIST",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        status: "ACTIVE",
+        currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      });
+
+      const ctx = await requireAdmin();
+      expect(redirectMock).not.toHaveBeenCalled();
+      expect(ctx).toMatchObject({
+        role: "RECEPTIONIST",
+        barbershopId: "shop-id",
+      });
+    });
+
+    // 23. SEC-RBAC-001: requireManagerialAdmin preserva redirecionamento para /assinatura-suspensa sem loop quando suspensa
+    it("SEC-RBAC-001: requireManagerialAdmin interrompe RECEPTIONIST com NEXT_REDIRECT:/assinatura-suspensa quando tenant está SUSPENDED", async () => {
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "rec-id", email: "rec@barber.com", role: "RECEPTIONIST" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue({
+        id: "member-rec-id",
+        barbershopId: "shop-id",
+        role: "RECEPTIONIST",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        status: "SUSPENDED",
+      });
+
+      await expect(requireManagerialAdmin()).rejects.toThrow("NEXT_REDIRECT:/assinatura-suspensa");
+      expect(redirectMock).toHaveBeenCalledTimes(1);
+      expect(redirectMock).toHaveBeenCalledWith("/assinatura-suspensa");
+    });
+
+    // 24. SEC-RBAC-001: requireManagerialAdmin autoriza OWNER, MANAGER e SUPER_ADMIN com tenant válido
+    it.each(["OWNER", "MANAGER", "SUPER_ADMIN"] as const)(
+      "SEC-RBAC-001: requireManagerialAdmin autoriza %s com tenant válido e assinatura ativa",
+      async (role) => {
+        getServerSessionMock.mockResolvedValue({
+          user: { id: `${role}-id`, email: `${role}@barber.com`, role },
+        });
+        prismaMock.barbershopMember.findFirst.mockResolvedValue({
+          id: `member-${role}`,
+          barbershopId: "shop-id",
+          role,
+        });
+        prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+          status: "ACTIVE",
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+        });
+
+        const ctx = await requireManagerialAdmin();
+        expect(redirectMock).not.toHaveBeenCalled();
+        expect(ctx).toMatchObject({ role, barbershopId: "shop-id" });
+      }
+    );
+
+    // 25. SEC-RBAC-001: requireManagerialAdmin preserva bloqueio de BARBER e CLIENT
+    it.each(["BARBER", "CLIENT"] as const)(
+      "SEC-RBAC-001: requireManagerialAdmin bloqueia %s lançando NEXT_REDIRECT:/acesso-negado",
+      async (role) => {
+        getServerSessionMock.mockResolvedValue({
+          user: { id: `${role}-id`, email: `${role}@barber.com`, role },
+        });
+        prismaMock.barbershopMember.findFirst.mockResolvedValue({
+          id: `member-${role}`,
+          barbershopId: "shop-id",
+          role,
+        });
+
+        await expect(requireManagerialAdmin()).rejects.toThrow("NEXT_REDIRECT:/acesso-negado");
+        expect(redirectMock).toHaveBeenCalledTimes(1);
+        expect(redirectMock).toHaveBeenCalledWith("/acesso-negado");
+      }
+    );
+
+    // 26. SEC-RBAC-001: SUPER_ADMIN sem tenant é encaminhado para /admin/platform em requireManagerialAdmin e mantido em requireAdmin para o AdminLayout
+    it("SEC-RBAC-001: SUPER_ADMIN sem barbershopId é redirecionado para /admin/platform em requireManagerialAdmin e não entra em loop em requireAdmin", async () => {
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "super-id", email: "max.guarinieri@gmail.com", role: "SUPER_ADMIN" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue(null);
+
+      await expect(requireManagerialAdmin()).rejects.toThrow("NEXT_REDIRECT:/admin/platform");
+      expect(redirectMock).toHaveBeenCalledTimes(1);
+      expect(redirectMock).toHaveBeenCalledWith("/admin/platform");
+
+      vi.clearAllMocks();
+      redirectMock.mockImplementation((url: string) => {
+        throw new Error(`NEXT_REDIRECT:${url}`);
+      });
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "super-id", email: "max.guarinieri@gmail.com", role: "SUPER_ADMIN" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue(null);
+
+      const adminCtx = await requireAdmin();
+      expect(redirectMock).not.toHaveBeenCalled();
+      expect(adminCtx).toMatchObject({
+        role: "SUPER_ADMIN",
+        isPlatform: true,
+        barbershopId: null,
+      });
+    });
+
+    // 27. SEC-RBAC-001: Perfis não-plataforma sem tenant continuam bloqueados com /acesso-negado
+    it.each(["OWNER", "MANAGER", "RECEPTIONIST"] as const)(
+      "SEC-RBAC-001: %s sem barbershopId recebe NEXT_REDIRECT:/acesso-negado",
+      async (role) => {
+        getServerSessionMock.mockResolvedValue({
+          user: { id: `${role}-no-tenant`, email: `${role}@notenant.com`, role },
+        });
+        prismaMock.barbershopMember.findFirst.mockResolvedValue(null);
+
+        await expect(requireManagerialAdmin()).rejects.toThrow("NEXT_REDIRECT:/acesso-negado");
+        expect(redirectMock).toHaveBeenCalledWith("/acesso-negado");
+      }
+    );
+
+    // 28. SEC-RBAC-001: requireBillingAdmin permanece inalterado
+    it("SEC-RBAC-001: requireBillingAdmin permanece inalterado para tenant suspenso", async () => {
+      getServerSessionMock.mockResolvedValue({
+        user: { id: "rec-id", email: "rec@barber.com", role: "RECEPTIONIST" },
+      });
+      prismaMock.barbershopMember.findFirst.mockResolvedValue({
+        id: "member-rec-id",
+        barbershopId: "shop-id",
+        role: "RECEPTIONIST",
+      });
+      prismaMock.tenantSubscription.findUnique.mockResolvedValue({
+        status: "SUSPENDED",
+      });
+
+      const ctx = await requireBillingAdmin();
+      expect(redirectMock).not.toHaveBeenCalled();
+      expect(ctx.role).toBe("RECEPTIONIST");
+    });
   });
 });

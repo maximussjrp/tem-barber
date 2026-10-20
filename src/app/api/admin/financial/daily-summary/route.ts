@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOperationalSession } from "@/lib/operations/permissions";
+import { canManageFinancial, requireOperationalSession } from "@/lib/operations/permissions";
 import { toCents } from "@/lib/operations/money";
 import { localDateToUTCBoundary, shiftDateISO } from "@/lib/time-utils";
 
@@ -22,7 +22,7 @@ function isValidDateString(str: string): boolean {
 export async function GET(request: NextRequest) {
   const { error, data } = await requireOperationalSession();
   if (error) return error;
-  if (data!.role === "BARBER") {
+  if (!canManageFinancial(data!.role) && data!.role !== "SUPER_ADMIN") {
     return NextResponse.json(
       {
         error: "FINANCIAL_TEAM_SCOPE_FORBIDDEN",

@@ -4,10 +4,16 @@ import DashboardPage from "@/app/admin/dashboard/page";
 import prisma from "@/lib/prisma";
 import React from "react";
 
-// Mock das dependências externas
-vi.mock("@/lib/admin-guard", () => ({
-  requireAdmin: vi.fn().mockResolvedValue({
+import { requireManagerialAdmin } from "@/lib/admin-guard";
+
+const { redirectMock, defaultAdminContext } = vi.hoisted(() => ({
+  redirectMock: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT:${url}`);
+  }),
+  defaultAdminContext: {
     barbershopId: "tenant-1",
+    role: "OWNER",
+    isPlatform: false,
     barbershop: {
       id: "tenant-1",
       name: "Barbearia Teste Tenant 1",
@@ -15,7 +21,17 @@ vi.mock("@/lib/admin-guard", () => ({
       description: "Descrição",
       phone: "11999999999",
     },
-  }),
+  },
+}));
+
+vi.mock("next/navigation", () => ({
+  redirect: redirectMock,
+}));
+
+vi.mock("@/lib/admin-guard", () => ({
+  requireAdmin: vi.fn().mockResolvedValue(defaultAdminContext),
+  requireManagerialAdmin: vi.fn().mockResolvedValue(defaultAdminContext),
+  RECEPTIONIST_HOME_PATH: "/admin/agendamentos",
 }));
 
 vi.mock("@/components/admin/BookingLinkShare", () => ({
@@ -243,5 +259,69 @@ describe("Dashboard Page - Finance & Availability Tests", () => {
       const args = call[0];
       expect(args?.where?.barbershopId).toBe("tenant-1");
     }
+  });
+
+  it("SEC-RBAC-001 - Bloqueia RECEPTIONIST antes de executar queries financeiras do dashboard", async () => {
+    vi.mocked(requireManagerialAdmin).mockImplementationOnce(async () => {
+      throw new Error("NEXT_REDIRECT:/admin/agendamentos");
+    });
+
+    await expect(DashboardPage()).rejects.toThrow("NEXT_REDIRECT:/admin/agendamentos");
+
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+    expect(prisma.service.count).not.toHaveBeenCalled();
+    expect(prisma.workingHour.count).not.toHaveBeenCalled();
+    expect(prisma.barbershopMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("SEC-RBAC-001 - Encaminha SUPER_ADMIN sem tenant para /admin/platform sem página em branco e sem queries", async () => {
+    vi.mocked(requireManagerialAdmin).mockResolvedValueOnce({
+      barbershopId: null as any,
+      barbershop: null,
+      role: "SUPER_ADMIN",
+      isPlatform: true,
+      session: { user: { role: "SUPER_ADMIN" }, expires: "2099-01-01T00:00:00.000Z" } as any,
+      userId: "super-1",
+      member: null,
+    });
+
+    await expect(DashboardPage()).rejects.toThrow("NEXT_REDIRECT:/admin/platform");
+
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+    expect(prisma.service.count).not.toHaveBeenCalled();
+  });
+
+  it("SEC-RBAC-001 - Bloqueia perfil sem tenant não-plataforma com /acesso-negado sem queries", async () => {
+    vi.mocked(requireManagerialAdmin).mockResolvedValueOnce({
+      barbershopId: null as any,
+      barbershop: null,
+      role: "OWNER",
+      isPlatform: false,
+      session: { user: { role: "OWNER" }, expires: "2099-01-01T00:00:00.000Z" } as any,
+      userId: "owner-1",
+      member: null,
+    });
+
+    await expect(DashboardPage()).rejects.toThrow("NEXT_REDIRECT:/acesso-negado");
+
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+    expect(prisma.service.count).not.toHaveBeenCalled();
+  });
+
+  it("SEC-RBAC-001 - Renderiza dashboard normalmente para MANAGER com tenant válido", async () => {
+    vi.mocked(requireManagerialAdmin).mockResolvedValueOnce({
+      barbershopId: "tenant-1",
+      role: "MANAGER",
+      isPlatform: false,
+      barbershop: defaultAdminContext.barbershop as any,
+      session: { user: { role: "MANAGER" }, expires: "2099-01-01T00:00:00.000Z" } as any,
+      userId: "mgr-1",
+      member: null,
+    });
+
+    const pageElement = await DashboardPage();
+    render(pageElement);
+
+    expect(prisma.appointment.findMany).toHaveBeenCalled();
   });
 });
