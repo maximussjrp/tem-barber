@@ -90,6 +90,7 @@ export default function ComandaDetailPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [modalError, setModalError] = useState("");
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -180,6 +181,7 @@ export default function ComandaDetailPage() {
   async function mutate(url: string, body: unknown, method = "POST") {
     setBusy(true);
     setError("");
+    setModalError("");
     try {
       const res = await fetch(url, {
         method,
@@ -195,8 +197,12 @@ export default function ComandaDetailPage() {
       if (msg.includes("TOTAL_BELOW_PAID") || msg.includes("abaixo do valor já pago") || msg.includes("reduziriam o total da comanda")) {
         msg = "Estorne primeiro o valor pago excedente para cancelar este item.";
       }
-      setError(msg);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      if (showPaymentModal || showServiceModal || showProductModal || showDiscountModal || showReopenModal || showRefundModal || showCancelModal) {
+        setModalError(msg);
+      } else {
+        setError(msg);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
       return false;
     } finally {
       setBusy(false);
@@ -205,12 +211,20 @@ export default function ComandaDetailPage() {
 
   async function handleFinalize() {
     if (!comanda) return;
+    setModalError("");
     setShowPaymentModal(true);
   }
 
   async function handleAddService(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedServiceId || !selectedExecutorId) return;
+    if (!selectedServiceId) {
+      setModalError("Selecione o serviço.");
+      return;
+    }
+    if (!selectedExecutorId) {
+      setModalError("Selecione o profissional.");
+      return;
+    }
     const ok = await mutate(`/api/admin/comandas/${id}/items`, {
       type: "SERVICE",
       serviceId: selectedServiceId,
@@ -220,6 +234,7 @@ export default function ComandaDetailPage() {
     });
     if (ok) {
       setShowServiceModal(false);
+      setModalError("");
       setSelectedServiceId("");
       setSelectedExecutorId("");
       setClubBenefitRequested(false);
@@ -229,14 +244,17 @@ export default function ComandaDetailPage() {
 
   async function handleAddProduct(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedProductId) return;
+    if (!selectedProductId) {
+      setModalError("Selecione o produto.");
+      return;
+    }
     if (!selectedSellerId) {
-      setError("Selecione o vendedor do produto.");
+      setModalError("Selecione o vendedor do produto.");
       return;
     }
     const qty = Number(productQuantity);
     if (qty <= 0) {
-      setError("Quantidade deve ser maior que zero");
+      setModalError("Quantidade deve ser maior que zero");
       return;
     }
 
@@ -245,7 +263,7 @@ export default function ComandaDetailPage() {
       const inCart = comanda?.items.filter(i => i.type === "PRODUCT" && i.description === p.name && i.status !== "CANCELLED").reduce((sum, i) => sum + Number(i.quantity), 0) || 0;
       const available = Number(p.currentStock) - inCart;
       if (qty > available) {
-        setError(`Quantidade indisponível. Estoque restante: ${Math.max(0, available)}`);
+        setModalError(`Quantidade indisponível. Estoque restante: ${Math.max(0, available)}`);
         return;
       }
     }
@@ -260,6 +278,7 @@ export default function ComandaDetailPage() {
     });
     if (ok) {
       setShowProductModal(false);
+      setModalError("");
       setSelectedProductId("");
       setSelectedSellerId("");
       setProductQuantity("1");
@@ -272,16 +291,17 @@ export default function ComandaDetailPage() {
     e.preventDefault();
     const amountNum = Number(discountAmount);
     if (amountNum < 0) {
-      setError("Desconto não pode ser negativo.");
+      setModalError("Desconto não pode ser negativo.");
       return;
     }
     if (amountNum > 0 && !discountReason.trim()) {
-      setError("Justificativa obrigatória para o desconto.");
+      setModalError("Justificativa obrigatória para o desconto.");
       return;
     }
     const ok = await mutate(`/api/admin/comandas/${id}/items`, { type: "DISCOUNT", amount: amountNum, description: discountReason.trim() });
     if (ok) {
       setShowDiscountModal(false);
+      setModalError("");
       setDiscountAmount("");
       setDiscountReason("");
     }
@@ -303,20 +323,24 @@ export default function ComandaDetailPage() {
     }
   ) {
     const ok = await mutate(`/api/admin/comandas/${id}/finalize`, { payments, ...options });
-    if (ok) setShowPaymentModal(false);
+    if (ok) {
+      setShowPaymentModal(false);
+      setModalError("");
+    }
   }
 
   async function handleReopen(e: React.FormEvent) {
     e.preventDefault();
     const reason = reopenReason.trim();
     if (reason.length < 5) {
-      setError("Informe um motivo com pelo menos 5 caracteres para reabrir a comanda.");
+      setModalError("Informe um motivo com pelo menos 5 caracteres para reabrir a comanda.");
       return;
     }
 
     const ok = await mutate(`/api/admin/comandas/${id}/reopen`, { reason });
     if (ok) {
       setShowReopenModal(false);
+      setModalError("");
       setReopenReason("");
       await load();
     }
@@ -327,11 +351,11 @@ export default function ComandaDetailPage() {
     if (!selectedPayment) return;
     const reason = refundReason.trim();
     if (reason.length < 5) {
-      setError("O motivo do estorno deve ter pelo menos 5 caracteres.");
+      setModalError("O motivo do estorno deve ter pelo menos 5 caracteres.");
       return;
     }
     if (!refundConfirmed) {
-      setError("Confirme que a devolução real será fora do sistema.");
+      setModalError("Confirme que a devolução real será fora do sistema.");
       return;
     }
     const ok = await mutate(`/api/admin/comandas/${id}/payments/${selectedPayment.id}/refund`, {
@@ -340,6 +364,7 @@ export default function ComandaDetailPage() {
     });
     if (ok) {
       setShowRefundModal(false);
+      setModalError("");
       setSelectedPayment(null);
       setRefundAmount("");
       setRefundReason("");
@@ -352,11 +377,11 @@ export default function ComandaDetailPage() {
     e.preventDefault();
     const reason = cancelReason.trim();
     if (reason.length < 5) {
-      setError("O motivo do cancelamento deve ter pelo menos 5 caracteres.");
+      setModalError("O motivo do cancelamento deve ter pelo menos 5 caracteres.");
       return;
     }
     if (!cancelConfirmed) {
-      setError("Confirme que os estornos reais foram/serão feitos fora do sistema.");
+      setModalError("Confirme que os estornos reais foram/serão feitos fora do sistema.");
       return;
     }
     const ok = await mutate(`/api/admin/comandas/${id}/cancel`, {
@@ -365,6 +390,7 @@ export default function ComandaDetailPage() {
     });
     if (ok) {
       setShowCancelModal(false);
+      setModalError("");
       setCancelReason("");
       setCancelConfirmed(false);
       await load();
@@ -447,6 +473,7 @@ export default function ComandaDetailPage() {
             <button
               disabled={busy}
               onClick={() => {
+                setModalError("");
                 setCancelReason("");
                 setCancelConfirmed(false);
                 setCancelRefundAll(true);
@@ -460,7 +487,10 @@ export default function ComandaDetailPage() {
           {canReopenComanda && (
             <button
               disabled={busy}
-              onClick={() => setShowReopenModal(true)}
+              onClick={() => {
+                setModalError("");
+                setShowReopenModal(true);
+              }}
               className="px-4 py-2 rounded-lg border border-[var(--gold-border)] bg-[var(--surface)] hover:bg-[var(--surface-hover)] text-[var(--gold)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
             >
               Reabrir comanda
@@ -469,7 +499,10 @@ export default function ComandaDetailPage() {
           {comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0 && comanda.permissions?.canManageDebt && (
             <button
               disabled={busy}
-              onClick={() => setShowPaymentModal(true)}
+              onClick={() => {
+                setModalError("");
+                setShowPaymentModal(true);
+              }}
               className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
             >
               Receber saldo
@@ -495,9 +528,10 @@ export default function ComandaDetailPage() {
             <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex justify-between items-center bg-[var(--surface-raised)]">
               <h2 className="font-semibold text-[var(--text-primary)]">Itens do Atendimento</h2>
               <div className="flex gap-2">
-                <button disabled={busy || comandaClosed} onClick={() => setShowServiceModal(true)} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Serviço</button>
-                <button disabled={busy || comandaClosed} onClick={() => setShowProductModal(true)} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Produto</button>
+                <button disabled={busy || comandaClosed} onClick={() => { setModalError(""); setShowServiceModal(true); }} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Serviço</button>
+                <button disabled={busy || comandaClosed} onClick={() => { setModalError(""); setShowProductModal(true); }} className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-30 cursor-pointer transition-colors">Produto</button>
                 <button disabled={busy || comandaClosed} onClick={() => {
+                  setModalError("");
                   const existingDiscount = comanda.items.find(i => i.type === "DISCOUNT");
                   if (existingDiscount) {
                     setDiscountAmount(existingDiscount.unitPrice);
@@ -543,6 +577,7 @@ export default function ComandaDetailPage() {
                           setSelectedProductId(item.productId);
                           setSelectedSellerId("");
                           setProductQuantity("1");
+                          setModalError("");
                           setShowProductModal(true);
                         }
                       }
@@ -616,6 +651,7 @@ export default function ComandaDetailPage() {
                                 setRefundAmount(refundableBalance.toFixed(2));
                                 setRefundReason("");
                                 setRefundConfirmed(false);
+                                setModalError("");
                                 setShowRefundModal(true);
                               }}
                               className="mt-1 text-xs text-[var(--gold)] hover:text-[var(--gold-light)] underline cursor-pointer disabled:opacity-50"
@@ -697,6 +733,7 @@ export default function ComandaDetailPage() {
             <button
               disabled={busy}
               onClick={() => {
+                setModalError("");
                 setCancelReason("");
                 setCancelConfirmed(false);
                 setCancelRefundAll(true);
@@ -710,7 +747,10 @@ export default function ComandaDetailPage() {
           {canReopenComanda && (
             <button
               disabled={busy}
-              onClick={() => setShowReopenModal(true)}
+              onClick={() => {
+                setModalError("");
+                setShowReopenModal(true);
+              }}
               className="w-full py-3 rounded-lg border border-[var(--gold-border)] bg-[var(--surface-raised)] text-[var(--gold)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
             >
               Reabrir comanda
@@ -719,7 +759,10 @@ export default function ComandaDetailPage() {
           {comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0 && comanda.permissions?.canManageDebt && (
             <button
               disabled={busy}
-              onClick={() => setShowPaymentModal(true)}
+              onClick={() => {
+                setModalError("");
+                setShowPaymentModal(true);
+              }}
               className="w-full py-3 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer"
             >
               Receber saldo
@@ -747,18 +790,41 @@ export default function ComandaDetailPage() {
           canManageDebt={Boolean(comanda.permissions?.canManageDebt)}
           isClosedWithDebt={comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0}
           members={members.map(m => ({ id: m.id, name: m.user.name }))}
-          onPay={handlePay} 
-          onClose={() => setShowPaymentModal(false)} 
+          error={modalError}
+          onClearError={() => setModalError("")}
+          onPay={handlePay}
+          onClose={() => {
+            setModalError("");
+            setShowPaymentModal(false);
+          }}
         />
       )}
 
       {showReopenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleReopen} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Reabrir comanda</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowReopenModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <p className="text-sm text-[var(--text-secondary)]">
                 Pagamentos e registros financeiros existentes serao preservados. A comanda voltara para pagamento pendente e podera ser ajustada sem reduzir o total abaixo do valor ja pago.
               </p>
@@ -768,7 +834,10 @@ export default function ComandaDetailPage() {
                 </label>
                 <textarea
                   value={reopenReason}
-                  onChange={e => setReopenReason(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setReopenReason(e.target.value);
+                  }}
                   minLength={5}
                   maxLength={500}
                   required
@@ -779,7 +848,7 @@ export default function ComandaDetailPage() {
               </div>
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowReopenModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowReopenModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Confirmar reabertura</button>
             </div>
           </form>
@@ -789,15 +858,37 @@ export default function ComandaDetailPage() {
       {showServiceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleAddService} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Adicionar Serviço</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowServiceModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Serviço</label>
+                <label htmlFor="service-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Serviço</label>
                 <select
+                  id="service-select"
                   value={selectedServiceId}
-                  onChange={e => setSelectedServiceId(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setSelectedServiceId(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 >
@@ -806,10 +897,14 @@ export default function ComandaDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Profissional</label>
+                <label htmlFor="executor-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Profissional</label>
                 <select
+                  id="executor-select"
                   value={selectedExecutorId}
-                  onChange={e => setSelectedExecutorId(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setSelectedExecutorId(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 >
@@ -871,7 +966,7 @@ export default function ComandaDetailPage() {
               )}
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowServiceModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowServiceModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Adicionar</button>
             </div>
           </form>
@@ -881,15 +976,37 @@ export default function ComandaDetailPage() {
       {showProductModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleAddProduct} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Adicionar Produto</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowProductModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Produto</label>
+                <label htmlFor="product-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Produto</label>
                 <select
+                  id="product-select"
                   value={selectedProductId}
-                  onChange={e => setSelectedProductId(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setSelectedProductId(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 >
@@ -903,10 +1020,14 @@ export default function ComandaDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Vendedor</label>
+                <label htmlFor="seller-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Vendedor</label>
                 <select
+                  id="seller-select"
                   value={selectedSellerId}
-                  onChange={e => setSelectedSellerId(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setSelectedSellerId(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 >
@@ -917,13 +1038,17 @@ export default function ComandaDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Quantidade</label>
+                <label htmlFor="product-quantity-input" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Quantidade</label>
                 <input
+                  id="product-quantity-input"
                   type="number"
                   min="1"
                   step="1"
                   value={productQuantity}
-                  onChange={e => setProductQuantity(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setProductQuantity(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
@@ -973,7 +1098,7 @@ export default function ComandaDetailPage() {
               )}
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowProductModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowProductModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Adicionar</button>
             </div>
           </form>
@@ -983,10 +1108,28 @@ export default function ComandaDetailPage() {
       {showDiscountModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleAddDiscount} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Desconto Geral da Comanda</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowDiscountModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Valor do Desconto (R$)</label>
                 <input
@@ -994,7 +1137,10 @@ export default function ComandaDetailPage() {
                   step="0.01"
                   min="0"
                   value={discountAmount}
-                  onChange={e => setDiscountAmount(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setDiscountAmount(e.target.value);
+                  }}
                   placeholder="0.00 (deixe vazio para remover)"
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
@@ -1004,7 +1150,10 @@ export default function ComandaDetailPage() {
                 <input
                   type="text"
                   value={discountReason}
-                  onChange={e => setDiscountReason(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setDiscountReason(e.target.value);
+                  }}
                   maxLength={255}
                   placeholder="Ex: Desconto autorizado pelo gerente"
                   required={Number(discountAmount) > 0}
@@ -1013,7 +1162,7 @@ export default function ComandaDetailPage() {
               </div>
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowDiscountModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowDiscountModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Aplicar</button>
             </div>
           </form>
@@ -1023,10 +1172,28 @@ export default function ComandaDetailPage() {
       {showRefundModal && selectedPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleRefund} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Registrar estorno</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowRefundModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <p className="text-sm text-[var(--text-secondary)]">
                 Este estorno registra a correção no sistema. A devolução real ao cliente deve ser feita fora do sistema.
               </p>
@@ -1040,7 +1207,10 @@ export default function ComandaDetailPage() {
                   min="0.01"
                   max={(Number(selectedPayment.amount) - Number(selectedPayment.refundedAmount || 0)).toFixed(2)}
                   value={refundAmount}
-                  onChange={e => setRefundAmount(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setRefundAmount(e.target.value);
+                  }}
                   required
                   className="w-full bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
                 />
@@ -1051,7 +1221,10 @@ export default function ComandaDetailPage() {
                 </label>
                 <textarea
                   value={refundReason}
-                  onChange={e => setRefundReason(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setRefundReason(e.target.value);
+                  }}
                   minLength={5}
                   maxLength={500}
                   required
@@ -1064,7 +1237,10 @@ export default function ComandaDetailPage() {
                 <input
                   type="checkbox"
                   checked={refundConfirmed}
-                  onChange={e => setRefundConfirmed(e.target.checked)}
+                  onChange={e => {
+                    setModalError("");
+                    setRefundConfirmed(e.target.checked);
+                  }}
                   required
                   className="mt-1"
                 />
@@ -1074,7 +1250,7 @@ export default function ComandaDetailPage() {
               </label>
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowRefundModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowRefundModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy || !refundConfirmed} className="px-4 py-2 rounded-lg bg-[var(--gold)] hover:bg-[var(--gold-light)] text-[var(--text-inverse)] font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Confirmar estorno</button>
             </div>
           </form>
@@ -1084,10 +1260,28 @@ export default function ComandaDetailPage() {
       {showCancelModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] backdrop-blur-sm p-4">
           <form onSubmit={handleCancelComanda} className="bg-[var(--surface)] border border-[var(--border-strong)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]">
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] flex justify-between items-center">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">Cancelar comanda</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError("");
+                  setShowCancelModal(false);
+                }}
+                disabled={busy}
+                aria-label="Fechar modal"
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 text-xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
             <div className="p-5 space-y-4">
+              {modalError && (
+                <div role="alert" className="rounded-lg border border-[var(--border-danger)] bg-[var(--danger-subtle)] p-3 text-sm text-[var(--danger)] font-medium flex items-start gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{modalError}</span>
+                </div>
+              )}
               <div className="p-3 bg-[var(--danger-subtle)] border border-[var(--border-danger)] text-[var(--danger)] text-sm rounded-lg font-semibold">
                 ⚠️ AVISO: Esta ação cancelará permanentemente todos os itens da comanda e reverterá estoque, clube e comissões. Ela não pode ser desfeita.
               </div>
@@ -1103,7 +1297,10 @@ export default function ComandaDetailPage() {
                 </label>
                 <textarea
                   value={cancelReason}
-                  onChange={e => setCancelReason(e.target.value)}
+                  onChange={e => {
+                    setModalError("");
+                    setCancelReason(e.target.value);
+                  }}
                   minLength={5}
                   maxLength={500}
                   required
@@ -1127,7 +1324,10 @@ export default function ComandaDetailPage() {
                 <input
                   type="checkbox"
                   checked={cancelConfirmed}
-                  onChange={e => setCancelConfirmed(e.target.checked)}
+                  onChange={e => {
+                    setModalError("");
+                    setCancelConfirmed(e.target.checked);
+                  }}
                   required
                   className="mt-1"
                 />
@@ -1137,7 +1337,7 @@ export default function ComandaDetailPage() {
               </label>
             </div>
             <div className="p-5 border-t border-[var(--border-subtle)] flex justify-end gap-3 bg-[var(--surface-raised)]">
-              <button type="button" onClick={() => setShowCancelModal(false)} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
+              <button type="button" onClick={() => { setModalError(""); setShowCancelModal(false); }} className="px-4 py-2 rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors text-sm font-semibold">Cancelar</button>
               <button type="submit" disabled={busy || !cancelConfirmed} className="px-4 py-2 rounded-lg bg-[var(--danger)] hover:bg-red-500 text-white font-bold disabled:opacity-50 cursor-pointer transition-colors text-sm">Confirmar cancelamento</button>
             </div>
           </form>

@@ -138,10 +138,11 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
                   type="button"
                   disabled={busy}
                   onClick={() => onAddDuplicate(item)}
+                  aria-label={item.type === "SERVICE" ? `Adicionar mais um deste serviço: ${item.description}` : `Adicionar mais um deste produto: ${item.description}`}
                   title={item.type === "SERVICE" ? "Adicionar mais um deste serviço" : "Adicionar mais um deste produto"}
-                  className="w-5 h-5 flex items-center justify-center text-xs font-bold rounded-full bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-[var(--text-inverse)] transition-colors disabled:opacity-50 cursor-pointer"
+                  className="min-w-[44px] min-h-[44px] w-11 h-11 p-2 flex items-center justify-center text-xs font-bold rounded-full bg-[var(--brand)] hover:bg-[var(--brand-hover)] text-[var(--text-inverse)] transition-colors disabled:opacity-50 cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                 >
-                  +
+                  <span className="text-lg leading-none select-none">+</span>
                 </button>
               )}
             </div>
@@ -159,8 +160,8 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
                 const isSelected = !!(item.clubBenefitRequested && item.requestedClubPlanBenefitId === b.id);
 
                 return (
-                  <div key={b.id} className="flex items-center gap-2 rounded border border-[var(--gold-border)] bg-[var(--brand-subtle)] px-2 py-1.5">
-                    <label className={`flex items-center gap-2 text-xs font-semibold text-[var(--gold)] ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>
+                  <div key={b.id} className="flex items-center gap-2 rounded border border-[var(--gold-border)] bg-[var(--brand-subtle)] px-2.5 py-1.5 min-h-[44px]">
+                    <label className={`flex items-center gap-2 text-xs font-semibold text-[var(--gold)] min-h-[36px] touch-manipulation ${isDisabled ? "opacity-50" : "cursor-pointer"}`}>
                       <input
                         type="checkbox"
                         disabled={isDisabled || busy}
@@ -174,7 +175,7 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
                             });
                           }
                         }}
-                        className="rounded border-[var(--border-subtle)] focus:ring-[var(--gold)]"
+                        className="w-4 h-4 rounded border-[var(--border-subtle)] focus:ring-[var(--gold)]"
                       />
                       <span>{label}</span>
                     </label>
@@ -190,7 +191,8 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
                             });
                           }
                         }}
-                        className="rounded bg-[var(--gold)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--text-inverse)] disabled:opacity-50"
+                        aria-label={`Aplicar benefício do clube para ${item.description}`}
+                        className="min-h-[44px] rounded-lg bg-[var(--gold)] px-3 py-2 text-xs font-bold uppercase tracking-wide text-[var(--text-inverse)] hover:bg-[var(--gold-light)] disabled:opacity-50 cursor-pointer touch-manipulation transition-colors"
                       >
                         Aplicar benefício do clube
                       </button>
@@ -217,7 +219,8 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
               <button
                 disabled={busy}
                 onClick={() => onConclude(item.id)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-success-subtle text-success border border-success/20 hover:bg-success/20 transition-colors disabled:opacity-50"
+                aria-label={`Concluir item ${item.description}`}
+                className="min-h-[44px] px-3.5 py-2 text-xs font-semibold rounded-lg bg-success-subtle text-success border border-success/20 hover:bg-success/20 transition-colors disabled:opacity-50 touch-manipulation cursor-pointer flex items-center justify-center"
               >
                 Concluir
               </button>
@@ -226,7 +229,8 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
               <button
                 disabled={busy}
                 onClick={handleCancelClick}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-danger-subtle text-danger border border-danger/20 hover:bg-danger/20 transition-colors disabled:opacity-50"
+                aria-label={`Cancelar item ${item.description}`}
+                className="min-h-[44px] px-3.5 py-2 text-xs font-semibold rounded-lg bg-danger-subtle text-danger border border-danger/20 hover:bg-danger/20 transition-colors disabled:opacity-50 touch-manipulation cursor-pointer flex items-center justify-center"
               >
                 Cancelar
               </button>
