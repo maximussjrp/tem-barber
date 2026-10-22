@@ -48,13 +48,15 @@ interface Props {
   comandaClosed: boolean;
   onConclude: (id: string) => void;
   onCancel: (id: string) => void;
-  onUpdate?: (id: string, body: { clubBenefitRequested: boolean; requestedClubPlanBenefitId: string | null }) => void;
+  onUncomplete?: (id: string) => void;
+  onUpdate?: (id: string, body: { clubBenefitRequested?: boolean; requestedClubPlanBenefitId?: string | null; status?: string }) => void;
   onAddDuplicate?: (item: Item) => void;
   clubBalance?: ClubBalance | null;
 }
 
-export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCancel, onUpdate, onAddDuplicate, clubBalance }: Props) {
+export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCancel, onUncomplete, onUpdate, onAddDuplicate, clubBalance }: Props) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isUncompleteConfirmOpen, setIsUncompleteConfirmOpen] = useState(false);
 
   function brl(value: string | number) {
     return Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -215,8 +217,9 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
           </span>
           
           <div className="flex items-center gap-2">
-            {!isDone && !isCancelled && !comandaClosed && item.type !== "DISCOUNT" && item.type !== "SURCHARGE" && (
+            {!isDone && !isCancelled && !comandaClosed && (item.type === "SERVICE" || item.type === "PRODUCT") && (
               <button
+                type="button"
                 disabled={busy}
                 onClick={() => onConclude(item.id)}
                 aria-label={`Concluir item ${item.description}`}
@@ -225,8 +228,20 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
                 Concluir
               </button>
             )}
-            {!isCancelled && !comandaClosed && (
+            {isDone && !comandaClosed && item.type === "SERVICE" && (
               <button
+                type="button"
+                disabled={busy}
+                onClick={() => setIsUncompleteConfirmOpen(true)}
+                aria-label={`Marcar como não concluído: ${item.description}`}
+                className="min-h-[44px] px-3.5 py-2 text-xs font-semibold rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors disabled:opacity-50 touch-manipulation cursor-pointer flex items-center justify-center"
+              >
+                Marcar como não concluído
+              </button>
+            )}
+            {!isCancelled && !comandaClosed && (item.type !== "SERVICE" || !isDone) && (
+              <button
+                type="button"
                 disabled={busy}
                 onClick={handleCancelClick}
                 aria-label={`Cancelar item ${item.description}`}
@@ -248,6 +263,25 @@ export function ComandaItemCard({ item, busy, comandaClosed, onConclude, onCance
         confirmLabel="Sim, cancelar item"
         cancelLabel="Voltar"
         variant="danger"
+        isLoading={busy}
+      />
+
+      <ConfirmDialog
+        isOpen={isUncompleteConfirmOpen}
+        onClose={() => setIsUncompleteConfirmOpen(false)}
+        onConfirm={() => {
+          setIsUncompleteConfirmOpen(false);
+          if (onUncomplete) {
+            onUncomplete(item.id);
+          } else if (onUpdate) {
+            onUpdate(item.id, { status: "PENDING" });
+          }
+        }}
+        title="Marcar serviço como não concluído?"
+        description="O serviço voltará para Pendente e poderá ser ajustado antes de uma nova conclusão."
+        confirmLabel="Confirmar alteração"
+        cancelLabel="Voltar"
+        variant="primary"
         isLoading={busy}
       />
     </>

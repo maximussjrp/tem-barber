@@ -554,6 +554,7 @@ export default function ComandaDetailPage() {
                     comandaClosed={comandaClosed}
                     clubBalance={clubBalance}
                     onConclude={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "DONE" }, "PATCH")}
+                    onUncomplete={(itemId: string) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "PENDING" }, "PATCH")}
                     onCancel={(itemId) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, { status: "CANCELLED" }, "PATCH")}
                     onUpdate={(itemId, body) => mutate(`/api/admin/comandas/${id}/items/${itemId}`, body, "PATCH")}
                     onAddDuplicate={async (item) => {
