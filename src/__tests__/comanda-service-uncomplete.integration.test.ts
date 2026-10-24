@@ -22,6 +22,7 @@ import {
   upsertCommissionConfig,
 } from "@/lib/operations/commissions";
 import { toCents } from "@/lib/operations/money";
+import { bootstrapFinancialPlan } from "@/lib/financial/default-plan";
 
 vi.mock("@/lib/operations/permissions", async () => {
   const actual = await vi.importActual<typeof import("@/lib/operations/permissions")>("@/lib/operations/permissions");
@@ -189,6 +190,9 @@ async function seedTenant(label: string) {
       trackStock: true,
     },
   });
+
+  // Inicializa o plano financeiro padrão e os mappings de receita (COMANDA_SERVICE_REVENUE, etc.)
+  await bootstrapFinancialPlan(prisma, barbershop.id);
 
   return { barbershop, ownerMember, barberMember, service, product };
 }
@@ -688,5 +692,62 @@ describeIfSafePostgres("TEMBARBER_UX1_1 — Testes de Integração com PostgreSQ
     expect(patchRes.status).toBe(422);
     const patchBody = await patchRes.json();
     expect(patchBody.error).toBe("INVALID_OPERATION");
+  });
+
+  it("Cenário G — Preservação de benefícios de Clube e Estoque no ciclo DONE -> PENDING", async () => {
+    const t = await seedTenant("G");
+    const comanda = await prisma.comanda.create({
+      data: { barbershopId: t.barbershop.id, customerName: "Cliente G", status: ComandaStatus.OPEN },
+    });
+    await prisma.$transaction((tx) =>
+      addServiceItem(tx, {
+        barbershopId: t.barbershop.id,
+        comandaId: comanda.id,
+        serviceId: t.service.id,
+        executorId: t.barberMember.id,
+      })
+    );
+
+    const item = await prisma.comandaItem.findFirst({
+      where: { comandaId: comanda.id, barbershopId: t.barbershop.id, serviceId: t.service.id },
+    });
+    expect(item).not.toBeNull();
+
+    mockedRequireOperationalSession.mockResolvedValue({
+      error: null,
+      data: { userId: t.ownerMember.userId, memberId: t.ownerMember.id, role: "OWNER", barbershopId: t.barbershop.id },
+    });
+
+    // 1. Conclui serviço (PENDING -> DONE)
+    let res = await patchRoute(
+      new NextRequest(`http://localhost/api/admin/comandas/${comanda.id}/items/${item!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "DONE" }),
+      }),
+      { params: Promise.resolve({ id: comanda.id, itemId: item!.id }) }
+    );
+    expect(res.status).toBe(200);
+
+    // 2. Reverte conclusão (DONE -> PENDING)
+    res = await patchRoute(
+      new NextRequest(`http://localhost/api/admin/comandas/${comanda.id}/items/${item!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "PENDING" }),
+      }),
+      { params: Promise.resolve({ id: comanda.id, itemId: item!.id }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Verifica que nenhum movimento de estoque de produto foi gerado (pois é serviço)
+    const movements = await prisma.stockMovement.findMany({
+      where: { comandaItemId: item!.id },
+    });
+    expect(movements).toHaveLength(0);
+
+    // Verifica que estoque do produto da barbearia permaneceu inalterado em 10.000
+    const prod = await prisma.product.findUnique({ where: { id: t.product.id } });
+    expect(Number(prod!.currentStock)).toBe(10);
   });
 });
