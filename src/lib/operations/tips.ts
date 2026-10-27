@@ -2,6 +2,7 @@ import { PaymentMethod, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { fromCents, MoneyValue, positiveCents, toCents } from "./money";
 import { OperationalError } from "./comandas";
+import { parseAndValidatePaymentDate, validateCashPaymentBackdating } from "./payment-dates";
 
 export async function recordTip(
   tx: Prisma.TransactionClient,
@@ -16,6 +17,7 @@ export async function recordTip(
     actorMemberId?: string | null;
     actorRole?: string | null;
     idempotencyKey?: string | null;
+    paidAt?: Date | string | null;
   }
 ) {
   if (input.method === "CUSTOMER_CREDIT") {
@@ -35,6 +37,8 @@ export async function recordTip(
   }
 
   const amountCents = positiveCents(input.amount, "Valor da gorjeta");
+  const { effectivePaidAt, isBackdated } = parseAndValidatePaymentDate(input.paidAt);
+  validateCashPaymentBackdating(input.method, isBackdated);
 
   const checkExisting = async () => {
     if (!input.idempotencyKey) return null;
@@ -139,6 +143,7 @@ export async function recordTip(
       description: `Gorjeta recebida para ${member.user?.name || member.id.split("-")[0]} via ${input.method}`,
       comandaId: input.comandaId,
       tipEntryId: tipEntry.id,
+      entryDate: effectivePaidAt,
     },
   });
 

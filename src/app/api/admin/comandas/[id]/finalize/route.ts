@@ -1,17 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentMethod } from "@prisma/client";
-import { canManageDebt, isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
+import { canBackdatePayment, canManageDebt, isLegacyOwnComanda, requireOperationalSession } from "@/lib/operations/permissions";
+import { parseAndValidatePaymentDate } from "@/lib/operations/payment-dates";
 import { operationErrorResponse } from "@/lib/operations/responses";
 import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "@/lib/operations/comandas";
 import { registerPayment, payComandaWithCustomerCredit, closeComanda } from "@/lib/operations/payments";
-import { toCents } from "@/lib/operations/money";
+import { positiveCents, toCents } from "@/lib/operations/money";
+import { formatTimestampToCivilDateBR } from "@/lib/time-utils";
 
 import { computeCheckoutFingerprint, processCheckoutAllocation, TenderInput } from "@/lib/operations/checkout";
 
 interface PaymentItem {
   method: PaymentMethod;
   amount: string | number;
+  paidAt?: string;
 }
 
 interface FinalizeBody {
@@ -20,6 +23,7 @@ interface FinalizeBody {
   closeWithDebt?: boolean;
   confirmOutstandingBalance?: boolean;
   idempotencyKey?: string;
+  paidAt?: string;
 }
 
 export async function POST(
@@ -56,6 +60,27 @@ export async function POST(
   }
 
   try {
+    // Validação de retrodatação e permissões gerenciais
+    const datesToCheck: (string | undefined)[] = [
+      body.paidAt,
+      ...(body.payments?.map((p) => p.paidAt) || []),
+      ...(body.allocations?.map((a) => (typeof a.paidAt === "string" ? a.paidAt : undefined)) || []),
+    ];
+
+    for (const dateStr of datesToCheck) {
+      if (dateStr) {
+        const { isBackdated } = parseAndValidatePaymentDate(dateStr);
+        if (isBackdated && !canBackdatePayment(data!.role)) {
+          return NextResponse.json(
+            {
+              error: "BACKDATE_PERMISSION_REQUIRED",
+              message: "Apenas gerentes e administradores podem retroagir a data de pagamento.",
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
     const result = await prisma.$transaction(async (tx) => {
       await lockComandaRow(tx, data!.barbershopId, id);
 
@@ -108,6 +133,7 @@ export async function POST(
               tenders: body.allocations,
               mode: "FINALIZE",
               allowOutstanding: true,
+              paidAt: body.paidAt,
             });
             const fpFalse = computeCheckoutFingerprint({
               barbershopId: data!.barbershopId,
@@ -115,6 +141,7 @@ export async function POST(
               tenders: body.allocations,
               mode: "FINALIZE",
               allowOutstanding: false,
+              paidAt: body.paidAt,
             });
 
             if (existingTx.payloadFingerprint === fpTrue) {
@@ -145,6 +172,7 @@ export async function POST(
               comandaId: id,
               tenders: body.allocations,
               mode: "DEBT_PAYMENT",
+              paidAt: body.paidAt,
             });
             if (existingTx.payloadFingerprint !== fpDebt) {
               throw new OperationalError(
@@ -166,6 +194,7 @@ export async function POST(
             mode: existingTx.mode,
             allowOutstanding: derivedAllowOutstanding,
             idempotencyKey,
+            paidAt: body.paidAt,
           });
           return closedComanda;
         }
@@ -176,14 +205,61 @@ export async function POST(
         const remainingCents = toCents(comanda.remainingTotal);
         if (remainingCents === 0) {
           if (idempotencyKey && body.payments && body.payments.length > 0) {
-            const existingPayment = await tx.payment.findFirst({
+            const existingPayments = await tx.payment.findMany({
               where: {
                 barbershopId: data!.barbershopId,
                 comandaId: id,
-                idempotencyKey: { startsWith: idempotencyKey },
+                OR: [
+                  { idempotencyKey: { startsWith: `${idempotencyKey}-part-` } },
+                  { idempotencyKey: idempotencyKey },
+                ],
               },
+              orderBy: { createdAt: "asc" },
             });
-            if (existingPayment) {
+
+            if (existingPayments.length > 0) {
+              if (existingPayments.length !== body.payments.length) {
+                throw new OperationalError(
+                  "IDEMPOTENCY_KEY_CONFLICT",
+                  "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                  409
+                );
+              }
+
+              for (let i = 0; i < body.payments.length; i++) {
+                const reqP = body.payments[i];
+                const expectedKey = `${idempotencyKey}-part-${i}`;
+                const exP =
+                  existingPayments.find((ep) => ep.idempotencyKey === expectedKey) ||
+                  (body.payments.length === 1
+                    ? existingPayments.find((ep) => ep.idempotencyKey === idempotencyKey)
+                    : undefined);
+
+                if (!exP) {
+                  throw new OperationalError(
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                    409
+                  );
+                }
+
+                const effectiveDateStr = reqP.paidAt || body.paidAt;
+                const { civilDate: reqCivil } = parseAndValidatePaymentDate(effectiveDateStr);
+                const exCivil = formatTimestampToCivilDateBR(exP.paidAt);
+
+                if (
+                  exP.method !== reqP.method ||
+                  toCents(exP.amount) !== positiveCents(reqP.amount, "Valor do pagamento") ||
+                  exCivil !== reqCivil
+                ) {
+                  throw new OperationalError(
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "A chave de idempotência já foi utilizada com parâmetros diferentes.",
+                    409
+                  );
+                }
+              }
+
               const fullComanda = await tx.comanda.findUnique({
                 where: { id },
                 include: comandaInclude,
@@ -218,6 +294,7 @@ export async function POST(
             actorRole: data!.role,
             mode: "DEBT_PAYMENT",
             idempotencyKey,
+            paidAt: body.paidAt,
           });
           return closedComanda;
         }
@@ -242,6 +319,7 @@ export async function POST(
         for (let i = 0; i < paymentsList.length; i++) {
           const p = paymentsList[i];
           const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
+          const effectivePaymentPaidAt = p.paidAt || body.paidAt;
           if (p.method === "CUSTOMER_CREDIT") {
             await payComandaWithCustomerCredit(tx, {
               barbershopId: data!.barbershopId,
@@ -250,6 +328,7 @@ export async function POST(
               userId: data!.userId,
               idempotencyKey: paymentIdempotencyKey,
               allowClosedDebtPayment: true,
+              paidAt: effectivePaymentPaidAt,
             });
           } else {
             await registerPayment(tx, {
@@ -260,6 +339,7 @@ export async function POST(
               userId: data!.userId,
               idempotencyKey: paymentIdempotencyKey,
               allowClosedDebtPayment: true,
+              paidAt: effectivePaymentPaidAt,
             });
           }
         }
@@ -295,6 +375,7 @@ export async function POST(
           mode: "FINALIZE",
           allowOutstanding,
           idempotencyKey,
+          paidAt: body.paidAt,
         });
         return closedComanda;
       }
@@ -338,6 +419,7 @@ export async function POST(
         const p = paymentsList[i];
         const paymentIdempotencyKey = idempotencyKey ? `${idempotencyKey}-part-${i}` : null;
         
+        const effectivePaymentPaidAt = p.paidAt || body.paidAt;
         if (p.method === "CUSTOMER_CREDIT") {
           await payComandaWithCustomerCredit(tx, {
             barbershopId: data!.barbershopId,
@@ -345,6 +427,7 @@ export async function POST(
             amount: p.amount,
             userId: data!.userId,
             idempotencyKey: paymentIdempotencyKey,
+            paidAt: effectivePaymentPaidAt,
           });
         } else {
           await registerPayment(tx, {
@@ -354,6 +437,7 @@ export async function POST(
             amount: p.amount,
             userId: data!.userId,
             idempotencyKey: paymentIdempotencyKey,
+            paidAt: effectivePaymentPaidAt,
           });
         }
       }

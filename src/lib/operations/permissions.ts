@@ -73,6 +73,10 @@ export function canManageFinancial(role: string) {
   return role === "OWNER" || role === "MANAGER";
 }
 
+export function canBackdatePayment(role: string) {
+  return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
 export function canRefundPayments(role: string) {
   return role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN";
 }

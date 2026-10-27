@@ -10,6 +10,7 @@ import {
   canCancelComandas,
   canManageDebt,
   canConsumeCustomerCredit,
+  canBackdatePayment,
   comandaScopeForbidden,
   forbidden,
   isLegacyOwnComanda,
@@ -76,6 +77,7 @@ export async function GET(
       canCancel: canCancelComandas(data!.role),
       canManageDebt: canManageDebt(data!.role),
       canConsumeCredit: canConsumeCustomerCredit(data!.role),
+      canBackdatePayment: canBackdatePayment(data!.role),
     },
   });
 }

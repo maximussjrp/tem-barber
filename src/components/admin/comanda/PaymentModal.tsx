@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { formatDateBR, formatTimestampToCivilDateBR, todayIsoBR } from "@/lib/time-utils";
 
 type Props = {
   remainingTotal: number;
@@ -9,20 +10,24 @@ type Props = {
   isClosedWithDebt?: boolean;
   customerCreditBalance?: number;
   canConsumeCredit?: boolean;
+  canBackdatePayment?: boolean;
+  serviceDate?: string | Date | null;
   members?: { id: string; name: string }[];
   error?: string | null;
   onClearError?: () => void;
   onPay: (
-    payments: { method: string; amount: string }[],
+    payments: { method: string; amount: string; paidAt?: string }[],
     options?: {
       closeWithDebt?: boolean;
       confirmOutstandingBalance?: boolean;
+      paidAt?: string;
       allocations?: {
         method: string;
         receivedAmount: number;
         tipAmount?: number;
         tipMemberId?: string | null;
         creditDepositAmount?: number;
+        paidAt?: string;
       }[];
     }
   ) => Promise<void>;
@@ -59,6 +64,8 @@ export function PaymentModal({
   isClosedWithDebt = false,
   customerCreditBalance = 0,
   canConsumeCredit = true,
+  canBackdatePayment = true,
+  serviceDate = null,
   members = [],
   error,
   onClearError,
@@ -66,6 +73,13 @@ export function PaymentModal({
   onClose,
 }: Props) {
   const [isMixed, setIsMixed] = useState(false);
+  const todayCivilDate = todayIsoBR();
+  const serviceCivilDate = serviceDate ? formatTimestampToCivilDateBR(serviceDate) : todayCivilDate;
+  const isPastDayComanda = serviceCivilDate < todayCivilDate;
+
+  const [paymentDateChoice, setPaymentDateChoice] = useState<"TODAY" | "CUSTOM">("TODAY");
+  const [customPaymentDate, setCustomPaymentDate] = useState(serviceCivilDate);
+  const [showSameDayDatePicker, setShowSameDayDatePicker] = useState(false);
   const [singleMethod, setSingleMethod] = useState("PIX");
   const [singleAmount, setSingleAmount] = useState(remainingTotal.toFixed(2));
 
@@ -287,6 +301,13 @@ export function PaymentModal({
   const outstanding = Math.max(0, remainingTotal - appliedTotal);
   const isPartialOrZero = outstanding > 0.009;
 
+  const effectivePaymentDate = paymentDateChoice === "CUSTOM" && customPaymentDate ? customPaymentDate : todayCivilDate;
+  const isDateBackdated = effectivePaymentDate < todayCivilDate;
+  const hasCashPayment = isMixed
+    ? mixedPayments.some((p) => p.method === "CASH" && (Number(p.amount) || 0) > 0)
+    : singleMethod === "CASH" && (Number(singleAmount) || 0) > 0;
+  const isCashBackdateViolation = isDateBackdated && hasCashPayment;
+
   function addMixedRow() {
     clearErrors();
     setMixedPayments([
@@ -405,7 +426,27 @@ export function PaymentModal({
             return;
           }
         }
-        const payload = [{ method: singleMethod, amount: amountNum.toFixed(2) }];
+        if (paymentDateChoice === "CUSTOM") {
+          if (!customPaymentDate) {
+            triggerError("Informe a data do recebimento.", "custom-payment-date");
+            return;
+          }
+          if (customPaymentDate > todayCivilDate) {
+            triggerError("A data do recebimento não pode ser no futuro.", "custom-payment-date");
+            return;
+          }
+          if (isDateBackdated && !canBackdatePayment) {
+            triggerError("Apenas gerentes e administradores podem retroagir a data de pagamento.");
+            return;
+          }
+          if (isDateBackdated && singleMethod === "CASH") {
+            triggerError("Pagamentos em dinheiro retroativos não são permitidos para preservar a integridade do caixa físico.", "single-method-select");
+            return;
+          }
+        }
+
+        const effectivePaidAt = paymentDateChoice === "CUSTOM" ? customPaymentDate : undefined;
+        const payload = [{ method: singleMethod, amount: amountNum.toFixed(2), paidAt: effectivePaidAt }];
         const allocations = (tipAmountNum > 0 || creditDepositNum > 0 || (singleMethod === "CASH" && change > 0)) ? [
           {
             method: singleMethod,
@@ -413,11 +454,12 @@ export function PaymentModal({
             tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
             tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
             creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
+            paidAt: effectivePaidAt,
           }
         ] : undefined;
 
         try {
-          await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
+          await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations, paidAt: effectivePaidAt });
         } catch (err) {
           triggerError(err instanceof Error ? err.message : "Erro ao processar pagamento.");
         }
@@ -497,9 +539,30 @@ export function PaymentModal({
           return;
         }
 
+        if (paymentDateChoice === "CUSTOM") {
+          if (!customPaymentDate) {
+            triggerError("Informe a data do recebimento.", "custom-payment-date");
+            return;
+          }
+          if (customPaymentDate > todayCivilDate) {
+            triggerError("A data do recebimento não pode ser no futuro.", "custom-payment-date");
+            return;
+          }
+          if (isDateBackdated && !canBackdatePayment) {
+            triggerError("Apenas gerentes e administradores podem retroagir a data de pagamento.");
+            return;
+          }
+          if (isDateBackdated && mixedPayments.some((p) => p.method === "CASH" && (Number(p.amount) || 0) > 0)) {
+            triggerError("Pagamentos em dinheiro retroativos não são permitidos para preservar a integridade do caixa físico.");
+            return;
+          }
+        }
+
+        const effectivePaidAt = paymentDateChoice === "CUSTOM" ? customPaymentDate : undefined;
         const payload = mixedPayments.map((p) => ({
           method: p.method,
           amount: (Number(p.amount) || 0).toFixed(2),
+          paidAt: effectivePaidAt,
         }));
 
         const allocations = mixedPayments.map((p) => {
@@ -520,11 +583,12 @@ export function PaymentModal({
             tipAmount: tip > 0 ? tip : undefined,
             tipMemberId: tip > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
             creditDepositAmount: credit > 0 ? credit : undefined,
+            paidAt: effectivePaidAt,
           };
         });
 
         try {
-          await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations });
+          await onPay(payload, { closeWithDebt: true, confirmOutstandingBalance: true, allocations, paidAt: effectivePaidAt });
         } catch (err) {
           triggerError(err instanceof Error ? err.message : "Erro ao processar pagamento.");
         }
@@ -573,7 +637,27 @@ export function PaymentModal({
         return;
       }
 
-      const payload = amountNum > 0 ? [{ method: singleMethod, amount: amountNum.toFixed(2) }] : [];
+      if (amountNum > 0 && paymentDateChoice === "CUSTOM") {
+        if (!customPaymentDate) {
+          triggerError("Informe a data do recebimento.", "custom-payment-date");
+          return;
+        }
+        if (customPaymentDate > todayCivilDate) {
+          triggerError("A data do recebimento não pode ser no futuro.", "custom-payment-date");
+          return;
+        }
+        if (isDateBackdated && !canBackdatePayment) {
+          triggerError("Apenas gerentes e administradores podem retroagir a data de pagamento.");
+          return;
+        }
+        if (isDateBackdated && singleMethod === "CASH") {
+          triggerError("Pagamentos em dinheiro retroativos não são permitidos para preservar a integridade do caixa físico.", "single-method-select");
+          return;
+        }
+      }
+
+      const effectivePaidAt = (amountNum > 0 && paymentDateChoice === "CUSTOM") ? customPaymentDate : undefined;
+      const payload = amountNum > 0 ? [{ method: singleMethod, amount: amountNum.toFixed(2), paidAt: effectivePaidAt }] : [];
       const allocations = (tipAmountNum > 0 || creditDepositNum > 0 || (singleMethod === "CASH" && change > 0)) ? [
         {
           method: singleMethod,
@@ -581,6 +665,7 @@ export function PaymentModal({
           tipAmount: tipAmountNum > 0 ? tipAmountNum : undefined,
           tipMemberId: tipAmountNum > 0 ? (tipMemberId || null) : undefined,
           creditDepositAmount: creditDepositNum > 0 ? creditDepositNum : undefined,
+          paidAt: effectivePaidAt,
         }
       ] : undefined;
 
@@ -589,6 +674,7 @@ export function PaymentModal({
           closeWithDebt: isPartialOrZero,
           confirmOutstandingBalance: isPartialOrZero,
           allocations,
+          paidAt: effectivePaidAt,
         });
       } catch (err) {
         triggerError(err instanceof Error ? err.message : "Erro ao finalizar atendimento.");
@@ -680,9 +766,30 @@ export function PaymentModal({
         return;
       }
 
+      if (mixedTotal > 0 && paymentDateChoice === "CUSTOM") {
+        if (!customPaymentDate) {
+          triggerError("Informe a data do recebimento.", "custom-payment-date");
+          return;
+        }
+        if (customPaymentDate > todayCivilDate) {
+          triggerError("A data do recebimento não pode ser no futuro.", "custom-payment-date");
+          return;
+        }
+        if (isDateBackdated && !canBackdatePayment) {
+          triggerError("Apenas gerentes e administradores podem retroagir a data de pagamento.");
+          return;
+        }
+        if (isDateBackdated && mixedPayments.some((p) => p.method === "CASH" && (Number(p.amount) || 0) > 0)) {
+          triggerError("Pagamentos em dinheiro retroativos não são permitidos para preservar a integridade do caixa físico.");
+          return;
+        }
+      }
+
+      const effectivePaidAt = (mixedTotal > 0 && paymentDateChoice === "CUSTOM") ? customPaymentDate : undefined;
       const payload = mixedPayments.map((p) => ({
         method: p.method,
         amount: (Number(p.amount) || 0).toFixed(2),
+        paidAt: effectivePaidAt,
       }));
 
       const allocations = mixedPayments.map((p) => {
@@ -703,6 +810,7 @@ export function PaymentModal({
           tipAmount: tip > 0 ? tip : undefined,
           tipMemberId: tip > 0 ? (p.tipMemberId || tipMemberId || null) : undefined,
           creditDepositAmount: credit > 0 ? credit : undefined,
+          paidAt: effectivePaidAt,
         };
       });
 
@@ -711,6 +819,7 @@ export function PaymentModal({
           closeWithDebt: isPartialOrZero,
           confirmOutstandingBalance: isPartialOrZero,
           allocations,
+          paidAt: effectivePaidAt,
         });
       } catch (err) {
         triggerError(err instanceof Error ? err.message : "Erro ao finalizar atendimento.");
@@ -738,7 +847,10 @@ export function PaymentModal({
     (!isMixed && amountNum < 0) ||
     (!isMixed && amountNum > remainingTotal + 0.009) ||
     (isMixed && mixedTotal > remainingTotal + 0.009) ||
-    (isClosedWithDebt && appliedTotal <= 0);
+    (isClosedWithDebt && appliedTotal <= 0) ||
+    (appliedTotal > 0 && isCashBackdateViolation) ||
+    (appliedTotal > 0 && paymentDateChoice === "CUSTOM" && (!customPaymentDate || customPaymentDate > todayCivilDate)) ||
+    (appliedTotal > 0 && isDateBackdated && !canBackdatePayment);
 
   const displayedError = validationError || error;
 
@@ -1306,6 +1418,168 @@ export function PaymentModal({
               </div>
             )}
 
+
+            {/* UX1.2: Data Efetiva do Recebimento (apenas quando há pagamento) */}
+            {appliedTotal > 0 && (
+              <div className="p-3.5 bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg space-y-3 box-border" data-testid="payment-effective-date-section">
+                {isPastDayComanda ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="block text-xs font-bold text-[var(--gold)] uppercase tracking-wider">
+                        Quando o cliente realmente pagou?
+                      </label>
+                      <span className="text-[11px] text-[var(--text-muted)] bg-[var(--surface)] px-2 py-0.5 rounded border border-[var(--border-subtle)] shrink-0">
+                        Atendimento: {formatDateBR(serviceCivilDate)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Quando o cliente realmente pagou?">
+                      <label
+                        className={`min-h-[44px] flex items-center gap-2.5 p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                          paymentDateChoice === "TODAY"
+                            ? "bg-[var(--surface)] border-[var(--gold)] text-[var(--text-primary)]"
+                            : "bg-[var(--surface)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="payment-date-choice"
+                          value="TODAY"
+                          checked={paymentDateChoice === "TODAY"}
+                          onChange={() => {
+                            clearErrors();
+                            setPaymentDateChoice("TODAY");
+                          }}
+                          disabled={busy}
+                          className="w-4 h-4 text-[var(--gold)] focus:ring-[var(--gold)]"
+                        />
+                        <div>
+                          <div className="font-semibold text-[var(--text-primary)]">Recebi hoje</div>
+                          <div className="text-[11px] text-[var(--text-muted)]">{formatDateBR(todayCivilDate)} (data atual)</div>
+                        </div>
+                      </label>
+
+                      <label
+                        className={`min-h-[44px] flex items-center gap-2.5 p-2.5 rounded-lg border text-xs transition-colors ${
+                          !canBackdatePayment
+                            ? "opacity-60 cursor-not-allowed bg-[var(--surface)] border-[var(--border-subtle)] text-[var(--text-muted)]"
+                            : paymentDateChoice === "CUSTOM"
+                            ? "bg-[var(--surface)] border-[var(--gold)] text-[var(--text-primary)] cursor-pointer"
+                            : "bg-[var(--surface)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] cursor-pointer"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="payment-date-choice"
+                          value="CUSTOM"
+                          checked={paymentDateChoice === "CUSTOM"}
+                          onChange={() => {
+                            if (!canBackdatePayment) return;
+                            clearErrors();
+                            setPaymentDateChoice("CUSTOM");
+                          }}
+                          disabled={busy || !canBackdatePayment}
+                          className="w-4 h-4 text-[var(--gold)] focus:ring-[var(--gold)]"
+                        />
+                        <div>
+                          <div className="font-semibold text-[var(--text-primary)]">Recebi em outra data</div>
+                          <div className="text-[11px] text-[var(--text-muted)]">
+                            {!canBackdatePayment ? "Apenas gerentes/proprietários" : `Data real (ex: ${formatDateBR(serviceCivilDate)})`}
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+
+                    {paymentDateChoice === "CUSTOM" && (
+                      <div className="pt-2 border-t border-[var(--border-subtle)] space-y-1.5">
+                        <label htmlFor="custom-payment-date" className="block text-[11px] font-medium text-[var(--text-secondary)]">
+                          Data efetiva do pagamento <span className="text-[var(--danger)]">*</span>
+                        </label>
+                        <input
+                          id="custom-payment-date"
+                          type="date"
+                          max={todayCivilDate}
+                          value={customPaymentDate}
+                          onChange={(e) => {
+                            clearErrors();
+                            setCustomPaymentDate(e.target.value);
+                          }}
+                          disabled={busy || !canBackdatePayment}
+                          aria-invalid={invalidField === "custom-payment-date"}
+                          className={`w-full min-h-[44px] bg-[var(--surface)] border rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none ${
+                            invalidField === "custom-payment-date"
+                              ? "border-[var(--border-danger)] ring-1 ring-[var(--danger)]"
+                              : "border-[var(--border-subtle)] focus:border-[var(--gold)]"
+                          }`}
+                        />
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          O fluxo de caixa refletirá a data informada. O registro de lançamento no sistema preservará o momento real.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[var(--text-secondary)]">
+                        Data do pagamento: <strong className="text-[var(--text-primary)]">Hoje ({formatDateBR(todayCivilDate)})</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSameDayDatePicker((prev) => !prev)}
+                        className="text-xs text-[var(--gold)] hover:underline min-h-[44px] flex items-center cursor-pointer"
+                      >
+                        {showSameDayDatePicker ? "Ocultar alteração de data" : "Alterar data do recebimento"}
+                      </button>
+                    </div>
+
+                    {showSameDayDatePicker && (
+                      <div className="pt-2 border-t border-[var(--border-subtle)] space-y-2">
+                        {!canBackdatePayment ? (
+                          <p className="text-xs text-[var(--danger)]">
+                            Apenas gerentes e administradores podem alterar a data de recebimento.
+                          </p>
+                        ) : (
+                          <div>
+                            <label htmlFor="same-day-payment-date" className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                              Data efetiva do recebimento
+                            </label>
+                            <input
+                              id="same-day-payment-date"
+                              type="date"
+                              max={todayCivilDate}
+                              value={customPaymentDate}
+                              onChange={(e) => {
+                                clearErrors();
+                                setCustomPaymentDate(e.target.value);
+                                if (e.target.value === todayCivilDate) {
+                                  setPaymentDateChoice("TODAY");
+                                } else {
+                                  setPaymentDateChoice("CUSTOM");
+                                }
+                              }}
+                              disabled={busy}
+                              className="w-full min-h-[44px] bg-[var(--surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--gold)]"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Alerta contextual de bloqueio de DINHEIRO retroativo */}
+                {isCashBackdateViolation && (
+                  <div className="p-2.5 rounded-lg bg-[var(--surface)] border border-amber-500/40 text-amber-300 text-xs flex items-start gap-2" role="alert">
+                    <span className="text-base leading-none">⚠️</span>
+                    <div className="leading-relaxed">
+                      <strong>Atenção:</strong> Pagamentos em dinheiro não podem ser lançados em datas retroativas para preservar a integridade do fechamento de caixa diário. Altere para a data de hoje ou utilize outro meio (PIX, Cartão).
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Allocation Engine Summary Card */}
             <div className="p-3.5 bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg space-y-1.5 text-xs box-border">
               <div className="font-bold text-[var(--gold)] uppercase tracking-wider mb-1">Resumo de Alocação do Checkout</div>
@@ -1339,6 +1613,16 @@ export function PaymentModal({
                 <div className="flex justify-between text-[var(--danger)] font-semibold pt-1 border-t border-[var(--border-subtle)]">
                   <span>Saldo em aberto:</span>
                   <span>R$ {outstanding.toFixed(2)}</span>
+                </div>
+              )}
+              {appliedTotal > 0 && (
+                <div className="flex justify-between text-[var(--text-primary)] font-medium pt-1 border-t border-[var(--border-subtle)]">
+                  <span>Data do recebimento:</span>
+                  <span className={isDateBackdated ? "text-[var(--gold)] font-bold" : ""}>
+                    {paymentDateChoice === "CUSTOM" && isDateBackdated
+                      ? `${formatDateBR(customPaymentDate)} (Retroativo)`
+                      : `Hoje (${formatDateBR(todayCivilDate)})`}
+                  </span>
                 </div>
               )}
             </div>

@@ -7,6 +7,7 @@ import { closeComanda, registerPayment } from "./payments";
 import { consumeCustomerCredit, depositCustomerCreditFromCheckout } from "./customer-credit";
 import { recordTip } from "./tips";
 import { canManageDebt } from "./permissions";
+import { parseAndValidatePaymentDate, validateCashPaymentBackdating } from "./payment-dates";
 
 export interface TenderInput {
   method: PaymentMethod;
@@ -14,6 +15,7 @@ export interface TenderInput {
   tipAmount?: MoneyValue;
   tipMemberId?: string | null;
   creditDepositAmount?: MoneyValue;
+  paidAt?: Date | string | null;
 }
 
 export interface ProcessCheckoutInput {
@@ -27,6 +29,7 @@ export interface ProcessCheckoutInput {
   mode?: "FINALIZE" | "DEBT_PAYMENT";
   allowOutstanding?: boolean;
   idempotencyKey?: string | null;
+  paidAt?: Date | string | null;
 }
 
 export function computeCheckoutFingerprint(input: {
@@ -35,16 +38,20 @@ export function computeCheckoutFingerprint(input: {
   tenders: TenderInput[];
   mode?: "FINALIZE" | "DEBT_PAYMENT";
   allowOutstanding?: boolean;
+  paidAt?: Date | string | null;
 }): string {
   const mode = input.mode || "FINALIZE";
   const allowOutstanding = input.allowOutstanding ? "1" : "0";
+  const topCivilDate = input.paidAt ? parseAndValidatePaymentDate(input.paidAt).civilDate : "";
   const tenderStr = input.tenders
-    .map(
-      (t, index) =>
-        `${index}:${t.method}:${toCents(t.receivedAmount)}:${toCents(t.tipAmount || 0)}:${t.tipMemberId || ""}:${toCents(t.creditDepositAmount || 0)}`
-    )
+    .map((t, index) => {
+      const tenderCivilDate = t.paidAt
+        ? parseAndValidatePaymentDate(t.paidAt).civilDate
+        : topCivilDate;
+      return `${index}:${t.method}:${toCents(t.receivedAmount)}:${toCents(t.tipAmount || 0)}:${t.tipMemberId || ""}:${toCents(t.creditDepositAmount || 0)}:${tenderCivilDate}`;
+    })
     .join("|");
-  const raw = `${input.barbershopId}:${mode}:${input.comandaId}:${allowOutstanding}:${tenderStr}`;
+  const raw = `${input.barbershopId}:${mode}:${input.comandaId}:${allowOutstanding}:${topCivilDate}:${tenderStr}`;
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
@@ -155,6 +162,10 @@ export async function processCheckoutAllocation(
   let totalChangeCents = 0;
 
   const parsedTenders = input.tenders.map((t, idx) => {
+    const effectiveTenderDateInput = t.paidAt !== undefined ? t.paidAt : input.paidAt;
+    const { effectivePaidAt, civilDate, isBackdated } = parseAndValidatePaymentDate(effectiveTenderDateInput);
+    validateCashPaymentBackdating(t.method, isBackdated);
+
     const receivedCents = positiveCents(t.receivedAmount, `Recebido meio #${idx + 1}`);
     const tipCents = t.tipAmount ? positiveCents(t.tipAmount, `Gorjeta meio #${idx + 1}`) : 0;
     const creditDepositCents = t.creditDepositAmount
@@ -240,6 +251,9 @@ export async function processCheckoutAllocation(
       tipMemberId: t.tipMemberId || null,
       creditDepositCents,
       changeCents,
+      effectivePaidAt,
+      civilDate,
+      isBackdated,
     };
   });
 
@@ -342,6 +356,7 @@ export async function processCheckoutAllocation(
             status: "CONFIRMED",
             receivedById: input.createdById,
             checkoutAllocationId: allocation.id,
+            paidAt: t.effectivePaidAt,
           },
         });
 
@@ -354,6 +369,7 @@ export async function processCheckoutAllocation(
             description: `Pagamento de comanda via Crédito de Cliente`,
             comandaId: input.comandaId,
             paymentId: payment.id,
+            entryDate: t.effectivePaidAt,
           },
         });
       } else {
@@ -366,6 +382,7 @@ export async function processCheckoutAllocation(
           idempotencyKey: childSaleKey,
           checkoutAllocationId: allocation.id,
           allowClosedDebtPayment: mode === "DEBT_PAYMENT",
+          paidAt: t.effectivePaidAt,
         });
       }
     }
@@ -396,6 +413,7 @@ export async function processCheckoutAllocation(
         actorMemberId: input.actorMemberId,
         actorRole: input.actorRole,
         idempotencyKey: childTipKey,
+        paidAt: t.effectivePaidAt,
       });
     }
 
@@ -458,6 +476,7 @@ export async function processCheckoutAllocation(
           description: `Depósito de crédito de cliente via troco de checkout`,
           comandaId: input.comandaId,
           customerCreditEntryId: creditEntry.id,
+          entryDate: t.effectivePaidAt || new Date(),
         },
       });
     }

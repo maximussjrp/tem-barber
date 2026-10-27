@@ -4,12 +4,14 @@ import { PaymentMethod } from "@prisma/client";
 import { registerPayment, payComandaWithCustomerCredit } from "@/lib/operations/payments";
 import { OperationalError } from "@/lib/operations/comandas";
 import {
+  canBackdatePayment,
   canManageComandas,
   forbidden,
   isLegacyOwnComanda,
   requireOperationalSession,
 } from "@/lib/operations/permissions";
 import { operationErrorResponse } from "@/lib/operations/responses";
+import { parseAndValidatePaymentDate } from "@/lib/operations/payment-dates";
 
 export async function POST(
   request: NextRequest,
@@ -20,7 +22,7 @@ export async function POST(
   if (!canManageComandas(data!.role)) return forbidden();
   const { id } = await params;
 
-  let body: { method?: PaymentMethod; amount?: string | number; idempotencyKey?: string };
+  let body: { method?: PaymentMethod; amount?: string | number; idempotencyKey?: string; paidAt?: string };
   try {
     body = await request.json();
   } catch {
@@ -32,6 +34,18 @@ export async function POST(
   }
 
   try {
+    if (body.paidAt) {
+      const { isBackdated } = parseAndValidatePaymentDate(body.paidAt);
+      if (isBackdated && !canBackdatePayment(data!.role)) {
+        return NextResponse.json(
+          {
+            error: "BACKDATE_PERMISSION_REQUIRED",
+            message: "Apenas gerentes e administradores podem retroagir a data de pagamento.",
+          },
+          { status: 403 }
+        );
+      }
+    }
     const idempotencyKey = request.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? null;
     const result = await prisma.$transaction(async (tx) => {
       if (data!.role === "BARBER") {
@@ -66,6 +80,7 @@ export async function POST(
           userId: data!.userId,
           idempotencyKey,
           allowClosedDebtPayment,
+          paidAt: body.paidAt,
         });
       }
 
@@ -77,6 +92,7 @@ export async function POST(
         userId: data!.userId,
         idempotencyKey,
         allowClosedDebtPayment,
+        paidAt: body.paidAt,
       });
     });
     return NextResponse.json(result, { status: 201 });

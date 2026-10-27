@@ -51,6 +51,10 @@ export function todayIsoBR(): string {
  * Formata uma data nativa do JS no padrão brasileiro (DD/MM/YYYY).
  */
 export function formatDateBR(date: Date | string): string {
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+    const [y, m, d] = date.trim().split("-");
+    return `${d}/${m}/${y}`;
+  }
   const d = typeof date === "string" ? new Date(date) : date;
   return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
@@ -61,6 +65,9 @@ export function formatDateBR(date: Date | string): string {
  * retornem a data civil brasileira correta.
  */
 export function formatTimestampToCivilDateBR(date: Date | string): string {
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+    return date.trim();
+  }
   const d = typeof date === "string" ? new Date(date) : date;
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",

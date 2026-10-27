@@ -31,6 +31,7 @@ type Payment = {
 type Comanda = {
   id: string;
   appointmentId: string | null;
+  appointment?: { id: string; dateTime: string; memberId: string } | null;
   customerName: string;
   customerPhone: string | null;
   status: string;
@@ -53,6 +54,7 @@ type Comanda = {
     canCancel?: boolean;
     canManageDebt?: boolean;
     canConsumeCredit?: boolean;
+    canBackdatePayment?: boolean;
   };
 };
 type Service = { id: string; name: string; price: string };
@@ -308,10 +310,11 @@ export default function ComandaDetailPage() {
   }
 
   async function handlePay(
-    payments: { method: string; amount: string }[],
+    payments: { method: string; amount: string; paidAt?: string }[],
     options?: {
       closeWithDebt?: boolean;
       confirmOutstandingBalance?: boolean;
+      paidAt?: string;
       allocations?: {
         method: string;
         receivedAmount: number;
@@ -319,6 +322,7 @@ export default function ComandaDetailPage() {
         tipMemberId?: string | null;
         creditDepositAmount?: number;
         change?: number;
+        paidAt?: string;
       }[];
     }
   ) {
@@ -789,6 +793,8 @@ export default function ComandaDetailPage() {
           canConsumeCredit={Boolean(comanda.permissions?.canConsumeCredit)}
           busy={busy} 
           canManageDebt={Boolean(comanda.permissions?.canManageDebt)}
+          canBackdatePayment={Boolean(comanda.permissions?.canBackdatePayment)}
+          serviceDate={comanda.appointment?.dateTime || comanda.openedAt || comanda.createdAt}
           isClosedWithDebt={comanda.status === "CLOSED" && Number(comanda.remainingTotal) > 0}
           members={members.map(m => ({ id: m.id, name: m.user.name }))}
           error={modalError}

@@ -4,6 +4,8 @@ import { syncCommissionReleaseForComanda } from "./commissions";
 import { comandaInclude, lockComandaRow, OperationalError, recalculateComandaTotals } from "./comandas";
 import { fromCents, positiveCents, toCents } from "./money";
 import { createSingleEntryAllocation, FINANCIAL_SYSTEM_KEYS } from "../financial/allocations";
+import { parseAndValidatePaymentDate, validateCashPaymentBackdating } from "./payment-dates";
+import { formatTimestampToCivilDateBR } from "../time-utils";
 
 export async function registerPayment(
   tx: Prisma.TransactionClient,
@@ -16,10 +18,13 @@ export async function registerPayment(
     idempotencyKey?: string | null;
     checkoutAllocationId?: string | null;
     allowClosedDebtPayment?: boolean;
+    paidAt?: Date | string | null;
   }
 ) {
   await lockComandaRow(tx, input.barbershopId, input.comandaId);
   const amount = positiveCents(input.amount, "Valor do pagamento");
+  const { effectivePaidAt, civilDate, isBackdated } = parseAndValidatePaymentDate(input.paidAt);
+  validateCashPaymentBackdating(input.method, isBackdated);
 
   const comanda = await tx.comanda.findFirst({
     where: { id: input.comandaId, barbershopId: input.barbershopId },
@@ -36,14 +41,16 @@ export async function registerPayment(
       },
     });
     if (existing) {
+      const existingCivil = formatTimestampToCivilDateBR(existing.paidAt);
       if (
         existing.comandaId !== input.comandaId ||
         existing.method !== input.method ||
-        toCents(existing.amount) !== amount
+        toCents(existing.amount) !== amount ||
+        existingCivil !== civilDate
       ) {
         throw new OperationalError(
           "IDEMPOTENCY_KEY_CONFLICT",
-          "A chave de idempotência já foi utilizada para outro pagamento.",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
           409
         );
       }
@@ -104,6 +111,7 @@ export async function registerPayment(
       idempotencyKey: input.idempotencyKey || null,
       receivedById: input.userId,
       checkoutAllocationId: input.checkoutAllocationId || null,
+      paidAt: effectivePaidAt,
     },
   });
 
@@ -117,6 +125,7 @@ export async function registerPayment(
       userId: input.userId,
       comandaId: input.comandaId,
       paymentId: payment.id,
+      entryDate: effectivePaidAt,
     },
   });
 
@@ -150,10 +159,12 @@ export async function payComandaWithCustomerCredit(
     userId: string;
     idempotencyKey?: string | null;
     allowClosedDebtPayment?: boolean;
+    paidAt?: Date | string | null;
   }
 ) {
   await lockComandaRow(tx, input.barbershopId, input.comandaId);
   const amount = positiveCents(input.amount, "Pagamento com crédito");
+  const { effectivePaidAt, civilDate } = parseAndValidatePaymentDate(input.paidAt);
 
   const comanda = await tx.comanda.findFirst({
     where: { id: input.comandaId, barbershopId: input.barbershopId },
@@ -178,14 +189,16 @@ export async function payComandaWithCustomerCredit(
       },
     });
     if (existing) {
+      const existingCivil = formatTimestampToCivilDateBR(existing.paidAt);
       if (
         existing.comandaId !== input.comandaId ||
         existing.method !== "CUSTOMER_CREDIT" ||
-        toCents(existing.amount) !== amount
+        toCents(existing.amount) !== amount ||
+        existingCivil !== civilDate
       ) {
         throw new OperationalError(
           "IDEMPOTENCY_KEY_CONFLICT",
-          "A chave de idempotência já foi utilizada para outro pagamento.",
+          "A chave de idempotência já foi utilizada com parâmetros diferentes.",
           409
         );
       }
@@ -226,6 +239,7 @@ export async function payComandaWithCustomerCredit(
       amount: fromCents(amount),
       idempotencyKey: input.idempotencyKey || null,
       receivedById: input.userId,
+      paidAt: effectivePaidAt,
     },
   });
 
@@ -250,6 +264,7 @@ export async function payComandaWithCustomerCredit(
       userId: input.userId,
       comandaId: input.comandaId,
       paymentId: payment.id,
+      entryDate: effectivePaidAt,
     },
   });
 
