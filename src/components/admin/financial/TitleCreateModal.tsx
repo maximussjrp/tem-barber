@@ -166,8 +166,36 @@ export function TitleCreateModal({
   }
 
   return (
-    <Dialog isOpen={isOpen} onClose={handleResetAndClose} title="Nova Conta / Título" className="max-w-lg">
-      <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+    <Dialog
+      isOpen={isOpen}
+      onClose={handleResetAndClose}
+      title="Nova Conta / Título"
+      className="max-w-lg"
+      footer={
+        <div className="flex items-center justify-end gap-2.5 sm:gap-3 w-full">
+          <button
+            type="button"
+            onClick={handleResetAndClose}
+            disabled={isPending}
+            className="flex-1 sm:flex-initial px-4 py-2.5 text-xs font-bold rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)] transition-colors min-h-[44px] flex items-center justify-center cursor-pointer disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            form="title-create-form"
+            disabled={isPending}
+            className="flex-1 sm:flex-initial px-4 py-2.5 text-xs font-bold rounded-lg bg-[var(--brand)] text-black hover:opacity-90 active:opacity-80 disabled:opacity-50 transition-opacity min-h-[44px] flex items-center justify-center font-semibold cursor-pointer shadow-sm"
+          >
+            {isPending ? "Salvando..." : "Salvar Conta"}
+          </button>
+        </div>
+      }
+    >
+      <form id="title-create-form" onSubmit={handleSubmit} className="space-y-4 pt-1">
+        {/* Hidden submit button to guarantee Enter key submits form */}
+        <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+
         {error && (
           <div className="rounded-lg border border-red-500/30 bg-red-950/40 p-3 text-xs text-red-300">
             {error}
@@ -183,7 +211,7 @@ export function TitleCreateModal({
             <button
               type="button"
               onClick={() => handleKindSelect("PAYABLE")}
-              className={`px-3 py-2 text-xs font-bold rounded-lg border transition-colors ${
+              className={`px-3 py-2.5 text-xs font-bold rounded-lg border transition-colors min-h-[44px] ${
                 kind === "PAYABLE"
                   ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                   : "bg-[var(--surface-raised)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:bg-[var(--surface-hover)]"
@@ -194,7 +222,7 @@ export function TitleCreateModal({
             <button
               type="button"
               onClick={() => handleKindSelect("RECEIVABLE")}
-              className={`px-3 py-2 text-xs font-bold rounded-lg border transition-colors ${
+              className={`px-3 py-2.5 text-xs font-bold rounded-lg border transition-colors min-h-[44px] ${
                 kind === "RECEIVABLE"
                   ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                   : "bg-[var(--surface-raised)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:bg-[var(--surface-hover)]"
@@ -216,7 +244,7 @@ export function TitleCreateModal({
             placeholder="Ex: Aluguel da barbearia, Conta de Energia..."
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+            className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
           />
         </div>
 
@@ -229,7 +257,7 @@ export function TitleCreateModal({
             required
             value={categoryId}
             onChange={(e) => setCategoryId(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+            className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
           >
             <option value="">Selecione uma categoria...</option>
             {availableCategories.map((cat) => (
@@ -253,12 +281,12 @@ export function TitleCreateModal({
             placeholder="0,00"
             value={originalAmount}
             onChange={(e) => setOriginalAmount(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+            className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
           />
         </div>
 
         {/* Dates */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div className="space-y-1.5">
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">
               Data de Emissão *
@@ -268,7 +296,7 @@ export function TitleCreateModal({
               required
               value={issuedOn}
               onChange={(e) => setIssuedOn(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+              className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
             />
           </div>
 
@@ -281,14 +309,14 @@ export function TitleCreateModal({
               required
               value={dueOn}
               onChange={(e) => setDueOn(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+              className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
             />
           </div>
         </div>
 
         {/* Already Settled Checkbox & Fields */}
         <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-3 space-y-3">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
+          <label className="flex items-center gap-2 cursor-pointer select-none min-h-[32px]">
             <input
               type="checkbox"
               checked={isAlreadySettled}
@@ -316,7 +344,7 @@ export function TitleCreateModal({
                   max={todayIsoBR()}
                   value={settledOn}
                   onChange={(e) => setSettledOn(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+                  className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
                 />
               </div>
 
@@ -332,7 +360,7 @@ export function TitleCreateModal({
                   required
                   value={settleMethod}
                   onChange={(e) => setSettleMethod(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+                  className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
                 >
                   {PAYMENT_METHODS.map((pm) => (
                     <option key={pm.value} value={pm.value}>
@@ -355,27 +383,8 @@ export function TitleCreateModal({
             placeholder="Detalhes adicionais da conta..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)]"
+            className="w-full min-w-0 px-3 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)] resize-none"
           />
-        </div>
-
-        {/* Actions */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border-subtle)]">
-          <button
-            type="button"
-            onClick={handleResetAndClose}
-            disabled={isPending}
-            className="px-4 py-2 text-xs font-bold rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={isPending}
-            className="px-4 py-2 text-xs font-bold rounded-lg bg-[var(--brand)] text-black hover:opacity-90 disabled:opacity-50"
-          >
-            {isPending ? "Salvando..." : "Salvar Conta"}
-          </button>
         </div>
       </form>
     </Dialog>
