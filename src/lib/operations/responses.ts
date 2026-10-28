@@ -37,47 +37,25 @@ export type KnownDomainError =
   | CustomerBlockError;
 
 /**
- * Reconhece exclusivamente instâncias de classes de erro de domínio operacional
- * expressamente autorizadas. Objetos arbitrários ou desconhecidos NÃO são confiados.
+ * Reconhece exclusivamente instâncias reais das classes de erro de domínio operacional
+ * expressamente autorizadas. Nomes forjados de classes, propriedades duck-typed ou
+ * objetos desconhecidos são estritamente rejeitados e não recebem confiança.
  */
 export function isDomainOperationalError(error: unknown): error is KnownDomainError {
   if (isPrismaOrTechnicalError(error)) return false;
-  if (
+  return (
     error instanceof OperationalError ||
     error instanceof CommissionError ||
     error instanceof ClubError ||
     error instanceof CustomerBlockError
-  ) {
-    return true;
-  }
-
-  // Suporte estrito a instâncias legítimas que possam ter tido o protótipo modificado por compilação/transpilação,
-  // mas que pertencem comprovadamente às classes de erro de domínio reconhecidas.
-  if (error instanceof Error) {
-    const validNames = new Set([
-      "OperationalError",
-      "CommissionError",
-      "ClubError",
-      "CustomerBlockError",
-    ]);
-    if (
-      (validNames.has(error.name) || validNames.has(error.constructor?.name)) &&
-      typeof (error as any).code === "string" &&
-      typeof (error as any).status === "number" &&
-      typeof (error as any).message === "string"
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  );
 }
 
 /**
  * Manipulador com política estrita fail-closed:
- * 1. Erros de domínio operacional explicitamente reconhecidos retornam seu código e status HTTP legítimos.
+ * 1. Instâncias reais de erros de domínio operacional reconhecidos retornam seu código e status HTTP legítimos.
  * 2. Qualquer outra exceção (Prisma, erros genéricos do JavaScript, mensagens com SQL/dados sensíveis,
- *    ou objetos desconhecidos) é considerada inesperada e sanitizada para HTTP 500 com mensagem segura,
+ *    erros forjados com nomes clonados, ou objetos desconhecidos) é tratada como inesperada e sanitizada para HTTP 500,
  *    registrando diagnóstico detalhado apenas no log do servidor.
  */
 export function operationErrorResponse(error: unknown) {

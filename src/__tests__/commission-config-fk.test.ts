@@ -79,8 +79,9 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
   });
 
   describe("Error Sanitization - operationErrorResponse (Strict Fail-Closed Policy)", () => {
-    it("preserves known OperationalError with custom HTTP status and code (404, 403, 422)", async () => {
+    it("preserves real OperationalError instances with custom HTTP status and code (404, 403, 422)", async () => {
       const notFoundErr = new OperationalError("COMANDA_NOT_FOUND", "Comanda não encontrada.", 404);
+      expect(isDomainOperationalError(notFoundErr)).toBe(true);
       const resp404 = operationErrorResponse(notFoundErr);
       expect(resp404.status).toBe(404);
       expect(await resp404.json()).toEqual({
@@ -89,6 +90,7 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
       });
 
       const forbiddenErr = new OperationalError("FORBIDDEN", "Acesso não autorizado.", 403);
+      expect(isDomainOperationalError(forbiddenErr)).toBe(true);
       const resp403 = operationErrorResponse(forbiddenErr);
       expect(resp403.status).toBe(403);
       expect(await resp403.json()).toEqual({
@@ -97,6 +99,7 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
       });
 
       const unprocErr = new OperationalError("INVALID_TOTAL", "Total inconsistente.", 422);
+      expect(isDomainOperationalError(unprocErr)).toBe(true);
       const resp422 = operationErrorResponse(unprocErr);
       expect(resp422.status).toBe(422);
       expect(await resp422.json()).toEqual({
@@ -105,12 +108,13 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
       });
     });
 
-    it("preserves known CommissionError with custom HTTP status (e.g. 422)", async () => {
+    it("preserves real CommissionError instances with custom HTTP status (e.g. 422)", async () => {
       const commErr = new CommissionError(
         "INVALID_PERCENTAGE",
         "Percentual deve estar entre 0 e 100.",
         422
       );
+      expect(isDomainOperationalError(commErr)).toBe(true);
       const resp = operationErrorResponse(commErr);
       expect(resp.status).toBe(422);
       expect(await resp.json()).toEqual({
@@ -119,8 +123,9 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
       });
     });
 
-    it("preserves known ClubError with custom HTTP status (e.g. 422)", async () => {
+    it("preserves real ClubError instances with custom HTTP status (e.g. 422)", async () => {
       const clubErr = new ClubError("BENEFIT_EXHAUSTED", "Limite de benefícios atingido.", 422);
+      expect(isDomainOperationalError(clubErr)).toBe(true);
       const resp = operationErrorResponse(clubErr);
       expect(resp.status).toBe(422);
       expect(await resp.json()).toEqual({
@@ -129,12 +134,13 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
       });
     });
 
-    it("preserves known CustomerBlockError with custom HTTP status (e.g. 403)", async () => {
+    it("preserves real CustomerBlockError instances with custom HTTP status (e.g. 403)", async () => {
       const blockErr = new CustomerBlockError(
         "CUSTOMER_BLOCKED",
         "Cliente bloqueado para agendamentos.",
         403
       );
+      expect(isDomainOperationalError(blockErr)).toBe(true);
       const resp = operationErrorResponse(blockErr);
       expect(resp.status).toBe(403);
       expect(await resp.json()).toEqual({
@@ -210,6 +216,74 @@ describe("Commission Config Foreign Key Integrity - Unit Tests", () => {
           message: expect.stringContaining("Falha interna de SQL"),
         })
       );
+      consoleSpy.mockRestore();
+    });
+
+    it("sanitizes new Error() with name = 'OperationalError' and forged code/status to HTTP 500", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const forgedErr = new Error("Vazamento de dados via nome clonado");
+      forgedErr.name = "OperationalError";
+      (forgedErr as any).code = "FORGED_CODE";
+      (forgedErr as any).status = 400;
+
+      expect(isDomainOperationalError(forgedErr)).toBe(false);
+
+      const response = operationErrorResponse(forgedErr);
+      expect(response.status).toBe(500);
+
+      const body = await response.json();
+      expect(body.error).toBe("INTERNAL_SERVER_ERROR");
+      expect(body.message).toBe(SANITIZED_OPERATION_ERROR_MESSAGE);
+      expect(body.message).not.toContain("Vazamento");
+      expect(body.message).not.toContain("FORGED_CODE");
+
+      consoleSpy.mockRestore();
+    });
+
+    it("sanitizes new Error() with name = 'CommissionError' and forged code/status to HTTP 500", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const forgedErr = new Error("Vazamento de comissao via nome clonado");
+      forgedErr.name = "CommissionError";
+      (forgedErr as any).code = "FORGED_COMMISSION";
+      (forgedErr as any).status = 422;
+
+      expect(isDomainOperationalError(forgedErr)).toBe(false);
+
+      const response = operationErrorResponse(forgedErr);
+      expect(response.status).toBe(500);
+
+      const body = await response.json();
+      expect(body.error).toBe("INTERNAL_SERVER_ERROR");
+      expect(body.message).toBe(SANITIZED_OPERATION_ERROR_MESSAGE);
+      expect(body.message).not.toContain("Vazamento");
+      expect(body.message).not.toContain("FORGED_COMMISSION");
+
+      consoleSpy.mockRestore();
+    });
+
+    it("prevents an error constructor with identical or similar name from bypassing prototype identity", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Classe independente com o mesmo nome porém protótipo distinto
+      class OperationalError extends Error {
+        code = "BYPASS_ATTEMPT";
+        status = 400;
+      }
+      const fakeInstance = new OperationalError("Tentativa de bypass com classe homônima");
+
+      expect(isDomainOperationalError(fakeInstance)).toBe(false);
+
+      const response = operationErrorResponse(fakeInstance);
+      expect(response.status).toBe(500);
+
+      const body = await response.json();
+      expect(body.error).toBe("INTERNAL_SERVER_ERROR");
+      expect(body.message).toBe(SANITIZED_OPERATION_ERROR_MESSAGE);
+      expect(body.message).not.toContain("Tentativa");
+      expect(body.message).not.toContain("BYPASS_ATTEMPT");
+
       consoleSpy.mockRestore();
     });
 
