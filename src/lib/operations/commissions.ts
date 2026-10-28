@@ -526,6 +526,28 @@ function buildResolvedRule(input: {
   };
 }
 
+/**
+ * Valida se um candidateId corresponde a um registro existente de CommissionConfig
+ * pertencente a barbearia informada.
+ * Se candidateId for nulo, indefinido, vazio ou nao for encontrado na tabela commission_configs,
+ * retorna null para evitar violacao de Foreign Key (commission_entries_config_id_fkey).
+ */
+export async function validateCommissionConfigId(
+  tx: Prisma.TransactionClient,
+  barbershopId: string,
+  candidateId: string | null | undefined
+): Promise<string | null> {
+  if (!candidateId || typeof candidateId !== "string" || candidateId.trim() === "") {
+    return null;
+  }
+  const cleanId = candidateId.trim();
+  const config = await tx.commissionConfig.findFirst({
+    where: { id: cleanId, barbershopId },
+    select: { id: true },
+  });
+  return config ? config.id : null;
+}
+
 export async function resolveCommissionConfig(
   tx: Prisma.TransactionClient,
   input: {
@@ -972,7 +994,21 @@ export async function generateCommissionsForComanda(
         ruleType = snap.type;
         ruleValue = new Prisma.Decimal(snap.value);
         ruleSnapshot = snap;
-        ruleConfigId = snap.id ?? snap.configId ?? existing.configId ?? null;
+
+        // Regra de integridade referencial: configId DEVE referenciar exclusivamente
+        // um registro existente na tabela commission_configs da mesma barbearia.
+        // Se a regra derivou de ServiceCommissionRule, CareerLevel ou foi excluída/legada,
+        // configId deve ser null, preservando o cálculo através do configSnapshot congelado.
+        let candidateId: string | null = null;
+        if (snap.origin === "SERVICE_CAREER_LEVEL" || snap.serviceCommissionRuleId) {
+          candidateId = null;
+        } else if (snap.origin === "CAREER_LEVEL_DEFAULT" || (snap.careerLevelId && !snap.configId)) {
+          candidateId = null;
+        } else {
+          candidateId = existing.configId ?? snap.configId ?? null;
+        }
+
+        ruleConfigId = await validateCommissionConfigId(tx, barbershopId, candidateId);
       }
     }
 
@@ -988,7 +1024,7 @@ export async function generateCommissionsForComanda(
       ruleType = config?.type;
       ruleValue = config?.value;
       ruleSnapshot = config?.configSnapshot;
-      ruleConfigId = config?.configId ?? null;
+      ruleConfigId = await validateCommissionConfigId(tx, barbershopId, config?.configId ?? null);
     }
 
     if (!ruleType || ruleValue === undefined) continue;
@@ -2483,7 +2519,7 @@ export async function correctCommissionExecutor(
         barbershopId: input.barbershopId,
         comandaItemId: itemRecord.id,
         memberId: input.newExecutorMemberId,
-        configId: historicalRule.configId ?? null,
+        configId: await validateCommissionConfigId(tx, input.barbershopId, historicalRule.configId ?? null),
         configSnapshot: (historicalRule.configSnapshot ?? {}) as unknown as Prisma.InputJsonValue,
         baseAmount: currentOldEntry.baseAmount,
         generatedAmount: newGeneratedAmount,
