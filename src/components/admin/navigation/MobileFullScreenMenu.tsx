@@ -190,10 +190,10 @@ export function MobileFullScreenMenu({
       {/* Scrollable Navigation List */}
       <div
         data-testid="mobile-menu-scroll-container"
-        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2 space-y-2 overscroll-contain"
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-3.5 overscroll-contain"
       >
         {groups.map((group) => (
-          <div key={group.id} className="space-y-1">
+          <div key={group.id} className="space-y-1.5">
             <h3 className="px-2 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-[#8E95A2]">
               {group.title}
             </h3>
@@ -210,7 +210,7 @@ export function MobileFullScreenMenu({
                       <Link
                         href={item.href}
                         onClick={onClose}
-                        className={`flex-1 flex items-center justify-between px-3 py-1.5 text-[13px] font-medium transition-all min-h-[34px] ${
+                        className={`flex-1 flex items-center justify-between px-3 py-2.5 text-[13px] font-medium transition-all min-h-[44px] ${
                           active
                             ? "rounded-xl bg-gradient-to-r from-[#D3AE55]/25 via-[#D3AE55]/15 to-[#D3AE55]/[0.05] border border-[#D3AE55]/45 text-[#E8C76E] font-semibold shadow-[0_0_20px_rgba(211,174,85,0.14)]"
                             : "text-[#F0F2F5] hover:bg-white/[0.03]"
@@ -248,7 +248,7 @@ export function MobileFullScreenMenu({
                           type="button"
                           onClick={() => toggleAccordion(item.href)}
                           aria-label={`Expandir ${item.label}`}
-                          className="px-3 py-1.5 min-h-[34px] text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
+                          className="px-3 py-2.5 min-h-[44px] text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer"
                         >
                           <svg
                             className={`w-3.5 h-3.5 transition-transform duration-200 ${
@@ -283,7 +283,7 @@ export function MobileFullScreenMenu({
                                 key={child.href}
                                 href={child.href}
                                 onClick={onClose}
-                                className={`flex items-center px-2.5 py-1.5 rounded-lg text-xs font-medium min-h-[34px] transition-colors ${
+                                className={`flex items-center px-2.5 py-2 rounded-lg text-xs font-medium min-h-[40px] transition-colors ${
                                   childActive
                                     ? "bg-[#D3AE55]/15 text-[#E8C76E] font-bold"
                                     : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]"
@@ -333,7 +333,7 @@ export function MobileFullScreenMenu({
               await cleanupCurrentPushSubscriptionBeforeLogout();
               signOut({ callbackUrl: "/login" });
             }}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#EF5A67] hover:bg-[#EF5A67]/10 transition-colors min-h-[38px] cursor-pointer"
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold text-[#EF5A67] hover:bg-[#EF5A67]/10 transition-colors min-h-[44px] cursor-pointer"
           >
             Sair
           </button>

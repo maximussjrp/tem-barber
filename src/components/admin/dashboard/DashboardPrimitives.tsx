@@ -29,49 +29,162 @@ export function DashboardCard({
   );
 }
 
-export function MiniSparklineSvg({ className = "w-24 h-10" }: { className?: string }) {
+export function MiniSparklineSvg({
+  series,
+  className = "w-24 h-10",
+}: {
+  series?: number[];
+  className?: string;
+}) {
   const uid = useId().replace(/:/g, "");
   const gradId = `kpiSparkGrad-${uid}`;
+
+  const cleanSeries = Array.isArray(series)
+    ? series.map((v) => (Number.isFinite(v) && v > 0 ? v : 0))
+    : [];
+  const hasRealSeries =
+    cleanSeries.length >= 2 && cleanSeries.some((v) => v > 0);
+
+  if (!hasRealSeries) {
+    const neutralPoints = [6, 30.5, 55, 79.5, 104].map((x) => ({ x, y: 28 }));
+    const polylineStr = neutralPoints.map((p) => `${p.x},${p.y}`).join(" ");
+    return (
+      <svg
+        viewBox="0 0 110 42"
+        className={className}
+        aria-hidden="true"
+        data-testid="mini-sparkline"
+        data-mode="neutral"
+      >
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#E8C76E" stopOpacity="0.20" />
+            <stop offset="100%" stopColor="#E8C76E" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M6,28 L104,28 L104,40 L6,40 Z"
+          fill={`url(#${gradId})`}
+        />
+        <polyline
+          points={polylineStr}
+          fill="none"
+          stroke="#E8C76E"
+          strokeOpacity="0.55"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="55" cy="28" r="2" fill="#E8C76E" fillOpacity="0.65" />
+      </svg>
+    );
+  }
+
+  const maxVal = Math.max(...cleanSeries);
+  const minVal = Math.min(...cleanSeries, 0);
+  const range = maxVal - minVal;
+  const n = cleanSeries.length;
+
+  const pts = cleanSeries.map((val, idx) => {
+    const x = Number((6 + (idx / (n - 1)) * 98).toFixed(1));
+    const y =
+      range > 0
+        ? Number((34 - ((val - minVal) / range) * 22).toFixed(1))
+        : 24;
+    return { x, y, val };
+  });
+
+  const polylineStr = pts.map((p) => `${p.x},${p.y}`).join(" ");
+  const areaPath =
+    `M${pts[0].x},${pts[0].y} ` +
+    pts
+      .slice(1)
+      .map((p) => `L${p.x},${p.y}`)
+      .join(" ") +
+    ` L${pts[pts.length - 1].x},40 L${pts[0].x},40 Z`;
+
+  let peakIdx = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].val >= pts[peakIdx].val) {
+      peakIdx = i;
+    }
+  }
+  const peakPt = pts[peakIdx];
+  const lastPt = pts[pts.length - 1];
+
   return (
-    <svg viewBox="0 0 110 42" className={className} aria-hidden="true">
+    <svg
+      viewBox="0 0 110 42"
+      className={className}
+      aria-hidden="true"
+      data-testid="mini-sparkline"
+      data-mode="series"
+      data-series={cleanSeries.join(",")}
+    >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#E8C76E" stopOpacity="0.42" />
           <stop offset="100%" stopColor="#E8C76E" stopOpacity="0.0" />
         </linearGradient>
       </defs>
-      <path
-        d="M4,36 L26,27 L48,30 L76,12 L104,19 L104,40 L4,40 Z"
-        fill={`url(#${gradId})`}
-      />
+      <path d={areaPath} fill={`url(#${gradId})`} />
       <polyline
-        points="4,36 26,27 48,30 76,12 104,19"
+        points={polylineStr}
         fill="none"
         stroke="#E8C76E"
         strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="26" cy="27" r="2.2" fill="#E8C76E" />
-      <circle cx="76" cy="12" r="3" fill="#FFF3C4" stroke="#E8C76E" strokeWidth="1.5" />
-      <circle cx="104" cy="19" r="2.2" fill="#E8C76E" />
+      <circle
+        cx={peakPt.x}
+        cy={peakPt.y}
+        r="2.8"
+        fill="#FFF3C4"
+        stroke="#E8C76E"
+        strokeWidth="1.4"
+      />
+      {peakIdx !== pts.length - 1 && (
+        <circle cx={lastPt.x} cy={lastPt.y} r="2.2" fill="#E8C76E" />
+      )}
     </svg>
   );
 }
 
 export function MiniBarsSvg({
   variant = "gold",
+  series,
   className = "w-16 h-11",
 }: {
   variant?: "gold" | "slate";
+  series?: number[];
   className?: string;
 }) {
   const uid = useId().replace(/:/g, "");
   const goldId = `barGoldGrad-${uid}`;
   const slateId = `barSlateGrad-${uid}`;
-  const heights = [14, 20, 26, 33, 40];
+
+  const cleanSeries = Array.isArray(series)
+    ? series.map((v) => (Number.isFinite(v) && v > 0 ? v : 0))
+    : [];
+  const hasRealSeries =
+    cleanSeries.length >= 2 && cleanSeries.some((v) => v > 0);
+
+  const valuesToRender = hasRealSeries ? cleanSeries : [0, 0, 0, 0, 0];
+  const maxVal = hasRealSeries ? Math.max(...valuesToRender, 1) : 1;
+  const count = valuesToRender.length;
+  const step = 60 / count;
+  const barWidth = Number(Math.min(6.5, Math.max(4.5, step - 2.5)).toFixed(1));
+
   return (
-    <svg viewBox="0 0 68 42" className={className} aria-hidden="true">
+    <svg
+      viewBox="0 0 68 42"
+      className={className}
+      aria-hidden="true"
+      data-testid="mini-bars"
+      data-mode={hasRealSeries ? "series" : "neutral"}
+      data-series={hasRealSeries ? cleanSeries.join(",") : "neutral"}
+    >
       <defs>
         <linearGradient id={goldId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#F2D680" />
@@ -82,25 +195,35 @@ export function MiniBarsSvg({
           <stop offset="100%" stopColor="#334155" stopOpacity="0.45" />
         </linearGradient>
       </defs>
-      {heights.map((h, idx) => {
-        const x = 6 + idx * 12;
+      {valuesToRender.map((val, idx) => {
+        const h = hasRealSeries
+          ? val > 0
+            ? Math.max(6, Math.round((val / maxVal) * 32))
+            : 4
+          : 14;
+        const x = Number((4 + idx * step + (step - barWidth) / 2).toFixed(1));
         const y = 40 - h;
-        const fill =
-          variant === "gold"
-            ? idx < 2
-              ? "rgba(211,174,85,0.38)"
-              : `url(#${goldId})`
-            : idx === 3
-            ? `url(#${slateId})`
-            : "rgba(100,116,139,0.38)";
+        const isPeak = hasRealSeries && val > 0 && val === maxVal;
+        const fill = !hasRealSeries
+          ? variant === "gold"
+            ? "rgba(211,174,85,0.28)"
+            : "rgba(100,116,139,0.32)"
+          : variant === "gold"
+          ? isPeak || val >= maxVal * 0.65
+            ? `url(#${goldId})`
+            : "rgba(211,174,85,0.38)"
+          : isPeak
+          ? `url(#${slateId})`
+          : "rgba(100,116,139,0.38)";
+
         return (
           <rect
             key={idx}
             x={x}
             y={y}
-            width="6.5"
+            width={barWidth}
             height={h}
-            rx="2.5"
+            rx="2.2"
             fill={fill}
           />
         );
@@ -125,6 +248,7 @@ export interface MetricCardProps {
     color?: string;
   };
   visualType?: "sparkline" | "bars-gold" | "bars-slate" | "none";
+  series?: number[];
   highlight?: boolean;
 }
 
@@ -136,6 +260,7 @@ export function MetricCard({
   icon,
   progress,
   visualType = "none",
+  series,
   highlight = false,
 }: MetricCardProps) {
   return (
@@ -221,17 +346,17 @@ export function MetricCard({
 
         {visualType === "sparkline" && (
           <div className="shrink-0 -mb-1 -mr-1">
-            <MiniSparklineSvg className="w-24 h-9" />
+            <MiniSparklineSvg series={series} className="w-24 h-9" />
           </div>
         )}
         {visualType === "bars-gold" && (
           <div className="shrink-0 -mb-1">
-            <MiniBarsSvg variant="gold" className="w-16 h-10" />
+            <MiniBarsSvg variant="gold" series={series} className="w-16 h-10" />
           </div>
         )}
         {visualType === "bars-slate" && (
           <div className="shrink-0 -mb-1">
-            <MiniBarsSvg variant="slate" className="w-16 h-10" />
+            <MiniBarsSvg variant="slate" series={series} className="w-16 h-10" />
           </div>
         )}
       </div>

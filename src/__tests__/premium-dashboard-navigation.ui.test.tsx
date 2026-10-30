@@ -477,32 +477,39 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       expect(screen.queryByTestId("desktop-bell-alert-dot")).not.toBeInTheDocument();
     });
 
-    it("Cenário 6 — Cliente com 1 visita (Novo) versus múltiplas visitas (Recorrente) versus Inativo (>30 dias)", async () => {
+    it("Cenário 6 — Recorrência considera exclusivamente visitas COMPLETED até hoje (ignora agendamentos futuros, PENDING, CONFIRMED e CANCELLED)", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-10-30T15:00:00.000Z"));
 
-      const visitHistory = [
-        // 2 clientes recorrentes (múltiplas visitas, última nos últimos 30 dias)
+      const mixedRows = [
+        // 2 clientes recorrentes (múltiplas visitas COMPLETED, última nos últimos 30 dias)
         { customerId: "c-rec-1", dateTime: new Date("2026-09-10T14:00:00.000Z"), status: "COMPLETED" },
         { customerId: "c-rec-1", dateTime: new Date("2026-10-28T14:00:00.000Z"), status: "COMPLETED" },
         { customerId: "c-rec-2", dateTime: new Date("2026-10-05T14:00:00.000Z"), status: "COMPLETED" },
         { customerId: "c-rec-2", dateTime: new Date("2026-10-29T14:00:00.000Z"), status: "COMPLETED" },
-        // 1 cliente novo (1 única visita nos últimos 30 dias)
+        // 1 cliente novo (1 única visita COMPLETED nos últimos 30 dias, dentro de outubro)
         { customerId: "c-new-1", dateTime: new Date("2026-10-25T14:00:00.000Z"), status: "COMPLETED" },
-        // 1 cliente inativo (última visita há mais de 30 dias)
+        // 1 cliente inativo (última visita COMPLETED há mais de 30 dias)
         { customerId: "c-ina-1", dateTime: new Date("2026-08-15T14:00:00.000Z"), status: "COMPLETED" },
+        // Cliente apenas com agendamento futuro / PENDING / CONFIRMED sem visita concluída (NÃO deve contar)
+        { customerId: "c-future-only", dateTime: new Date("2026-11-05T14:00:00.000Z"), status: "CONFIRMED" },
+        { customerId: "c-pending-only", dateTime: new Date("2026-10-30T18:00:00.000Z"), status: "PENDING" },
+        // Cliente apenas com agendamento CANCELLED (NÃO deve contar)
+        { customerId: "c-cancelled-only", dateTime: new Date("2026-10-20T14:00:00.000Z"), status: "CANCELLED" },
       ];
 
       vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
-        const where = args?.where as
-          | { status?: { notIn?: string[] } }
-          | undefined;
-        if (where?.status?.notIn) {
-          return Promise.resolve(visitHistory) as ReturnType<
+        const select = args?.select as { status?: boolean; comandas?: unknown } | undefined;
+        if (!args?.take && select?.status && !select?.comandas) {
+          expect(args?.where).toMatchObject({
+            barbershopId: "tenant-1",
+            status: "COMPLETED",
+          });
+          return Promise.resolve(mixedRows) as unknown as ReturnType<
             typeof prisma.appointment.findMany
           >;
         }
-        return Promise.resolve([]) as ReturnType<
+        return Promise.resolve([]) as unknown as ReturnType<
           typeof prisma.appointment.findMany
         >;
       });
@@ -510,12 +517,135 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       const pageElement = await DashboardPage();
       const { container } = render(pageElement);
 
-      // 4 clientes: 50% recorrentes, 25% novos, 25% inativos
+      // Apenas os 4 clientes com visitas COMPLETED entram no cálculo:
+      // 2 recorrentes (50%), 1 novo (25%), 1 inativo (25%)
       expect(container.textContent).toContain("50%");
       expect(container.textContent).toContain("25%");
       expect(container.textContent).not.toContain("68%");
 
+      // Novos clientes do mês: c-rec-2 (1ª visita COMPLETED em 05/10) + c-new-1 (1ª visita COMPLETED em 25/10) = 2
+      // c-future-only, c-pending-only e c-cancelled-only NÃO entram como novos clientes do mês
+      expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+
       vi.useRealTimers();
+    });
+
+    it("Minigráficos dos KPIs refletem séries reais consultadas e usam estado neutro plano quando não há série confiável", () => {
+      // 1. Sem série positiva -> todos os minigráficos em modo neutro plano (sem escada 14,20,26,33,40)
+      const { unmount } = render(
+        <PremiumDashboardView
+          barbershop={{
+            id: "b-1",
+            name: "Barbearia Dom Brio",
+            slug: "barbearia-dom-brio",
+          }}
+          todayFormatted="sexta-feira, 30 de outubro"
+          civilToday="2026-10-30"
+          faturamentoHoje={0}
+          faturamentoSemana={0}
+          taxaOcupacaoPct={0}
+          horariosOcupados={0}
+          horariosDisponiveis={10}
+          clientesAtendidosHoje={0}
+          todayAppointments={[]}
+          professionals={[]}
+          financialSummary={{
+            overdueCount: 0,
+            overdueAmountCents: 0,
+            todayCount: 0,
+            todayAmountCents: 0,
+            next7DaysCount: 0,
+            next7DaysAmountCents: 0,
+          }}
+          dueItems={[]}
+          canAccessFinancial={true}
+          dailyRevenue={[
+            { label: "Seg", revenue: 0 },
+            { label: "Ter", revenue: 0 },
+            { label: "Qua", revenue: 0 },
+            { label: "Qui", revenue: 0 },
+            { label: "Sex", revenue: 0 },
+            { label: "Sáb", revenue: 0 },
+            { label: "Dom", revenue: 0 },
+          ]}
+          completedClientsSeries={[0, 0, 0, 0, 0, 0, 0]}
+          occupancyData={{ occupied: 0, available: 10, blocked: 0 }}
+          onboarding={{ done: 4, total: 4, complete: true }}
+          recentClients={[]}
+        />
+      );
+
+      for (const spark of screen.getAllByTestId("mini-sparkline")) {
+        expect(spark).toHaveAttribute("data-mode", "neutral");
+      }
+      for (const bars of screen.getAllByTestId("mini-bars")) {
+        expect(bars).toHaveAttribute("data-mode", "neutral");
+        const rects = Array.from(bars.querySelectorAll("rect"));
+        const heights = rects.map((r) => Number(r.getAttribute("height")));
+        // Em modo neutro todas as barras têm exatamente a mesma altura (14), nunca escada crescente
+        expect(new Set(heights).size).toBe(1);
+        expect(heights[0]).toBe(14);
+      }
+      unmount();
+
+      // 2. Com série real -> minigráficos refletem os valores reais da série
+      render(
+        <PremiumDashboardView
+          barbershop={{
+            id: "b-1",
+            name: "Barbearia Dom Brio",
+            slug: "barbearia-dom-brio",
+          }}
+          todayFormatted="sexta-feira, 30 de outubro"
+          civilToday="2026-10-30"
+          faturamentoHoje={400}
+          faturamentoSemana={1500}
+          taxaOcupacaoPct={50}
+          horariosOcupados={5}
+          horariosDisponiveis={5}
+          clientesAtendidosHoje={4}
+          todayAppointments={[]}
+          professionals={[]}
+          financialSummary={{
+            overdueCount: 0,
+            overdueAmountCents: 0,
+            todayCount: 0,
+            todayAmountCents: 0,
+            next7DaysCount: 0,
+            next7DaysAmountCents: 0,
+          }}
+          dueItems={[]}
+          canAccessFinancial={true}
+          dailyRevenue={[
+            { label: "Seg", revenue: 500 },
+            { label: "Ter", revenue: 200 },
+            { label: "Qua", revenue: 400 },
+            { label: "Qui", revenue: 100 },
+            { label: "Sex", revenue: 300 },
+            { label: "Sáb", revenue: 0 },
+            { label: "Dom", revenue: 0 },
+          ]}
+          completedClientsSeries={[5, 2, 4, 1, 3, 0, 0]}
+          occupancyData={{ occupied: 5, available: 5, blocked: 0 }}
+          onboarding={{ done: 4, total: 4, complete: true }}
+          recentClients={[]}
+        />
+      );
+
+      for (const spark of screen.getAllByTestId("mini-sparkline")) {
+        expect(spark).toHaveAttribute("data-mode", "series");
+        expect(spark).toHaveAttribute("data-series", "500,200,400,100,300,0,0");
+      }
+
+      const seriesBars = screen
+        .getAllByTestId("mini-bars")
+        .filter((el) => el.getAttribute("data-mode") === "series");
+      expect(seriesBars.length).toBeGreaterThanOrEqual(2);
+      // A primeira barra (Seg=500 / 5 clientes) deve ser maior que a segunda barra (Ter=200 / 2 clientes)
+      const firstBarRects = seriesBars[0].querySelectorAll("rect");
+      const h0 = Number(firstBarRects[0].getAttribute("height"));
+      const h1 = Number(firstBarRects[1].getAttribute("height"));
+      expect(h0).toBeGreaterThan(h1);
     });
 
     it("Cenários 12 e 13 — Isolamento multi-tenant em todas as queries (incluindo títulos financeiros) e bloqueio RBAC", async () => {

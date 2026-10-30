@@ -279,11 +279,12 @@ export default async function DashboardPage() {
         })
       : Promise.resolve([]),
 
-    // 9. Histórico completo de visitas válidas por cliente para recorrência e novos clientes no mês (sem take: 60)
+    // 9. Histórico completo de visitas efetivamente concluídas por cliente para recorrência e novos clientes no mês (sem take: 60)
     prisma.appointment.findMany({
       where: {
         barbershopId: barbershopId!,
-        status: { notIn: ["CANCELLED", "NO_SHOW"] },
+        status: "COMPLETED",
+        dateTime: { lte: endOfDay },
       },
       select: {
         customerId: true,
@@ -306,6 +307,7 @@ export default async function DashboardPage() {
   // ─── Agregações Reais por Período (Semana Atual, Semana Anterior, Ontem, Mês Atual e Mês Anterior) ───
   const DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const dailyRevByDay: Record<number, number> = {};
+  const dailyCompletedByDay: Record<number, number> = {};
   const memberWeeklyRev: Record<string, number> = {};
   let totalWeekRevenue = 0;
   let prevWeekRevenue = 0;
@@ -327,6 +329,7 @@ export default async function DashboardPage() {
       const dow = br.getUTCDay();
       const isoDay = dow === 0 ? 6 : dow - 1;
       dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + netRev;
+      dailyCompletedByDay[isoDay] = (dailyCompletedByDay[isoDay] ?? 0) + 1;
       totalWeekRevenue += netRev;
       if (a.memberId) {
         memberWeeklyRev[a.memberId] =
@@ -365,6 +368,9 @@ export default async function DashboardPage() {
     label,
     revenue: dailyRevByDay[i] ?? 0,
   }));
+  const completedClientsSeries = DAY_LABELS.map(
+    (_, i) => dailyCompletedByDay[i] ?? 0
+  );
 
   const faturamentoHojeTrend = computeVariationStr(
     revenueToday,
@@ -621,14 +627,16 @@ export default async function DashboardPage() {
       status: appt.status,
     }));
 
-  // ─── Recorrência Real de Clientes & Novos Clientes no Mês ───
+  // ─── Recorrência Real de Clientes & Novos Clientes no Mês (exclusivamente atendimentos COMPLETED realizados até endOfDay) ───
   const seenCustomers = new Set<string>();
-  const sourceVisitRows =
-    customerHistoryRows.length > 0
-      ? customerHistoryRows
-      : recentApptRows.filter(
-          (r) => r.status !== "CANCELLED" && r.status !== "NO_SHOW"
-        );
+  const rawVisitRows =
+    customerHistoryRows.length > 0 ? customerHistoryRows : recentApptRows;
+  const sourceVisitRows = rawVisitRows.filter(
+    (r) =>
+      r.status === "COMPLETED" &&
+      Boolean(r.dateTime) &&
+      new Date(r.dateTime).getTime() <= endOfDay.getTime()
+  );
 
   const customerSummary = new Map<
     string,
@@ -826,6 +834,7 @@ export default async function DashboardPage() {
       dueItems={pendingDueItems}
       canAccessFinancial={canAccessFinancial}
       dailyRevenue={dailyRevenue}
+      completedClientsSeries={completedClientsSeries}
       occupancyData={occupancyData}
       onboarding={{
         done: onboardingDone,

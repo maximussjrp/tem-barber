@@ -105,6 +105,10 @@ export interface PremiumDashboardProps {
   dueItems: DueAccountItem[];
   canAccessFinancial: boolean;
   dailyRevenue: { label: string; revenue: number; dateLabel?: string }[];
+  revenueSeries?: number[];
+  weeklyRevenueSeries?: number[];
+  completedClientsSeries?: number[];
+  appointmentsSeries?: number[];
   occupancyData: { occupied: number; available: number; blocked: number };
   onboarding: {
     done: number;
@@ -371,6 +375,10 @@ export function PremiumDashboardView({
   dueItems,
   canAccessFinancial,
   dailyRevenue,
+  revenueSeries,
+  weeklyRevenueSeries,
+  completedClientsSeries,
+  appointmentsSeries,
   occupancyData,
   onboarding,
   recentClients,
@@ -444,6 +452,16 @@ export function PremiumDashboardView({
       : faturamentoSemana;
 
   const effectiveChartTrend = faturamentoGraficoTrend ?? faturamentoSemanaTrend;
+
+  const derivedDailyRevenueSeries = useMemo(
+    () => dailyRevenue.map((d) => d.revenue),
+    [dailyRevenue]
+  );
+  const effectiveRevenueSeries = revenueSeries ?? derivedDailyRevenueSeries;
+  const effectiveWeeklyRevenueSeries =
+    weeklyRevenueSeries ?? derivedDailyRevenueSeries;
+  const effectiveCompletedClientsSeries = completedClientsSeries;
+  const effectiveAppointmentsSeries = appointmentsSeries;
 
   // Real notification alert computation (no hardcoded red dot when 0 alerts)
   const financialAlertCount = canAccessFinancial
@@ -702,7 +720,10 @@ export function PremiumDashboardView({
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/40 text-[#E8C76E] flex items-center justify-center shrink-0">
                   <span className="font-bold text-xs">$</span>
                 </div>
-                <MiniSparklineSvg className="w-12 h-5 shrink-0" />
+                <MiniSparklineSvg
+                  series={effectiveRevenueSeries}
+                  className="w-12 h-5 shrink-0"
+                />
               </div>
               <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
                 Faturamento hoje
@@ -755,7 +776,11 @@ export function PremiumDashboardView({
                     <line x1="3" y1="10" x2="21" y2="10" />
                   </svg>
                 </div>
-                <MiniBarsSvg variant="gold" className="w-11 h-5 shrink-0" />
+                <MiniBarsSvg
+                  variant="gold"
+                  series={effectiveAppointmentsSeries}
+                  className="w-11 h-5 shrink-0"
+                />
               </div>
               <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
                 Agendamentos hoje
@@ -805,7 +830,11 @@ export function PremiumDashboardView({
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                 </div>
-                <MiniBarsSvg variant="slate" className="w-11 h-5 shrink-0" />
+                <MiniBarsSvg
+                  variant="slate"
+                  series={effectiveCompletedClientsSeries}
+                  className="w-11 h-5 shrink-0"
+                />
               </div>
               <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
                 Clientes atendidos
@@ -1110,6 +1139,7 @@ export function PremiumDashboardView({
                 : undefined
             }
             visualType="sparkline"
+            series={effectiveRevenueSeries}
             highlight
             icon={<span className="text-lg font-extrabold">$</span>}
           />
@@ -1128,6 +1158,7 @@ export function PremiumDashboardView({
                 : undefined
             }
             visualType="bars-gold"
+            series={effectiveWeeklyRevenueSeries}
             icon={
               <svg
                 className="w-5 h-5"
@@ -1182,6 +1213,7 @@ export function PremiumDashboardView({
                 : undefined
             }
             visualType="bars-slate"
+            series={effectiveCompletedClientsSeries}
             icon={
               <svg
                 className="w-5 h-5"
