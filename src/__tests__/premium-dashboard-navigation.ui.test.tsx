@@ -83,6 +83,7 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       expect(screen.getByText("Principal")).toBeInTheDocument();
       expect(screen.getByText("Clientes e produtos")).toBeInTheDocument();
       expect(screen.getAllByText("Financeiro").length).toBeGreaterThan(0);
+      expect(screen.getByText("Contas a Pagar / Receber")).toBeInTheDocument();
       expect(screen.getByText("Serviços e gestão")).toBeInTheDocument();
 
       // Botão de fechar fecha o menu

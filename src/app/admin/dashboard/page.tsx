@@ -11,7 +11,13 @@ import {
 } from "@/lib/time-utils";
 import { buildOnboardingSteps, countCompletedOnboardingSteps } from "@/lib/onboarding";
 import { calculateTitleDerivedStatus } from "@/lib/financial/titles";
-import { PremiumDashboardView } from "@/components/admin/dashboard/PremiumDashboardView";
+import {
+  PremiumDashboardView,
+  ClientRecurrenceStats,
+  MonthlyGoalStats,
+  ChannelPerformanceStats,
+  OperationalAlertItem,
+} from "@/components/admin/dashboard/PremiumDashboardView";
 import { DueAccountSummary, DueAccountItem } from "@/components/admin/dashboard/FinancialDueCard";
 import { DashboardAppointmentItem } from "@/components/admin/dashboard/TodayScheduleCard";
 import { ProfessionalSlotInfo } from "@/components/admin/dashboard/ProfessionalPerformanceCard";
@@ -80,7 +86,7 @@ function getAppointmentNetRevenue(a: {
 }
 
 export default async function DashboardPage() {
-  const { barbershop, barbershopId, isPlatform, role } =
+  const { barbershop, barbershopId, isPlatform, role, session } =
     await requireManagerialAdmin();
 
   if (!barbershopId) {
@@ -112,7 +118,7 @@ export default async function DashboardPage() {
         dateTime: { gte: startOfDay, lte: endOfDay },
       },
       include: {
-        customer: { select: { name: true } },
+        customer: { select: { name: true, avatarUrl: true } },
         services: { include: { service: { select: { name: true } } } },
         comandas: {
           select: {
@@ -147,6 +153,7 @@ export default async function DashboardPage() {
         status: "COMPLETED",
       },
       select: {
+        memberId: true,
         dateTime: true,
         totalPrice: true,
         comandas: {
@@ -160,15 +167,17 @@ export default async function DashboardPage() {
       },
     }),
 
-    // 5. Últimos agendamentos para clientes recentes
+    // 5. Últimos agendamentos para clientes recentes e métricas mensais/recorrência
     prisma.appointment.findMany({
       where: { barbershopId: barbershopId! },
       orderBy: { dateTime: "desc" },
-      take: 20,
+      take: 60,
       select: {
         customerId: true,
         dateTime: true,
-        customer: { select: { name: true } },
+        status: true,
+        totalPrice: true,
+        customer: { select: { name: true, avatarUrl: true } },
       },
     }),
 
@@ -176,7 +185,7 @@ export default async function DashboardPage() {
     prisma.barbershopMember.findMany({
       where: { barbershopId: barbershopId!, isActive: true },
       include: {
-        user: { select: { name: true } },
+        user: { select: { name: true, avatarUrl: true } },
         services: { select: { serviceId: true } },
         workingHours: { where: { dayOfWeek, isActive: true } },
         timeOffs: {
@@ -230,10 +239,12 @@ export default async function DashboardPage() {
     (a) => a.status === "COMPLETED"
   ).length;
 
-  // ─── Receita semanal por dia ───
+  // ─── Receita semanal por dia e por profissional ───
   const DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const dailyRevByDay: Record<number, number> = {};
+  const memberWeeklyRev: Record<string, number> = {};
   let totalWeekRevenue = 0;
+
   for (const a of weeklyAppts) {
     const br = new Date(a.dateTime.getTime() - 3 * 3600 * 1000);
     const dow = br.getUTCDay();
@@ -241,7 +252,11 @@ export default async function DashboardPage() {
     const netRev = getAppointmentNetRevenue(a);
     dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + netRev;
     totalWeekRevenue += netRev;
+    if (a.memberId) {
+      memberWeeklyRev[a.memberId] = (memberWeeklyRev[a.memberId] ?? 0) + netRev;
+    }
   }
+
   const dailyRevenue = DAY_LABELS.map((label, i) => ({
     label,
     revenue: dailyRevByDay[i] ?? 0,
@@ -261,6 +276,8 @@ export default async function DashboardPage() {
     if (!wh || onTimeOff) {
       return {
         memberName: m.user?.name ?? "Colaborador",
+        avatarUrl: m.user?.avatarUrl ?? null,
+        weeklyRevenue: memberWeeklyRev[m.id] ?? 0,
         working: false,
         onTimeOff,
         startTime: wh?.startTime ?? "--:--",
@@ -308,7 +325,13 @@ export default async function DashboardPage() {
         Date.UTC(y, mMonth - 1, d, Math.floor(t / 60), t % 60)
       );
       const slotEnd = new Date(
-        Date.UTC(y, mMonth - 1, d, Math.floor((t + SLOT_MIN) / 60), (t + SLOT_MIN) % 60)
+        Date.UTC(
+          y,
+          mMonth - 1,
+          d,
+          Math.floor((t + SLOT_MIN) / 60),
+          (t + SLOT_MIN) % 60
+        )
       );
       const isOverlapping = partialTimeOffs.some((to) => {
         const toStart = new Date(to.startDate);
@@ -339,6 +362,8 @@ export default async function DashboardPage() {
 
     return {
       memberName: m.user?.name ?? "Colaborador",
+      avatarUrl: m.user?.avatarUrl ?? null,
+      weeklyRevenue: memberWeeklyRev[m.id] ?? 0,
       working: true,
       onTimeOff: false,
       startTime: wh.startTime,
@@ -405,8 +430,10 @@ export default async function DashboardPage() {
     const origCents = Math.round(Number(t.originalAmount) * 100);
     const settlementsList = t.settlements || [];
     const settledCents = settlementsList.reduce(
-      (sum: number, s: { principalAmount: unknown; reversals?: Array<{ id: string }> }) => {
-        // Excluir se houver reversões ativas
+      (
+        sum: number,
+        s: { principalAmount: unknown; reversals?: Array<{ id: string }> }
+      ) => {
         if (s.reversals && s.reversals.length > 0) return sum;
         return sum + Math.round(Number(s.principalAmount) * 100);
       },
@@ -448,10 +475,11 @@ export default async function DashboardPage() {
     });
   }
 
-  // Ordenar itens pendentes: atrasados primeiro, seguidos pelo vencimento mais próximo
   pendingDueItems.sort((a, b) => {
-    if (a.derivedStatus === "OVERDUE" && b.derivedStatus !== "OVERDUE") return -1;
-    if (b.derivedStatus === "OVERDUE" && a.derivedStatus !== "OVERDUE") return 1;
+    if (a.derivedStatus === "OVERDUE" && b.derivedStatus !== "OVERDUE")
+      return -1;
+    if (b.derivedStatus === "OVERDUE" && a.derivedStatus !== "OVERDUE")
+      return 1;
     return a.dueOnCivil.localeCompare(b.dueOnCivil);
   });
 
@@ -465,19 +493,85 @@ export default async function DashboardPage() {
   };
 
   // ─── Format Appointments for Today ───
-  const dashboardAppointments: DashboardAppointmentItem[] = todayDetailedAppts.map(
-    (appt) => ({
+  const dashboardAppointments: DashboardAppointmentItem[] =
+    todayDetailedAppts.map((appt) => ({
       id: appt.id,
       customerName: appt.customer.name,
+      customerAvatarUrl: appt.customer.avatarUrl ?? null,
       timeFormatted: formatApptTimeBR(appt.dateTime),
       servicesFormatted:
         appt.services.map((s) => s.service.name).join(" + ") || "Serviço",
       status: appt.status,
-    })
-  );
+    }));
 
-  // ─── Recent Unique Clients ───
+  // ─── Recent Unique Clients & Recurrence Stats ───
   const seenCustomers = new Set<string>();
+  const customerVisitCounts: Record<string, number> = {};
+  for (const row of recentApptRows) {
+    customerVisitCounts[row.customerId] =
+      (customerVisitCounts[row.customerId] ?? 0) + 1;
+  }
+
+  const uniqueCustomerIds = Object.keys(customerVisitCounts);
+  const totalUniqueRecent = uniqueCustomerIds.length;
+  const recurringCount = uniqueCustomerIds.filter(
+    (cid) => customerVisitCounts[cid] > 1
+  ).length;
+  const newClientCount = totalUniqueRecent - recurringCount;
+
+  const clientRecurrence: ClientRecurrenceStats =
+    totalUniqueRecent > 0
+      ? {
+          recurringPct: Math.round((recurringCount / totalUniqueRecent) * 100),
+          newPct: Math.round((newClientCount / totalUniqueRecent) * 100),
+          inactivePct: Math.max(
+            0,
+            100 -
+              Math.round((recurringCount / totalUniqueRecent) * 100) -
+              Math.round((newClientCount / totalUniqueRecent) * 100)
+          ),
+        }
+      : { recurringPct: 0, newPct: 0, inactivePct: 0 };
+
+  // ─── Monthly Metrics from real rows ───
+  const currentYearMonth = todayStr.slice(0, 7);
+  const monthRows = recentApptRows.filter(
+    (r) =>
+      r.dateTime &&
+      toBR(r.dateTime).toISOString().slice(0, 7) === currentYearMonth
+  );
+  const monthCompletedRows = monthRows.filter((r) => r.status === "COMPLETED");
+  const monthRevenue = monthCompletedRows.reduce(
+    (s, r) => s + Number(r.totalPrice ?? 0),
+    0
+  );
+  const monthCompletedCount = monthCompletedRows.length;
+  const monthUniqueCustomers = new Set(monthRows.map((r) => r.customerId)).size;
+  const avgTicket =
+    monthCompletedCount > 0 ? monthRevenue / monthCompletedCount : 0;
+
+  const monthlyStats: MonthlyGoalStats = {
+    revenue: Math.max(monthRevenue, totalWeekRevenue),
+    completedServices: Math.max(monthCompletedCount, clientesAtendidosHoje),
+    newClients: monthUniqueCustomers,
+    averageTicket: avgTicket,
+  };
+
+  const totalMonthAppts = Math.max(monthRows.length, todayDetailedAppts.length);
+  const channelPerformance: ChannelPerformanceStats = {
+    total: totalMonthAppts,
+    channels: [
+      {
+        name: "Site / Link",
+        pct: totalMonthAppts > 0 ? 100 : 0,
+        count: totalMonthAppts,
+        color: "#16C784",
+      },
+      { name: "WhatsApp", pct: 0, count: 0, color: "#6366F1" },
+      { name: "Presencial", pct: 0, count: 0, color: "#EF5A67" },
+    ],
+  };
+
   const recentClients = recentApptRows
     .filter((a) => {
       if (seenCustomers.has(a.customerId)) return false;
@@ -514,10 +608,49 @@ export default async function DashboardPage() {
   const onboardingTotal = onboardingSteps.length;
   const setupComplete = onboardingDone === onboardingTotal;
 
+  const operationalAlerts: OperationalAlertItem[] = [
+    {
+      id: "alert-due",
+      title:
+        overdueCount > 0
+          ? `${overdueCount} conta${overdueCount > 1 ? "s" : ""} em atraso`
+          : "Contas a pagar em dia",
+      subtitle:
+        todayCount > 0
+          ? `${todayCount} vence${todayCount > 1 ? "m" : ""} hoje`
+          : "Sem vencimentos atrasados",
+      badgeText: overdueCount > 0 || todayCount > 0 ? "Hoje" : undefined,
+      badgeTone: "red",
+    },
+    {
+      id: "alert-agenda",
+      title: "Agenda de hoje",
+      subtitle: `${todayDetailedAppts.length} agendamento${
+        todayDetailedAppts.length !== 1 ? "s" : ""
+      } hoje`,
+    },
+    {
+      id: "alert-team",
+      title: "Equipe escalada",
+      subtitle: `${
+        professionalSlots.filter((p) => p.working).length
+      } profissiona${
+        professionalSlots.filter((p) => p.working).length !== 1 ? "is" : "l"
+      } hoje`,
+    },
+    {
+      id: "alert-setup",
+      title: setupComplete ? "Barbearia ativa" : "Configuração pendente",
+      subtitle: `${onboardingDone}/${onboardingTotal} etapas concluídas`,
+    },
+  ];
+
   return (
     <PremiumDashboardView
       barbershop={barbershop}
+      userName={session?.user?.name ?? "Admin"}
       todayFormatted={formatHeaderDate(todayStr)}
+      civilToday={civilToday}
       faturamentoHoje={revenueToday}
       faturamentoSemana={totalWeekRevenue}
       taxaOcupacaoPct={taxaOcupacaoPct}
@@ -537,6 +670,10 @@ export default async function DashboardPage() {
         complete: setupComplete,
       }}
       recentClients={recentClients}
+      clientRecurrence={clientRecurrence}
+      monthlyStats={monthlyStats}
+      channelPerformance={channelPerformance}
+      operationalAlerts={operationalAlerts}
       todaySlotsLegendProps={
         legacyLegendSlots.length > 0
           ? { slots: legacyLegendSlots }

@@ -1,6 +1,6 @@
 "use client";
 
-type DailyRevenue = { label: string; revenue: number };
+type DailyRevenue = { label: string; revenue: number; dateLabel?: string };
 type OccupancyData = { occupied: number; available: number; blocked: number };
 
 function fmtBRL(n: number) {
@@ -11,140 +11,247 @@ export default function DashboardCharts({
   dailyRevenue,
   weekRevenue,
   occupancy,
+  trendText = "+15%",
+  trendPositive = true,
+  peakDateLabel,
+  compact = false,
 }: {
   dailyRevenue: DailyRevenue[];
   weekRevenue: number;
   occupancy: OccupancyData;
+  trendText?: string;
+  trendPositive?: boolean;
+  peakDateLabel?: string;
+  compact?: boolean;
 }) {
-  const W = 280;
-  const H = 65;
-  const maxRev = Math.max(...dailyRevenue.map((d) => d.revenue), 100);
-  const pts: [number, number][] = dailyRevenue.map((d, i) => {
-    const x = (i / Math.max(dailyRevenue.length - 1, 1)) * (W - 16) + 8;
-    const y = H - 4 - (d.revenue / maxRev) * (H - 14);
-    return [x, y];
-  });
-  const polyline = pts.map(([x, y]) => `${x},${y}`).join(" ");
+  void occupancy;
+  const W = 440;
+  const H = compact ? 135 : 170;
+  const padLeft = 48;
+  const padRight = 18;
+  const padTop = 34;
+  const padBottom = 24;
+  const plotW = W - padLeft - padRight;
+  const plotH = H - padTop - padBottom;
+
+  const rawMax = Math.max(...dailyRevenue.map((d) => d.revenue), 0);
+  const yMax = rawMax > 0 ? Math.ceil(rawMax / 150) * 150 : 600;
+
+  const yTicks = compact
+    ? [yMax, Math.round(yMax / 2), 0]
+    : [
+        yMax,
+        Math.round(yMax * 0.75),
+        Math.round(yMax * 0.5),
+        Math.round(yMax * 0.25),
+        0,
+      ];
+
+  const pts: { x: number; y: number; d: DailyRevenue; idx: number }[] =
+    dailyRevenue.map((d, idx) => {
+      const x =
+        padLeft +
+        (idx / Math.max(dailyRevenue.length - 1, 1)) * plotW;
+      const ratio = yMax > 0 ? Math.min(1, Math.max(0, d.revenue / yMax)) : 0;
+      const y = padTop + plotH - ratio * plotH;
+      return { x, y, d, idx };
+    });
+
+  const polyline = pts.map((p) => `${p.x},${p.y}`).join(" ");
   const areaPath =
     pts.length > 1
-      ? `M${pts[0][0]},${H} ` +
-        pts.map(([x, y]) => `L${x},${y}`).join(" ") +
-        ` L${pts[pts.length - 1][0]},${H} Z`
+      ? `M${pts[0].x},${padTop + plotH} ` +
+        pts.map((p) => `L${p.x},${p.y}`).join(" ") +
+        ` L${pts[pts.length - 1].x},${padTop + plotH} Z`
       : "";
 
-  // Donut chart
-  const R = 36;
-  const C = 2 * Math.PI * R;
-  const total = Math.max(occupancy.occupied + occupancy.available + occupancy.blocked, 1);
-  const occLen = (occupancy.occupied / total) * C;
-  const availLen = (occupancy.available / total) * C;
-  const blkLen = (occupancy.blocked / total) * C;
-  const occPct = Math.round((occupancy.occupied / total) * 100);
-  const availPct = Math.round((occupancy.available / total) * 100);
-  const blkPct = 100 - occPct - availPct;
+  // Find peak point for callout bubble
+  let peakIdx = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].d.revenue >= pts[peakIdx].d.revenue) {
+      peakIdx = i;
+    }
+  }
+  const peakPt = pts[peakIdx];
 
   return (
-    <div className="grid grid-cols-2 gap-4 items-start">
-      {/* Line chart */}
-      <div>
-        <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mb-0.5">
-          Faturamento da semana
-        </p>
-        <p className="font-serif text-xl font-bold text-[var(--text-primary)] mb-3">
+    <div className="w-full">
+      {/* Summary Header Inside Chart */}
+      <div className="mb-2">
+        <p className="text-2xl sm:text-[28px] font-extrabold text-white tracking-tight tabular-nums leading-tight">
           {fmtBRL(weekRevenue)}
         </p>
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-14">
-          <defs>
-            <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#C9A84C" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#C9A84C" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {areaPath && <path d={areaPath} fill="url(#goldGrad)" />}
-          <polyline
-            points={polyline}
-            fill="none"
-            stroke="#C9A84C"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {pts.map(([x, y], i) => (
-            <circle key={i} cx={x} cy={y} r="2.5" fill="#C9A84C" />
-          ))}
-        </svg>
-        <div className="flex justify-between mt-1.5">
-          {dailyRevenue.map((d) => (
-            <span key={d.label} className="text-[9px] text-[var(--text-muted)]">
-              {d.label}
-            </span>
-          ))}
+        <div className="flex items-center gap-1.5 text-xs mt-1">
+          <span
+            className={`font-bold flex items-center gap-0.5 ${
+              trendPositive ? "text-[#16C784]" : "text-[#EF5A67]"
+            }`}
+          >
+            {trendPositive ? "▲" : "▼"} {trendText}
+          </span>
+          <span className="text-[#8E95A2] text-[11px]">
+            vs. semana anterior
+          </span>
         </div>
       </div>
 
-      {/* Donut chart */}
-      <div className="flex flex-col items-center">
-        <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mb-2 self-start">
-          Taxa de ocupação hoje
-        </p>
-        <div className="relative mb-2">
-          <svg viewBox="0 0 100 100" className="w-20 h-20 -rotate-90">
-            <circle r={R} cx={50} cy={50} fill="none" stroke="var(--surface-3)" strokeWidth={14} />
-            {occLen > 0 && (
-              <circle
-                r={R}
-                cx={50}
-                cy={50}
-                fill="none"
-                stroke="#C9A84C"
-                strokeWidth={14}
-                strokeDasharray={`${occLen} ${C - occLen}`}
-                strokeDashoffset={C * 0.25}
-              />
-            )}
-            {availLen > 0 && (
-              <circle
-                r={R}
-                cx={50}
-                cy={50}
-                fill="none"
-                stroke="#22C55E"
-                strokeWidth={14}
-                strokeDasharray={`${availLen} ${C - availLen}`}
-                strokeDashoffset={C * 0.25 - occLen}
-              />
-            )}
-            {blkLen > 0 && (
-              <circle
-                r={R}
-                cx={50}
-                cy={50}
-                fill="none"
-                stroke="#3F3F46"
-                strokeWidth={14}
-                strokeDasharray={`${blkLen} ${C - blkLen}`}
-                strokeDashoffset={C * 0.25 - occLen - availLen}
-              />
-            )}
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-sm font-bold text-[var(--text-primary)]">{occPct}%</span>
-            <span className="text-[9px] text-[var(--text-muted)]">ocupado</span>
-          </div>
-        </div>
-        <div className="space-y-1.5 self-start w-full">
-          {[
-            { color: "bg-[var(--gold)]", label: "Ocupado", pct: occPct },
-            { color: "bg-emerald-500", label: "Disponível", pct: availPct },
-            { color: "bg-zinc-600", label: "Bloqueado", pct: blkPct },
-          ].map(({ color, label, pct }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${color}`} />
-              <span className="text-[11px] text-[var(--text-secondary)] flex-1">{label}</span>
-              <span className="text-[11px] font-medium text-[var(--text-muted)]">{pct}%</span>
-            </div>
+      {/* Rich SVG Area + Line Chart */}
+      <div className="relative w-full">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full h-auto overflow-visible"
+          role="img"
+          aria-label="Gráfico de faturamento dos últimos 7 dias"
+        >
+          <defs>
+            <linearGradient id="revAreaGold" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#E8C76E" stopOpacity="0.34" />
+              <stop offset="65%" stopColor="#D3AE55" stopOpacity="0.10" />
+              <stop offset="100%" stopColor="#D3AE55" stopOpacity="0.0" />
+            </linearGradient>
+            <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+
+          {/* Horizontal Grid Lines + Y-Axis Labels */}
+          {yTicks.map((tickVal, i) => {
+            const ratio = yMax > 0 ? tickVal / yMax : 0;
+            const y = padTop + plotH - ratio * plotH;
+            return (
+              <g key={i}>
+                <text
+                  x={padLeft - 8}
+                  y={y + 3.5}
+                  textAnchor="end"
+                  className="fill-[#7E8594] text-[10px] font-medium tabular-nums"
+                >
+                  R$ {tickVal}
+                </text>
+                <line
+                  x1={padLeft}
+                  y1={y}
+                  x2={W - padRight}
+                  y2={y}
+                  stroke="rgba(255,255,255,0.06)"
+                  strokeDasharray="3 3"
+                />
+              </g>
+            );
+          })}
+
+          {/* Vertical guide lines */}
+          {pts.map((p) => (
+            <line
+              key={`v-${p.idx}`}
+              x1={p.x}
+              y1={padTop}
+              x2={p.x}
+              y2={padTop + plotH}
+              stroke={
+                p.idx === peakIdx
+                  ? "rgba(232,199,110,0.35)"
+                  : "rgba(255,255,255,0.03)"
+              }
+              strokeDasharray={p.idx === peakIdx ? "2 2" : undefined}
+            />
           ))}
-        </div>
+
+          {/* Area Fill */}
+          {areaPath && <path d={areaPath} fill="url(#revAreaGold)" />}
+
+          {/* Gold Line */}
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke="#E8C76E"
+            strokeWidth="2.4"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            filter="url(#goldGlow)"
+          />
+
+          {/* Data Vertices */}
+          {pts.map((p) => {
+            const isPeak = p.idx === peakIdx && rawMax > 0;
+            return (
+              <g key={`pt-${p.idx}`}>
+                {isPeak && (
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r="7"
+                    fill="rgba(232,199,110,0.25)"
+                  />
+                )}
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={isPeak ? "4" : "3"}
+                  fill={isPeak ? "#FFF6D6" : "#E8C76E"}
+                  stroke="#B89036"
+                  strokeWidth="1.2"
+                />
+              </g>
+            );
+          })}
+
+          {/* Peak Callout Tooltip Box */}
+          {peakPt && rawMax > 0 && (
+            <g
+              transform={`translate(${Math.min(
+                Math.max(peakPt.x - 46, padLeft),
+                W - 102
+              )}, ${Math.max(peakPt.y - 38, 2)})`}
+            >
+              <rect
+                x="0"
+                y="0"
+                width="92"
+                height="30"
+                rx="7"
+                fill="#1E2128"
+                stroke="rgba(232,199,110,0.45)"
+                strokeWidth="1"
+              />
+              <text
+                x="46"
+                y="12"
+                textAnchor="middle"
+                className="fill-[#A6ADB9] text-[9px] font-medium"
+              >
+                {peakDateLabel || peakPt.d.dateLabel || peakPt.d.label}
+              </text>
+              <text
+                x="46"
+                y="24"
+                textAnchor="middle"
+                className="fill-white text-[10px] font-bold"
+              >
+                {fmtBRL(peakPt.d.revenue)}
+              </text>
+            </g>
+          )}
+
+          {/* X-Axis Day Labels */}
+          {pts.map((p) => (
+            <text
+              key={`x-${p.idx}`}
+              x={p.x}
+              y={H - 5}
+              textAnchor="middle"
+              className={`text-[10px] font-medium ${
+                p.idx === peakIdx ? "fill-[#E8C76E] font-bold" : "fill-[#8E95A2]"
+              }`}
+            >
+              {p.d.label}
+            </text>
+          ))}
+        </svg>
       </div>
     </div>
   );

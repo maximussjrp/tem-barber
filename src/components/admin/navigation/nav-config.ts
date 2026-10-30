@@ -1,6 +1,7 @@
 export interface NavChildItem {
   label: string;
   href: string;
+  iconName?: string;
   roles?: string[];
 }
 
@@ -10,10 +11,15 @@ export interface NavItemConfig {
   iconName:
     | "dashboard"
     | "calendar"
+    | "comandas"
+    | "fila"
     | "clients"
+    | "products"
     | "scissors"
     | "cash"
     | "financial"
+    | "accounts"
+    | "reports"
     | "commissions"
     | "tips"
     | "club"
@@ -46,16 +52,16 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
     ownerOnly: false,
   },
   {
-    label: "Fila Online",
-    href: "/admin/fila",
-    iconName: "calendar",
+    label: "Comandas",
+    href: "/admin/comandas",
+    iconName: "comandas",
     children: [],
     ownerOnly: false,
   },
   {
-    label: "Comandas",
-    href: "/admin/comandas",
-    iconName: "calendar",
+    label: "Fila Online",
+    href: "/admin/fila",
+    iconName: "fila",
     children: [],
     ownerOnly: false,
   },
@@ -74,33 +80,26 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
     ],
   },
   {
-    label: "Produtos",
-    href: "/admin/produtos",
-    iconName: "scissors",
-    children: [],
-    ownerOnly: false,
-  },
-  {
-    label: "Caixa",
-    href: "/admin/caixa",
-    iconName: "cash",
-    children: [],
-    ownerOnly: false,
-  },
-  {
     label: "Financeiro",
     href: "/admin/financeiro",
     iconName: "financial",
     ownerOnly: true,
     children: [
       {
-        label: "Visão Geral",
-        href: "/admin/financeiro",
+        label: "Contas a Pagar",
+        href: "/admin/financeiro/contas?kind=PAYABLE",
+        iconName: "payable",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
-        label: "Contas",
-        href: "/admin/financeiro/contas",
+        label: "Contas a Receber",
+        href: "/admin/financeiro/contas?kind=RECEIVABLE",
+        iconName: "receivable",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Visão Geral",
+        href: "/admin/financeiro",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
@@ -124,16 +123,25 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
       {
-        label: "Relatório Gerencial",
-        href: "/admin/financeiro/relatorio-gerencial",
-        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
-      },
-      {
         label: "Configurações",
         href: "/admin/financeiro/configuracoes",
         roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
       },
     ],
+  },
+  {
+    label: "Contas a Pagar / Receber",
+    href: "/admin/financeiro/contas",
+    iconName: "accounts",
+    ownerOnly: true,
+    children: [],
+  },
+  {
+    label: "Caixa",
+    href: "/admin/caixa",
+    iconName: "cash",
+    children: [],
+    ownerOnly: false,
   },
   {
     label: "Comissões",
@@ -146,6 +154,13 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
     label: "Gorjetas",
     href: "/admin/gorjetas",
     iconName: "tips",
+    children: [],
+    ownerOnly: false,
+  },
+  {
+    label: "Produtos",
+    href: "/admin/produtos",
+    iconName: "products",
     children: [],
     ownerOnly: false,
   },
@@ -170,6 +185,24 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
       { label: "Assinantes", href: "/admin/clube/assinantes" },
       { label: "Fechamentos", href: "/admin/clube/fechamentos" },
       { label: "Relatórios", href: "/admin/clube/relatorios" },
+    ],
+  },
+  {
+    label: "Relatórios",
+    href: "/admin/financeiro/relatorio-gerencial",
+    iconName: "reports",
+    ownerOnly: true,
+    children: [
+      {
+        label: "Relatório Gerencial",
+        href: "/admin/financeiro/relatorio-gerencial",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
+      {
+        label: "Relatórios do Clube",
+        href: "/admin/clube/relatorios",
+        roles: ["OWNER", "MANAGER", "SUPER_ADMIN"],
+      },
     ],
   },
   {
@@ -215,13 +248,19 @@ export function getVisibleNavItems(params: {
   const { userRole, isPlatformAdmin } = params;
   const isReceptionist = userRole === "RECEPTIONIST";
   const canSeeOwnerRoutes =
-    userRole === "OWNER" || userRole === "MANAGER" || userRole === "SUPER_ADMIN" || isPlatformAdmin;
+    userRole === "OWNER" ||
+    userRole === "MANAGER" ||
+    userRole === "SUPER_ADMIN" ||
+    isPlatformAdmin;
 
   const filtered = ADMIN_NAV_CONFIG.filter((item) => {
     if (isReceptionist) {
-      return ["/admin/agendamentos", "/admin/fila", "/admin/comandas", "/admin/clientes"].includes(
-        item.href
-      );
+      return [
+        "/admin/agendamentos",
+        "/admin/fila",
+        "/admin/comandas",
+        "/admin/clientes",
+      ].includes(item.href);
     }
     return !item.ownerOnly || canSeeOwnerRoutes;
   }).map((item) => {
@@ -248,52 +287,53 @@ export function getVisibleNavItems(params: {
 }
 
 export function groupNavItems(items: NavItemConfig[]): NavGroupConfig[] {
-  const groups: Record<string, { title: string; items: NavItemConfig[] }> = {
-    principal: {
-      title: "Principal",
-      items: [],
-    },
-    clientes_produtos: {
+  const byHref = new Map(items.map((item) => [item.href, item]));
+
+  const pick = (hrefs: string[]): NavItemConfig[] =>
+    hrefs.map((h) => byHref.get(h)).filter((x): x is NavItemConfig => Boolean(x));
+
+  const principalItems = [
+    ...(byHref.has("/admin/platform") ? [byHref.get("/admin/platform")!] : []),
+    ...pick([
+      "/admin/dashboard",
+      "/admin/agendamentos",
+      "/admin/comandas",
+      "/admin/fila",
+    ]),
+  ];
+
+  const clientesProdutosItems = pick(["/admin/clientes", "/admin/produtos"]);
+
+  const financeiroItems = pick([
+    "/admin/caixa",
+    "/admin/financeiro",
+    "/admin/financeiro/contas",
+    "/admin/comissoes",
+    "/admin/gorjetas",
+  ]);
+
+  const servicosGestaoItems = pick([
+    "/admin/servicos",
+    "/admin/clube",
+    "/admin/marketing",
+    "/admin/configuracoes",
+    "/admin/financeiro/relatorio-gerencial",
+  ]);
+
+  const groups: NavGroupConfig[] = [
+    { id: "principal", title: "Principal", items: principalItems },
+    {
+      id: "clientes_produtos",
       title: "Clientes e produtos",
-      items: [],
+      items: clientesProdutosItems,
     },
-    financeiro: {
-      title: "Financeiro",
-      items: [],
-    },
-    servicos_gestao: {
+    { id: "financeiro", title: "Financeiro", items: financeiroItems },
+    {
+      id: "servicos_gestao",
       title: "Serviços e gestão",
-      items: [],
+      items: servicosGestaoItems,
     },
-  };
+  ];
 
-  for (const item of items) {
-    if (item.href === "/admin/platform") {
-      groups.principal.items.unshift(item);
-    } else if (
-      ["/admin/dashboard", "/admin/agendamentos", "/admin/fila", "/admin/comandas"].includes(
-        item.href
-      )
-    ) {
-      groups.principal.items.push(item);
-    } else if (["/admin/clientes", "/admin/produtos"].includes(item.href)) {
-      groups.clientes_produtos.items.push(item);
-    } else if (
-      ["/admin/caixa", "/admin/financeiro", "/admin/comissoes", "/admin/gorjetas"].includes(
-        item.href
-      )
-    ) {
-      groups.financeiro.items.push(item);
-    } else {
-      groups.servicos_gestao.items.push(item);
-    }
-  }
-
-  return Object.entries(groups)
-    .filter((entry) => entry[1].items.length > 0)
-    .map(([id, g]) => ({
-      id,
-      title: g.title,
-      items: g.items,
-    }));
+  return groups.filter((g) => g.items.length > 0);
 }
