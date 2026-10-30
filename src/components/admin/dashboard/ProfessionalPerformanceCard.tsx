@@ -122,14 +122,15 @@ export function ProfessionalPerformanceCard({
                   )}
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-white truncate leading-tight">
-                      {m.memberName}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[11px] text-[#9CA3AF] tabular-nums shrink-0 w-[68px] truncate">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-xs font-bold text-white truncate leading-tight">
+                        {m.memberName}
+                      </p>
+                      <span className="text-[11px] text-[#9CA3AF] tabular-nums shrink-0 font-medium">
                         {subtitleText}
                       </span>
-
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5">
                       {/* Horizontal gold progress bar */}
                       <div className="flex-1 h-2 bg-white/[0.08] rounded-full overflow-hidden min-w-[60px]">
                         <div

@@ -258,7 +258,7 @@ export function SectionHeader({
       : "bg-[#D3AE55]/12 border-[#D3AE55]/30 text-[#E8C76E]";
 
   return (
-    <div className="flex items-center justify-between gap-2 mb-3.5">
+    <div className="flex items-start sm:items-center justify-between gap-2 mb-3.5">
       <div className="flex items-center gap-2 min-w-0">
         {icon && (
           <div
@@ -268,7 +268,7 @@ export function SectionHeader({
           </div>
         )}
         <div className="min-w-0">
-          <h2 className="text-[12.5px] sm:text-[13.5px] font-bold text-white tracking-tight truncate leading-tight">
+          <h2 className="text-[12.5px] sm:text-[13.5px] font-bold text-white tracking-tight leading-snug">
             {title}
           </h2>
           {subtitle && (

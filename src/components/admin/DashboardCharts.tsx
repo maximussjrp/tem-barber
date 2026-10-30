@@ -11,7 +11,7 @@ export default function DashboardCharts({
   dailyRevenue,
   weekRevenue,
   occupancy,
-  trendText = "+15%",
+  trendText,
   trendPositive = true,
   peakDateLabel,
   compact = false,
@@ -82,16 +82,24 @@ export default function DashboardCharts({
           {fmtBRL(weekRevenue)}
         </p>
         <div className="flex items-center gap-1.5 text-xs mt-1">
-          <span
-            className={`font-bold flex items-center gap-0.5 ${
-              trendPositive ? "text-[#16C784]" : "text-[#EF5A67]"
-            }`}
-          >
-            {trendPositive ? "▲" : "▼"} {trendText}
-          </span>
-          <span className="text-[#8E95A2] text-[11px]">
-            vs. semana anterior
-          </span>
+          {trendText ? (
+            <>
+              <span
+                className={`font-bold flex items-center gap-0.5 ${
+                  trendPositive ? "text-[#16C784]" : "text-[#EF5A67]"
+                }`}
+              >
+                {trendPositive ? "▲" : "▼"} {trendText}
+              </span>
+              <span className="text-[#8E95A2] text-[11px]">
+                vs. semana anterior
+              </span>
+            </>
+          ) : (
+            <span className="text-[#8E95A2] text-[11px]">
+              Acumulado nos últimos 7 dias
+            </span>
+          )}
         </div>
       </div>
 
@@ -224,7 +232,7 @@ export default function DashboardCharts({
                 textAnchor="middle"
                 className="fill-[#A6ADB9] text-[9px] font-medium"
               >
-                {peakDateLabel || peakPt.d.dateLabel || peakPt.d.label}
+                {peakDateLabel || peakPt.d.dateLabel || `Pico · ${peakPt.d.label}`}
               </text>
               <text
                 x="46"

@@ -139,7 +139,7 @@ export function MobileFullScreenMenu({
             <div className="flex items-center gap-2">
               <h2
                 id="mobile-menu-title"
-                className="font-serif text-base font-bold text-white tracking-wide truncate leading-tight"
+                className="font-serif text-[15px] sm:text-base font-bold text-white tracking-wide line-clamp-2 leading-tight"
               >
                 {barbershopName}
               </h2>
@@ -188,7 +188,10 @@ export function MobileFullScreenMenu({
       </div>
 
       {/* Scrollable Navigation List */}
-      <div className="flex-1 overflow-y-auto px-3.5 py-2 space-y-2 overscroll-contain">
+      <div
+        data-testid="mobile-menu-scroll-container"
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2 space-y-2 overscroll-contain"
+      >
         {groups.map((group) => (
           <div key={group.id} className="space-y-1">
             <h3 className="px-2 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-[#8E95A2]">

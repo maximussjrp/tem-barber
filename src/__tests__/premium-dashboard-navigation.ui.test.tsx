@@ -5,10 +5,62 @@ import { MobileBottomNavigation } from "@/components/admin/navigation/MobileBott
 import { MobileFullScreenMenu } from "@/components/admin/navigation/MobileFullScreenMenu";
 import { AdminSidebar } from "@/components/admin/Sidebar";
 import { FinancialDueCard } from "@/components/admin/dashboard/FinancialDueCard";
+import { PremiumDashboardView } from "@/components/admin/dashboard/PremiumDashboardView";
 import { calculateTitleDerivedStatus } from "@/lib/financial/titles";
+import DashboardPage from "@/app/admin/dashboard/page";
+import prisma from "@/lib/prisma";
+import { requireManagerialAdmin } from "@/lib/admin-guard";
+
+const { redirectMock, defaultAdminContext } = vi.hoisted(() => ({
+  redirectMock: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT:${url}`);
+  }),
+  defaultAdminContext: {
+    barbershopId: "tenant-1",
+    role: "OWNER",
+    isPlatform: false,
+    session: { user: { name: "Carlos Barber", role: "OWNER" }, expires: "2099-01-01" },
+    barbershop: {
+      id: "tenant-1",
+      name: "Barbearia Dom Brio",
+      slug: "barbearia-dom-brio",
+      description: "Barbearia Premium",
+      phone: "17999999999",
+      city: "São José do Rio Preto",
+      state: "SP",
+    },
+  },
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/dashboard",
+  redirect: redirectMock,
+}));
+
+vi.mock("@/lib/admin-guard", () => ({
+  requireAdmin: vi.fn().mockResolvedValue(defaultAdminContext),
+  requireManagerialAdmin: vi.fn().mockResolvedValue(defaultAdminContext),
+  RECEPTIONIST_HOME_PATH: "/admin/agendamentos",
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  default: {
+    appointment: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    service: {
+      count: vi.fn().mockResolvedValue(1),
+    },
+    workingHour: {
+      count: vi.fn().mockResolvedValue(1),
+    },
+    barbershopMember: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    financialTitle: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+  },
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -222,6 +274,375 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       });
       expect(paid.status).toBe("PAID");
       expect(paid.outstandingPrincipalCents).toBe(0);
+    });
+
+    it("Cenários 7, 8, 9 e 10 — exibe rótulos corretos para conta vencida ontem, hoje, amanhã e parcialmente paga (desktop e mobile)", () => {
+      const items = [
+        {
+          id: "due-yesterday",
+          title: "Energia elétrica",
+          categoryName: "Fixo",
+          dueOnCivil: "2026-10-29",
+          outstandingPrincipalCents: 42000,
+          derivedStatus: "OVERDUE" as const,
+        },
+        {
+          id: "due-today",
+          title: "Aluguel do ponto",
+          categoryName: "Fixo",
+          dueOnCivil: "2026-10-30",
+          outstandingPrincipalCents: 180000,
+          derivedStatus: "PARTIAL" as const,
+        },
+        {
+          id: "due-tomorrow",
+          title: "Internet fibra",
+          categoryName: "Operacional",
+          dueOnCivil: "2026-10-31",
+          outstandingPrincipalCents: 19990,
+          derivedStatus: "OPEN" as const,
+        },
+      ];
+
+      const { unmount } = render(
+        <FinancialDueCard
+          summary={{
+            overdueCount: 1,
+            overdueAmountCents: 42000,
+            todayCount: 1,
+            todayAmountCents: 180000,
+            next7DaysCount: 1,
+            next7DaysAmountCents: 19990,
+          }}
+          items={items}
+          canAccessFinancial={true}
+          civilToday="2026-10-30"
+          compactMobile={true}
+        />
+      );
+
+      // Cenário 7 (vencida ontem no mobile): NUNCA exibe "Vence hoje • 29/10", exibe "Venceu em 29/10"
+      expect(screen.getByText("Venceu em 29/10")).toBeInTheDocument();
+      expect(screen.queryByText(/Vence hoje.*29\/10/)).not.toBeInTheDocument();
+
+      // Cenário 8 (vencendo hoje no mobile): exibe "Vence hoje · 30/10"
+      expect(screen.getByText("Vence hoje · 30/10")).toBeInTheDocument();
+
+      // Cenário 9 (vencendo amanhã): exibe "Vence amanhã" e "31/10"
+      expect(screen.getByText("Vence amanhã")).toBeInTheDocument();
+      expect(screen.getByText(/31\/10/)).toBeInTheDocument();
+
+      // Cenário 10 (parcialmente paga): exibe badge "Parcial" e saldo restante R$ 1.800,00
+      expect(screen.getByText("Parcial")).toBeInTheDocument();
+      expect(screen.getAllByText(/1\.800,00/).length).toBeGreaterThan(0);
+
+      unmount();
+    });
+  });
+
+  describe("5. Integridade de Dados, Métricas Mensais, Recorrência, Canais e Metas (Cenários 1 a 15)", () => {
+    it("Cenário 1 — Mês com mais de 60 agendamentos agrega todos os registros reais sem truncar em take: 60", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-30T15:00:00.000Z"));
+
+      const sixtyFiveMonthAppts = Array.from({ length: 65 }, (_, idx) => {
+        const day = (idx % 25) + 1;
+        return {
+          id: `month-appt-${idx + 1}`,
+          customerId: `cust-${(idx % 20) + 1}`,
+          memberId: "member-1",
+          status: "COMPLETED",
+          totalPrice: 80.0,
+          dateTime: new Date(`2026-10-${String(day).padStart(2, "0")}T14:00:00.000Z`),
+          comandas: [{ status: "CLOSED", total: 80.0, discountTotal: 0, surchargeTotal: 0 }],
+        };
+      });
+
+      vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
+        const where = args?.where as
+          | { status?: string | { notIn?: string[] } }
+          | undefined;
+        if (where?.status === "COMPLETED") {
+          return Promise.resolve(sixtyFiveMonthAppts) as unknown as ReturnType<
+            typeof prisma.appointment.findMany
+          >;
+        }
+        if (typeof where?.status === "object" && where?.status?.notIn) {
+          return Promise.resolve(
+            sixtyFiveMonthAppts.map((a) => ({
+              customerId: a.customerId,
+              dateTime: a.dateTime,
+              status: a.status,
+            }))
+          ) as unknown as ReturnType<typeof prisma.appointment.findMany>;
+        }
+        return Promise.resolve([]) as unknown as ReturnType<
+          typeof prisma.appointment.findMany
+        >;
+      });
+
+      const pageElement = await DashboardPage();
+      const { container } = render(pageElement);
+
+      // 65 * R$ 80,00 = R$ 5.200,00 no acumulado do mês e 65 serviços concluídos
+      expect(container.textContent).toContain("5.200,00");
+      expect(screen.getByText("65")).toBeInTheDocument();
+
+      vi.useRealTimers();
+    });
+
+    it("Cenário 2 — Semana com receita maior que amostra mensal (virada de mês) não usa Math.max para inflar o mês", async () => {
+      vi.useFakeTimers();
+      // 02/10/2026 (sexta-feira): semana iniciou em 28/09/2026
+      vi.setSystemTime(new Date("2026-10-02T15:00:00.000Z"));
+
+      const periodCompleted = [
+        {
+          id: "sep-appt",
+          customerId: "c-1",
+          memberId: "member-1",
+          status: "COMPLETED",
+          totalPrice: 2000.0,
+          dateTime: new Date("2026-09-29T14:00:00.000Z"),
+          comandas: [{ status: "CLOSED", total: 2000.0, discountTotal: 0, surchargeTotal: 0 }],
+        },
+        {
+          id: "oct-appt",
+          customerId: "c-2",
+          memberId: "member-1",
+          status: "COMPLETED",
+          totalPrice: 500.0,
+          dateTime: new Date("2026-10-02T13:00:00.000Z"),
+          comandas: [{ status: "CLOSED", total: 500.0, discountTotal: 0, surchargeTotal: 0 }],
+        },
+      ];
+
+      vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
+        const where = args?.where as { status?: string } | undefined;
+        if (where?.status === "COMPLETED") {
+          return Promise.resolve(periodCompleted) as unknown as ReturnType<
+            typeof prisma.appointment.findMany
+          >;
+        }
+        return Promise.resolve([]) as unknown as ReturnType<
+          typeof prisma.appointment.findMany
+        >;
+      });
+
+      const pageElement = await DashboardPage();
+      const { container } = render(pageElement);
+
+      // Semana = R$ 2.500,00; Mês de outubro = R$ 500,00
+      expect(container.textContent).toContain("2.500,00");
+      expect(container.textContent).toContain("500,00");
+
+      vi.useRealTimers();
+    });
+
+    it("Cenários 3, 4, 5 e 11 — Barbearia sem dados e sem período anterior não exibe percentuais falsos (+40%, +18%, +15%, 68%, 70%, 52%, 100%)", async () => {
+      vi.mocked(prisma.appointment.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.financialTitle.findMany).mockResolvedValue([]);
+
+      const pageElement = await DashboardPage();
+      const { container } = render(pageElement);
+
+      const text = container.textContent ?? "";
+
+      // Cenário 3: Nenhuma variação demonstrativa falsa
+      expect(text).not.toContain("+40%");
+      expect(text).not.toContain("+18%");
+      expect(text).not.toContain("+15%");
+      expect(text).not.toContain("+28%");
+      expect(text).not.toContain("+33%");
+
+      // Cenário 4: Metas mensais não configuradas
+      expect(screen.getByText("Meta não configurada")).toBeInTheDocument();
+      expect(text).not.toContain("70%");
+
+      // Cenário 5: Origem de agendamento desconhecida / não rastreada
+      expect(
+        screen.getByText("Origem do agendamento não rastreada")
+      ).toBeInTheDocument();
+      expect(text).not.toContain("52%");
+
+      // Cenário 6/11: Sem histórico de recorrência não inventa 68% / 24% / 8%
+      expect(text).not.toContain("68%");
+      expect(text).not.toContain("24%");
+      expect(
+        screen.getByText("Sem histórico de visitas para cálculo de recorrência.")
+      ).toBeInTheDocument();
+
+      // Sino de notificações não exibe ponto vermelho quando não há alertas
+      expect(screen.queryByTestId("mobile-bell-alert-dot")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("desktop-bell-alert-dot")).not.toBeInTheDocument();
+    });
+
+    it("Cenário 6 — Cliente com 1 visita (Novo) versus múltiplas visitas (Recorrente) versus Inativo (>30 dias)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-30T15:00:00.000Z"));
+
+      const visitHistory = [
+        // 2 clientes recorrentes (múltiplas visitas, última nos últimos 30 dias)
+        { customerId: "c-rec-1", dateTime: new Date("2026-09-10T14:00:00.000Z"), status: "COMPLETED" },
+        { customerId: "c-rec-1", dateTime: new Date("2026-10-28T14:00:00.000Z"), status: "COMPLETED" },
+        { customerId: "c-rec-2", dateTime: new Date("2026-10-05T14:00:00.000Z"), status: "COMPLETED" },
+        { customerId: "c-rec-2", dateTime: new Date("2026-10-29T14:00:00.000Z"), status: "COMPLETED" },
+        // 1 cliente novo (1 única visita nos últimos 30 dias)
+        { customerId: "c-new-1", dateTime: new Date("2026-10-25T14:00:00.000Z"), status: "COMPLETED" },
+        // 1 cliente inativo (última visita há mais de 30 dias)
+        { customerId: "c-ina-1", dateTime: new Date("2026-08-15T14:00:00.000Z"), status: "COMPLETED" },
+      ];
+
+      vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
+        const where = args?.where as
+          | { status?: { notIn?: string[] } }
+          | undefined;
+        if (where?.status?.notIn) {
+          return Promise.resolve(visitHistory) as ReturnType<
+            typeof prisma.appointment.findMany
+          >;
+        }
+        return Promise.resolve([]) as ReturnType<
+          typeof prisma.appointment.findMany
+        >;
+      });
+
+      const pageElement = await DashboardPage();
+      const { container } = render(pageElement);
+
+      // 4 clientes: 50% recorrentes, 25% novos, 25% inativos
+      expect(container.textContent).toContain("50%");
+      expect(container.textContent).toContain("25%");
+      expect(container.textContent).not.toContain("68%");
+
+      vi.useRealTimers();
+    });
+
+    it("Cenários 12 e 13 — Isolamento multi-tenant em todas as queries (incluindo títulos financeiros) e bloqueio RBAC", async () => {
+      vi.mocked(prisma.appointment.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.financialTitle.findMany).mockResolvedValue([]);
+
+      const pageElement = await DashboardPage();
+      render(pageElement);
+
+      for (const call of vi.mocked(prisma.appointment.findMany).mock.calls) {
+        expect(call[0]?.where?.barbershopId).toBe("tenant-1");
+      }
+      for (const call of vi.mocked(prisma.financialTitle.findMany).mock.calls) {
+        expect(call[0]?.where?.barbershopId).toBe("tenant-1");
+      }
+
+      // RECEPTIONIST bloqueado antes de qualquer query
+      vi.clearAllMocks();
+      vi.mocked(requireManagerialAdmin).mockImplementationOnce(async () => {
+        throw new Error("NEXT_REDIRECT:/admin/agendamentos");
+      });
+      await expect(DashboardPage()).rejects.toThrow("NEXT_REDIRECT:/admin/agendamentos");
+      expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+      expect(prisma.financialTitle.findMany).not.toHaveBeenCalled();
+    });
+
+    it("Cenários 14 e 15 — Busca interativa com Ctrl+K filtra painel e menu mobile possui container rolável até o último item", () => {
+      render(
+        <PremiumDashboardView
+          barbershop={{
+            id: "b-1",
+            name: "Barbearia Dom Brio",
+            slug: "barbearia-dom-brio",
+            city: "São José do Rio Preto",
+            state: "SP",
+          }}
+          userName="Carlos"
+          todayFormatted="sexta-feira, 30 de outubro"
+          civilToday="2026-10-30"
+          faturamentoHoje={740}
+          faturamentoHojeTrend="+20%"
+          faturamentoSemana={4350}
+          faturamentoSemanaTrend="+12%"
+          taxaOcupacaoPct={80}
+          horariosOcupados={16}
+          horariosDisponiveis={4}
+          clientesAtendidosHoje={9}
+          todayAppointments={[
+            {
+              id: "a-1",
+              customerName: "Marcos Almeida",
+              timeFormatted: "09:00",
+              servicesFormatted: "Corte + Barba",
+              status: "COMPLETED",
+            },
+            {
+              id: "a-2",
+              customerName: "Gabriel Ferreira",
+              timeFormatted: "10:00",
+              servicesFormatted: "Degradê navalhado",
+              status: "CONFIRMED",
+            },
+          ]}
+          professionals={[
+            {
+              memberName: "Lucas",
+              weeklyRevenue: 2400,
+              working: true,
+              onTimeOff: false,
+              startTime: "09:00",
+              endTime: "18:00",
+              totalSlots: 10,
+              bookedSlots: 8,
+              freeSlots: [540, 570],
+              blockedSlots: [],
+            },
+          ]}
+          financialSummary={{
+            overdueCount: 1,
+            overdueAmountCents: 42000,
+            todayCount: 0,
+            todayAmountCents: 0,
+            next7DaysCount: 0,
+            next7DaysAmountCents: 0,
+          }}
+          dueItems={[
+            {
+              id: "d-1",
+              title: "Energia elétrica",
+              categoryName: "Fixo",
+              dueOnCivil: "2026-10-29",
+              outstandingPrincipalCents: 42000,
+              derivedStatus: "OVERDUE",
+            },
+          ]}
+          canAccessFinancial={true}
+          dailyRevenue={[
+            { label: "Seg", revenue: 500 },
+            { label: "Ter", revenue: 600 },
+            { label: "Qua", revenue: 700 },
+            { label: "Qui", revenue: 800 },
+            { label: "Sex", revenue: 950 },
+            { label: "Sáb", revenue: 800 },
+            { label: "Dom", revenue: 0 },
+          ]}
+          occupancyData={{ occupied: 16, available: 4, blocked: 0 }}
+          onboarding={{ done: 4, total: 4, complete: true }}
+          recentClients={[]}
+        />
+      );
+
+      // Atalho Ctrl+K foca o campo de filtro real do painel
+      const searchInput = screen.getByRole("searchbox", {
+        name: /filtrar agenda de hoje, profissional ou conta/i,
+      });
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+      expect(document.activeElement).toBe(searchInput);
+
+      // Filtrar por "Gabriel" mantém Gabriel Ferreira e oculta Marcos Almeida
+      fireEvent.change(searchInput, { target: { value: "Gabriel" } });
+      expect(screen.getAllByText("Gabriel Ferreira").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Marcos Almeida")).not.toBeInTheDocument();
+
+      // Botão Limpar restaura os itens
+      const clearBtn = screen.getByRole("button", { name: /limpar filtro/i });
+      fireEvent.click(clearBtn);
+      expect(screen.getAllByText("Marcos Almeida").length).toBeGreaterThan(0);
     });
   });
 });

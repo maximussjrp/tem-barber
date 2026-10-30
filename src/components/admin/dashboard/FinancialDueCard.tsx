@@ -235,7 +235,7 @@ export function FinancialDueCard({
               <p className="text-lg font-extrabold mt-1.5 text-white tabular-nums leading-none">
                 {summary.overdueCount}
               </p>
-              <span className="text-[11px] font-bold text-[#FF6B78] truncate mt-1 tabular-nums">
+              <span className="text-[10.5px] sm:text-[11px] font-bold text-[#FF6B78] mt-1 tabular-nums leading-tight">
                 {formatCentsToBRL(summary.overdueAmountCents)}
               </span>
             </div>
@@ -262,7 +262,7 @@ export function FinancialDueCard({
               <p className="text-lg font-extrabold mt-1.5 text-white tabular-nums leading-none">
                 {summary.todayCount}
               </p>
-              <span className="text-[11px] font-bold text-[#E8C76E] truncate mt-1 tabular-nums">
+              <span className="text-[10.5px] sm:text-[11px] font-bold text-[#E8C76E] mt-1 tabular-nums leading-tight">
                 {formatCentsToBRL(summary.todayAmountCents)}
               </span>
             </div>
@@ -290,7 +290,7 @@ export function FinancialDueCard({
               <p className="text-lg font-extrabold mt-1.5 text-white tabular-nums leading-none">
                 {summary.next7DaysCount}
               </p>
-              <span className="text-[11px] font-bold text-zinc-200 truncate mt-1 tabular-nums">
+              <span className="text-[10.5px] sm:text-[11px] font-bold text-zinc-200 mt-1 tabular-nums leading-tight">
                 {formatCentsToBRL(summary.next7DaysAmountCents)}
               </span>
             </div>
@@ -306,108 +306,117 @@ export function FinancialDueCard({
         ) : (
           <div className="divide-y divide-white/[0.06]">
             {items.slice(0, compactMobile ? 3 : 5).map((item) => {
-              const isOverdue = item.derivedStatus === "OVERDUE";
               const diffDays = civilToday
                 ? getDaysDiff(civilToday, item.dueOnCivil)
                 : null;
+              const isOverdue =
+                item.derivedStatus === "OVERDUE" ||
+                (diffDays !== null && diffDays < 0);
               const isToday = !isOverdue && diffDays === 0;
               const isTomorrow = !isOverdue && diffDays === 1;
+              const isPartial = item.derivedStatus === "PARTIAL";
 
               return (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between gap-2.5 py-2.5 first:pt-1 last:pb-1"
+                  className="flex items-start gap-2.5 py-2.5 first:pt-1 last:pb-1"
                 >
                   {/* Category Icon */}
-                  <div className="w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0">
+                  <div className="w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0 mt-0.5">
                     <DueItemCategoryIcon
                       title={item.title}
                       categoryName={item.categoryName}
                     />
                   </div>
 
-                  {/* Title & Due status */}
+                  {/* Two-row balanced layout so title, due date, amount, and badge never collide on 320px */}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-white truncate">
-                        {item.title}
-                      </p>
-                      {!compactMobile && item.categoryName && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.06] text-[#9CA3AF] truncate shrink-0">
-                          {item.categoryName}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      {isOverdue ? (
-                        <>
-                          <span className="text-[11px] font-semibold text-[#FF6B78] tabular-nums">
-                            {compactMobile
-                              ? `Vence hoje • ${formatCivilDateBR(item.dueOnCivil)}`
-                              : `Vence ${formatCivilDateBR(item.dueOnCivil)}`}
+                    {/* Row 1: Account Title + Full Amount */}
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className="text-xs sm:text-[13px] font-bold text-white truncate">
+                          {item.title}
+                        </p>
+                        {!compactMobile && item.categoryName && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.06] text-[#9CA3AF] truncate shrink-0">
+                            {item.categoryName}
                           </span>
-                          {!compactMobile && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#DC4854]/25 text-[#FF6B78] border border-[#DC4854]/40 font-semibold">
-                              Atrasada
-                            </span>
-                          )}
-                        </>
-                      ) : isToday ? (
-                        <span className="text-[11px] font-semibold text-[#E8C76E]">
-                          {compactMobile
-                            ? `Vence hoje • ${formatCivilDateBR(item.dueOnCivil)}`
-                            : "Vence hoje"}
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-xs font-extrabold text-white tabular-nums">
+                          {formatCentsToBRL(item.outstandingPrincipalCents)}
                         </span>
-                      ) : isTomorrow ? (
-                        <span className="text-[11px] text-[#9CA3AF]">
-                          <strong className="text-[#E8C76E] font-semibold">
-                            Vence amanhã
-                          </strong>{" "}
-                          · {formatCivilDateBR(item.dueOnCivil)}
-                        </span>
-                      ) : diffDays !== null && diffDays > 1 ? (
-                        <span className="text-[11px] text-[#9CA3AF] tabular-nums">
-                          Vence em {diffDays} dias ·{" "}
-                          {formatCivilDateBR(item.dueOnCivil)}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-[#9CA3AF] tabular-nums">
-                          Vence {formatCivilDateBR(item.dueOnCivil)}
-                        </span>
-                      )}
+                        {!compactMobile && (
+                          <Link
+                            href="/admin/financeiro/contas?kind=PAYABLE"
+                            aria-label={`Ver conta ${item.title}`}
+                            className="text-zinc-500 hover:text-zinc-200 px-1 text-sm select-none"
+                          >
+                            ⋮
+                          </Link>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Right amount & badge/menu */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-extrabold text-white tabular-nums">
-                      {formatCentsToBRL(item.outstandingPrincipalCents)}
-                    </span>
+                    {/* Row 2: Due Date Label + Status Pill */}
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {isOverdue ? (
+                          <span className="text-[11px] font-semibold text-[#FF6B78] tabular-nums">
+                            Venceu em {formatCivilDateBR(item.dueOnCivil)}
+                          </span>
+                        ) : isToday ? (
+                          <span className="text-[11px] font-semibold text-[#E8C76E] tabular-nums">
+                            {compactMobile
+                              ? `Vence hoje · ${formatCivilDateBR(item.dueOnCivil)}`
+                              : "Vence hoje"}
+                          </span>
+                        ) : isTomorrow ? (
+                          <span className="text-[11px] text-[#9CA3AF] tabular-nums">
+                            <strong className="text-[#E8C76E] font-semibold">
+                              Vence amanhã
+                            </strong>{" "}
+                            · {formatCivilDateBR(item.dueOnCivil)}
+                          </span>
+                        ) : diffDays !== null && diffDays > 1 ? (
+                          <span className="text-[11px] text-[#9CA3AF] tabular-nums">
+                            Vence em {diffDays} dias ·{" "}
+                            {formatCivilDateBR(item.dueOnCivil)}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[#9CA3AF] tabular-nums">
+                            Vence em {formatCivilDateBR(item.dueOnCivil)}
+                          </span>
+                        )}
+                      </div>
 
-                    {compactMobile ? (
-                      isOverdue ? (
-                        <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-[#DC4854]/20 text-[#FF6B78] border border-[#DC4854]/40">
-                          Atrasada
-                        </span>
-                      ) : isToday ? (
-                        <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-[#D3AE55]/20 text-[#E8C76E] border border-[#D3AE55]/40">
-                          Vence hoje
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.12]">
-                          Em breve
-                        </span>
-                      )
-                    ) : (
-                      <Link
-                        href="/admin/financeiro/contas?kind=PAYABLE"
-                        aria-label={`Ver conta ${item.title}`}
-                        className="text-zinc-500 hover:text-zinc-200 px-1 text-sm select-none"
-                      >
-                        ⋮
-                      </Link>
-                    )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isPartial && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#D3AE55]/15 text-[#E8C76E] border border-[#D3AE55]/35">
+                            Parcial
+                          </span>
+                        )}
+                        {isOverdue ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#DC4854]/20 text-[#FF6B78] border border-[#DC4854]/40">
+                            Atrasada
+                          </span>
+                        ) : isToday ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#D3AE55]/20 text-[#E8C76E] border border-[#D3AE55]/40">
+                            Vence hoje
+                          </span>
+                        ) : isTomorrow ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200 border border-white/[0.12]">
+                            Amanhã
+                          </span>
+                        ) : compactMobile ? (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.12]">
+                            Em breve
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 </div>
               );

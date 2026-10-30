@@ -85,6 +85,17 @@ function getAppointmentNetRevenue(a: {
   return Number(a.totalPrice);
 }
 
+function computeVariationStr(
+  current: number,
+  previous: number
+): string | undefined {
+  if (!Number.isFinite(previous) || previous <= 0) {
+    return undefined;
+  }
+  const pct = Math.round(((current - previous) / previous) * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
 export default async function DashboardPage() {
   const { barbershop, barbershopId, isPlatform, role, session } =
     await requireManagerialAdmin();
@@ -97,19 +108,57 @@ export default async function DashboardPage() {
     role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN" || isPlatform;
 
   const { str: todayStr, dayOfWeek, startOfDay, endOfDay } = getTodayBR();
+  const [ty, tm, td] = todayStr.split("-").map(Number);
+
+  // Yesterday boundaries (America/Sao_Paulo civil day)
+  const yesterdayUtc = new Date(Date.UTC(ty, tm - 1, td - 1));
+  const [yy, ym, yd] = yesterdayUtc
+    .toISOString()
+    .slice(0, 10)
+    .split("-")
+    .map(Number);
+  const startOfYesterday = startOfDayUTC(yy, ym, yd);
+  const endOfYesterday = endOfDayUTC(yy, ym, yd);
+
+  // Current week & previous week boundaries
   const weekStart = getWeekStartBR();
+  const prevWeekStart = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const prevWeekEnd = new Date(weekStart.getTime() - 1);
+
+  // Current month & previous month boundaries (America/Sao_Paulo civil month)
+  const startOfMonth = startOfDayUTC(ty, tm, 1);
+  const prevMonthUtc = new Date(Date.UTC(ty, tm - 2, 1));
+  const [pmy, pmm] = prevMonthUtc
+    .toISOString()
+    .slice(0, 7)
+    .split("-")
+    .map(Number);
+  const prevMonthStart = startOfDayUTC(pmy, pmm, 1);
+  const prevMonthEnd = new Date(startOfMonth.getTime() - 1);
+
+  const earliestCompletedDate = new Date(
+    Math.min(
+      weekStart.getTime(),
+      prevWeekStart.getTime(),
+      startOfMonth.getTime(),
+      prevMonthStart.getTime(),
+      startOfYesterday.getTime()
+    )
+  );
+  const thirtyDaysAgo = new Date(endOfDay.getTime() - 30 * 24 * 60 * 60 * 1000);
   const civilToday = todayIsoBR();
 
-  // Queries base em paralelo
+  // Queries base em paralelo (sem N+1 e sempre escopadas por barbershopId)
   const [
     todayDetailedAppts,
     servicesCount,
     workingHoursCount,
-    weeklyAppts,
+    completedPeriodAppts,
     recentApptRows,
     activeMembers,
     bookedAppointments,
     payableTitles,
+    customerHistoryRows,
   ] = await Promise.all([
     // 1. Agendamentos de hoje
     prisma.appointment.findMany({
@@ -145,14 +194,16 @@ export default async function DashboardPage() {
       },
     }),
 
-    // 4. Agendamentos da semana para receita semanal
+    // 4. Agendamentos concluídos para faturamento semanal, mensal e comparativos reais (sem limite take)
     prisma.appointment.findMany({
       where: {
         barbershopId: barbershopId!,
-        dateTime: { gte: weekStart, lte: endOfDay },
+        dateTime: { gte: earliestCompletedDate, lte: endOfDay },
         status: "COMPLETED",
       },
       select: {
+        id: true,
+        customerId: true,
         memberId: true,
         dateTime: true,
         totalPrice: true,
@@ -167,11 +218,11 @@ export default async function DashboardPage() {
       },
     }),
 
-    // 5. Últimos agendamentos para clientes recentes e métricas mensais/recorrência
+    // 5. Últimos agendamentos para lista rápida de clientes recentes
     prisma.appointment.findMany({
       where: { barbershopId: barbershopId! },
       orderBy: { dateTime: "desc" },
-      take: 60,
+      take: 25,
       select: {
         customerId: true,
         dateTime: true,
@@ -227,6 +278,19 @@ export default async function DashboardPage() {
           orderBy: { dueOn: "asc" },
         })
       : Promise.resolve([]),
+
+    // 9. Histórico completo de visitas válidas por cliente para recorrência e novos clientes no mês (sem take: 60)
+    prisma.appointment.findMany({
+      where: {
+        barbershopId: barbershopId!,
+        status: { notIn: ["CANCELLED", "NO_SHOW"] },
+      },
+      select: {
+        customerId: true,
+        dateTime: true,
+        status: true,
+      },
+    }),
   ]);
 
   // ─── Métricas do Faturamento de Hoje ───
@@ -239,21 +303,61 @@ export default async function DashboardPage() {
     (a) => a.status === "COMPLETED"
   ).length;
 
-  // ─── Receita semanal por dia e por profissional ───
+  // ─── Agregações Reais por Período (Semana Atual, Semana Anterior, Ontem, Mês Atual e Mês Anterior) ───
   const DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const dailyRevByDay: Record<number, number> = {};
   const memberWeeklyRev: Record<string, number> = {};
   let totalWeekRevenue = 0;
+  let prevWeekRevenue = 0;
+  let yesterdayRevenue = 0;
+  let yesterdayCompletedCount = 0;
+  let monthRevenue = 0;
+  let monthCompletedCount = 0;
+  let prevMonthRevenue = 0;
+  let prevMonthCompletedCount = 0;
 
-  for (const a of weeklyAppts) {
-    const br = new Date(a.dateTime.getTime() - 3 * 3600 * 1000);
-    const dow = br.getUTCDay();
-    const isoDay = dow === 0 ? 6 : dow - 1;
+  for (const a of completedPeriodAppts) {
+    const dt = new Date(a.dateTime);
+    const tMs = dt.getTime();
     const netRev = getAppointmentNetRevenue(a);
-    dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + netRev;
-    totalWeekRevenue += netRev;
-    if (a.memberId) {
-      memberWeeklyRev[a.memberId] = (memberWeeklyRev[a.memberId] ?? 0) + netRev;
+
+    // Semana atual (weekStart .. endOfDay)
+    if (tMs >= weekStart.getTime() && tMs <= endOfDay.getTime()) {
+      const br = new Date(tMs - 3 * 3600 * 1000);
+      const dow = br.getUTCDay();
+      const isoDay = dow === 0 ? 6 : dow - 1;
+      dailyRevByDay[isoDay] = (dailyRevByDay[isoDay] ?? 0) + netRev;
+      totalWeekRevenue += netRev;
+      if (a.memberId) {
+        memberWeeklyRev[a.memberId] =
+          (memberWeeklyRev[a.memberId] ?? 0) + netRev;
+      }
+    }
+
+    // Semana anterior (prevWeekStart .. prevWeekEnd)
+    if (tMs >= prevWeekStart.getTime() && tMs <= prevWeekEnd.getTime()) {
+      prevWeekRevenue += netRev;
+    }
+
+    // Ontem (startOfYesterday .. endOfYesterday)
+    if (
+      tMs >= startOfYesterday.getTime() &&
+      tMs <= endOfYesterday.getTime()
+    ) {
+      yesterdayRevenue += netRev;
+      yesterdayCompletedCount += 1;
+    }
+
+    // Mês atual (startOfMonth .. endOfDay)
+    if (tMs >= startOfMonth.getTime() && tMs <= endOfDay.getTime()) {
+      monthRevenue += netRev;
+      monthCompletedCount += 1;
+    }
+
+    // Mês anterior (prevMonthStart .. prevMonthEnd)
+    if (tMs >= prevMonthStart.getTime() && tMs <= prevMonthEnd.getTime()) {
+      prevMonthRevenue += netRev;
+      prevMonthCompletedCount += 1;
     }
   }
 
@@ -261,6 +365,19 @@ export default async function DashboardPage() {
     label,
     revenue: dailyRevByDay[i] ?? 0,
   }));
+
+  const faturamentoHojeTrend = computeVariationStr(
+    revenueToday,
+    yesterdayRevenue
+  );
+  const faturamentoSemanaTrend = computeVariationStr(
+    totalWeekRevenue,
+    prevWeekRevenue
+  );
+  const clientesAtendidosTrend = computeVariationStr(
+    clientesAtendidosHoje,
+    yesterdayCompletedCount
+  );
 
   // ─── Cálculo de Slots e Ocupação dos Profissionais ───
   const SLOT_MIN = 30;
@@ -504,71 +621,113 @@ export default async function DashboardPage() {
       status: appt.status,
     }));
 
-  // ─── Recent Unique Clients & Recurrence Stats ───
+  // ─── Recorrência Real de Clientes & Novos Clientes no Mês ───
   const seenCustomers = new Set<string>();
-  const customerVisitCounts: Record<string, number> = {};
-  for (const row of recentApptRows) {
-    customerVisitCounts[row.customerId] =
-      (customerVisitCounts[row.customerId] ?? 0) + 1;
+  const sourceVisitRows =
+    customerHistoryRows.length > 0
+      ? customerHistoryRows
+      : recentApptRows.filter(
+          (r) => r.status !== "CANCELLED" && r.status !== "NO_SHOW"
+        );
+
+  const customerSummary = new Map<
+    string,
+    { count: number; firstVisit: Date; lastVisit: Date }
+  >();
+
+  for (const row of sourceVisitRows) {
+    if (!row.customerId || !row.dateTime) continue;
+    const dt = new Date(row.dateTime);
+    const existing = customerSummary.get(row.customerId);
+    if (!existing) {
+      customerSummary.set(row.customerId, {
+        count: 1,
+        firstVisit: dt,
+        lastVisit: dt,
+      });
+    } else {
+      existing.count += 1;
+      if (dt < existing.firstVisit) existing.firstVisit = dt;
+      if (dt > existing.lastVisit) existing.lastVisit = dt;
+    }
   }
 
-  const uniqueCustomerIds = Object.keys(customerVisitCounts);
-  const totalUniqueRecent = uniqueCustomerIds.length;
-  const recurringCount = uniqueCustomerIds.filter(
-    (cid) => customerVisitCounts[cid] > 1
-  ).length;
-  const newClientCount = totalUniqueRecent - recurringCount;
+  let recurringCustomerCount = 0;
+  let newCustomerCount = 0;
+  let inactiveCustomerCount = 0;
+  let monthNewClientsCount = 0;
 
-  const clientRecurrence: ClientRecurrenceStats =
-    totalUniqueRecent > 0
-      ? {
-          recurringPct: Math.round((recurringCount / totalUniqueRecent) * 100),
-          newPct: Math.round((newClientCount / totalUniqueRecent) * 100),
-          inactivePct: Math.max(
-            0,
-            100 -
-              Math.round((recurringCount / totalUniqueRecent) * 100) -
-              Math.round((newClientCount / totalUniqueRecent) * 100)
-          ),
-        }
-      : { recurringPct: 0, newPct: 0, inactivePct: 0 };
+  for (const info of customerSummary.values()) {
+    if (
+      info.firstVisit.getTime() >= startOfMonth.getTime() &&
+      info.firstVisit.getTime() <= endOfDay.getTime()
+    ) {
+      monthNewClientsCount += 1;
+    }
 
-  // ─── Monthly Metrics from real rows ───
-  const currentYearMonth = todayStr.slice(0, 7);
-  const monthRows = recentApptRows.filter(
-    (r) =>
-      r.dateTime &&
-      toBR(r.dateTime).toISOString().slice(0, 7) === currentYearMonth
-  );
-  const monthCompletedRows = monthRows.filter((r) => r.status === "COMPLETED");
-  const monthRevenue = monthCompletedRows.reduce(
-    (s, r) => s + Number(r.totalPrice ?? 0),
-    0
-  );
-  const monthCompletedCount = monthCompletedRows.length;
-  const monthUniqueCustomers = new Set(monthRows.map((r) => r.customerId)).size;
-  const avgTicket =
-    monthCompletedCount > 0 ? monthRevenue / monthCompletedCount : 0;
+    if (info.lastVisit.getTime() < thirtyDaysAgo.getTime()) {
+      inactiveCustomerCount += 1;
+    } else if (info.count > 1) {
+      recurringCustomerCount += 1;
+    } else {
+      newCustomerCount += 1;
+    }
+  }
 
-  const monthlyStats: MonthlyGoalStats = {
-    revenue: Math.max(monthRevenue, totalWeekRevenue),
-    completedServices: Math.max(monthCompletedCount, clientesAtendidosHoje),
-    newClients: monthUniqueCustomers,
-    averageTicket: avgTicket,
+  const totalTrackedCustomers = customerSummary.size;
+  let recurringPct = 0;
+  let newPct = 0;
+  let inactivePct = 0;
+
+  if (totalTrackedCustomers > 0) {
+    recurringPct = Math.round(
+      (recurringCustomerCount / totalTrackedCustomers) * 100
+    );
+    newPct = Math.round((newCustomerCount / totalTrackedCustomers) * 100);
+    if (inactiveCustomerCount > 0) {
+      inactivePct = Math.max(0, 100 - recurringPct - newPct);
+    } else {
+      newPct = Math.max(0, 100 - recurringPct);
+      inactivePct = 0;
+    }
+  }
+
+  const clientRecurrence: ClientRecurrenceStats = {
+    recurringPct,
+    newPct,
+    inactivePct,
+    totalCustomers: totalTrackedCustomers,
+    hasData: totalTrackedCustomers > 0,
+    periodLabel: "Ativos nos últimos 30 dias vs. histórico",
   };
 
-  const totalMonthAppts = Math.max(monthRows.length, todayDetailedAppts.length);
+  // ─── Resultado Real do Mês Corrente (sem Math.max com semana ou hoje e sem take: 60) ───
+  const avgTicket =
+    monthCompletedCount > 0 ? monthRevenue / monthCompletedCount : 0;
+  const prevMonthAvgTicket =
+    prevMonthCompletedCount > 0
+      ? prevMonthRevenue / prevMonthCompletedCount
+      : 0;
+  const averageTicketTrend = computeVariationStr(avgTicket, prevMonthAvgTicket);
+
+  const monthlyStats: MonthlyGoalStats = {
+    revenue: monthRevenue,
+    completedServices: monthCompletedCount,
+    newClients: monthNewClientsCount,
+    averageTicket: avgTicket,
+    averageTicketTrend,
+  };
+
+  // Origem/canal não possui coluna dedicada em Appointment no schema atual
   const channelPerformance: ChannelPerformanceStats = {
-    total: totalMonthAppts,
+    available: false,
+    unavailableReason: "Origem do agendamento não rastreada",
+    total: 0,
     channels: [
-      {
-        name: "Site / Link",
-        pct: totalMonthAppts > 0 ? 100 : 0,
-        count: totalMonthAppts,
-        color: "#16C784",
-      },
-      { name: "WhatsApp", pct: 0, count: 0, color: "#6366F1" },
-      { name: "Presencial", pct: 0, count: 0, color: "#EF5A67" },
+      { name: "WhatsApp", pct: 0, count: 0, color: "#16C784" },
+      { name: "Site / Link", pct: 0, count: 0, color: "#6366F1" },
+      { name: "Instagram", pct: 0, count: 0, color: "#EF5A67" },
+      { name: "Presencial", pct: 0, count: 0, color: "#94A3B8" },
     ],
   };
 
@@ -652,11 +811,15 @@ export default async function DashboardPage() {
       todayFormatted={formatHeaderDate(todayStr)}
       civilToday={civilToday}
       faturamentoHoje={revenueToday}
+      faturamentoHojeTrend={faturamentoHojeTrend}
       faturamentoSemana={totalWeekRevenue}
+      faturamentoSemanaTrend={faturamentoSemanaTrend}
+      faturamentoGraficoTrend={faturamentoSemanaTrend}
       taxaOcupacaoPct={taxaOcupacaoPct}
       horariosOcupados={totalOccupiedSlots}
       horariosDisponiveis={totalFreeSlots}
       clientesAtendidosHoje={clientesAtendidosHoje}
+      clientesAtendidosTrend={clientesAtendidosTrend}
       todayAppointments={dashboardAppointments}
       professionals={professionalSlots}
       financialSummary={financialSummary}

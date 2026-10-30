@@ -110,9 +110,13 @@ export function TodayScheduleCard({
           action={
             <Link
               href="/admin/agendamentos"
-              className="text-xs font-semibold text-[#E8C76E] hover:text-[#F4DC92] transition-colors flex items-center gap-1 cursor-pointer"
+              className="text-xs font-semibold text-[#E8C76E] hover:text-[#F4DC92] transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap"
             >
-              Ver agenda completa
+              <span>Ver agenda</span>
+              <span className={compact ? "sr-only sm:not-sr-only" : ""}>
+                {" "}
+                completa
+              </span>
               <span aria-hidden="true">→</span>
             </Link>
           }
@@ -144,6 +148,58 @@ export function TodayScheduleCard({
                 const st = STATUS_MAP[appt.status] ?? STATUS_MAP.PENDING;
                 const avatarTone =
                   AVATAR_GRADIENTS[idx % AVATAR_GRADIENTS.length];
+
+                if (compact) {
+                  return (
+                    <div
+                      key={appt.id}
+                      className="relative flex items-start gap-2.5 py-2.5 first:pt-1 last:pb-1 group"
+                    >
+                      {/* Glowing Timeline Dot */}
+                      <span
+                        className={`relative z-10 w-2.5 h-2.5 rounded-full shrink-0 mt-3 ${st.dot}`}
+                      />
+
+                      {/* Client Avatar */}
+                      {appt.customerAvatarUrl ? (
+                        <img
+                          src={appt.customerAvatarUrl}
+                          alt={appt.customerName}
+                          className="w-8 h-8 rounded-full object-cover border border-white/[0.14] shrink-0 mt-0.5"
+                        />
+                      ) : (
+                        <div
+                          className={`w-8 h-8 rounded-full bg-gradient-to-br border flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5 ${avatarTone}`}
+                        >
+                          {getInitials(appt.customerName)}
+                        </div>
+                      )}
+
+                      {/* Two-line responsive stack for mobile/320px so customer names are never truncated to 2 letters */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="text-[13px] font-bold text-white truncate">
+                            {appt.customerName}
+                          </p>
+                          <span className="text-xs tabular-nums text-[#E8C76E] font-semibold shrink-0">
+                            {appt.timeFormatted}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <p className="text-[11px] text-[#8E95A2] truncate">
+                            {appt.servicesFormatted}
+                          </p>
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${st.badge}`}
+                          >
+                            {st.label}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={appt.id}
@@ -191,15 +247,13 @@ export function TodayScheduleCard({
                       {st.label}
                     </span>
 
-                    {!compact && (
-                      <Link
-                        href="/admin/agendamentos"
-                        aria-label={`Detalhes de ${appt.customerName}`}
-                        className="text-zinc-500 hover:text-zinc-200 px-1 text-sm select-none shrink-0"
-                      >
-                        ⋮
-                      </Link>
-                    )}
+                    <Link
+                      href="/admin/agendamentos"
+                      aria-label={`Detalhes de ${appt.customerName}`}
+                      className="text-zinc-500 hover:text-zinc-200 px-1 text-sm select-none shrink-0"
+                    >
+                      ⋮
+                    </Link>
                   </div>
                 );
               })}

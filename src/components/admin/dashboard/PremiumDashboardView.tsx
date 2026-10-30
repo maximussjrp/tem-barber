@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   MetricCard,
@@ -27,6 +29,9 @@ export interface ClientRecurrenceStats {
   recurringPct: number;
   newPct: number;
   inactivePct: number;
+  totalCustomers?: number;
+  hasData?: boolean;
+  periodLabel?: string;
 }
 
 export interface MonthlyGoalStats {
@@ -41,6 +46,8 @@ export interface MonthlyGoalStats {
 }
 
 export interface ChannelPerformanceStats {
+  available?: boolean;
+  unavailableReason?: string;
   total: number;
   channels: {
     name: string;
@@ -137,10 +144,10 @@ function formatCentsBRL(cents: number): string {
 function MobileRevenueLineChart({
   dailyRevenue,
   totalRevenue,
-  trendText = "+18%",
-  peakDateLabel = "Sex, 30/10",
+  trendText,
+  peakDateLabel,
 }: {
-  dailyRevenue: { label: string; revenue: number }[];
+  dailyRevenue: { label: string; revenue: number; dateLabel?: string }[];
   totalRevenue: number;
   trendText?: string;
   peakDateLabel?: string;
@@ -178,6 +185,9 @@ function MobileRevenueLineChart({
     if (pts[i].d.revenue >= pts[peakIdx].d.revenue) peakIdx = i;
   }
   const peakPt = pts[peakIdx];
+  const resolvedPeakLabel =
+    peakDateLabel || peakPt?.d.dateLabel || (peakPt ? `Pico · ${peakPt.d.label}` : "");
+  const isPositiveTrend = !trendText?.startsWith("-");
 
   return (
     <div className="w-full">
@@ -187,8 +197,22 @@ function MobileRevenueLineChart({
             {formatBRL(totalRevenue)}
           </p>
           <div className="flex items-center gap-1 text-[11px] mt-0.5">
-            <span className="font-bold text-[#16C784]">▲ {trendText}</span>
-            <span className="text-[#8E95A2]">vs. semana anterior</span>
+            {trendText ? (
+              <>
+                <span
+                  className={`font-bold ${
+                    isPositiveTrend ? "text-[#16C784]" : "text-[#EF5A67]"
+                  }`}
+                >
+                  {isPositiveTrend ? "▲" : "▼"} {trendText}
+                </span>
+                <span className="text-[#8E95A2]">vs. semana anterior</span>
+              </>
+            ) : (
+              <span className="text-[#8E95A2]">
+                Acumulado nos últimos 7 dias
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -285,7 +309,7 @@ function MobileRevenueLineChart({
               textAnchor="middle"
               className="fill-[#A6ADB9] text-[8.5px]"
             >
-              {peakDateLabel}
+              {resolvedPeakLabel}
             </text>
             <text
               x="42"
@@ -324,19 +348,19 @@ export function PremiumDashboardView({
   todayFormatted,
   civilToday,
   faturamentoHoje,
-  faturamentoHojeTrend = "+40%",
+  faturamentoHojeTrend,
   faturamentoSemana,
-  faturamentoSemanaTrend = "+18%",
+  faturamentoSemanaTrend,
   faturamentoGraficoTotal,
-  faturamentoGraficoTrend = "+15%",
+  faturamentoGraficoTrend,
   peakDateLabel,
   taxaOcupacaoPct,
   horariosOcupados,
   horariosDisponiveis,
   clientesAtendidosHoje,
-  clientesAtendidosTrend = "+28%",
+  clientesAtendidosTrend,
   agendamentosHojeCount,
-  agendamentosHojeTrend = "+33%",
+  agendamentosHojeTrend,
   mobileClientsCount,
   mobileDueSummary,
   mobileAppointments,
@@ -356,6 +380,49 @@ export function PremiumDashboardView({
   operationalAlerts,
   todaySlotsLegendProps,
 }: PremiumDashboardProps) {
+  void recentClients;
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredTodayAppointments = useMemo(() => {
+    if (!normalizedQuery) return todayAppointments;
+    return todayAppointments.filter(
+      (a) =>
+        a.customerName.toLowerCase().includes(normalizedQuery) ||
+        a.servicesFormatted.toLowerCase().includes(normalizedQuery) ||
+        a.timeFormatted.toLowerCase().includes(normalizedQuery)
+    );
+  }, [todayAppointments, normalizedQuery]);
+
+  const filteredProfessionals = useMemo(() => {
+    if (!normalizedQuery) return professionals;
+    return professionals.filter((p) =>
+      p.memberName.toLowerCase().includes(normalizedQuery)
+    );
+  }, [professionals, normalizedQuery]);
+
+  const filteredDueItems = useMemo(() => {
+    if (!normalizedQuery) return dueItems;
+    return dueItems.filter(
+      (item) =>
+        item.title.toLowerCase().includes(normalizedQuery) ||
+        item.categoryName.toLowerCase().includes(normalizedQuery)
+    );
+  }, [dueItems, normalizedQuery]);
+
   const barbershopName = barbershop?.name ?? "Tem Barber";
   const initials = barbershopName
     .split(" ")
@@ -376,45 +443,76 @@ export function PremiumDashboardView({
       ? faturamentoGraficoTotal
       : faturamentoSemana;
 
-  // Recurrence defaults from real props
+  const effectiveChartTrend = faturamentoGraficoTrend ?? faturamentoSemanaTrend;
+
+  // Real notification alert computation (no hardcoded red dot when 0 alerts)
+  const financialAlertCount = canAccessFinancial
+    ? financialSummary.overdueCount + financialSummary.todayCount
+    : 0;
+  const pendingApptsCount = todayAppointments.filter(
+    (a) => a.status === "PENDING"
+  ).length;
+  const hasActiveAlerts = financialAlertCount > 0 || pendingApptsCount > 0;
+  const bellHref =
+    canAccessFinancial && financialAlertCount > 0
+      ? "/admin/financeiro/contas?kind=PAYABLE"
+      : "/admin/agendamentos";
+  const bellAriaLabel =
+    financialAlertCount > 0
+      ? `${financialAlertCount} conta(s) vencida(s) ou vencendo hoje`
+      : pendingApptsCount > 0
+      ? `${pendingApptsCount} agendamento(s) aguardando confirmação`
+      : "Sem alertas pendentes — abrir agenda";
+
+  // Recurrence defaults from real props (never invent 68% / 24% / 8%)
   const recurrence: ClientRecurrenceStats = clientRecurrence ?? {
-    recurringPct: recentClients.length > 0 ? 68 : 0,
-    newPct: recentClients.length > 0 ? 24 : 0,
-    inactivePct: recentClients.length > 0 ? 8 : 0,
+    recurringPct: 0,
+    newPct: 0,
+    inactivePct: 0,
+    totalCustomers: 0,
+    hasData: false,
   };
+  const hasRecurrenceData =
+    recurrence.hasData !== undefined
+      ? recurrence.hasData
+      : recurrence.recurringPct + recurrence.newPct + recurrence.inactivePct > 0;
 
-  // Monthly stats defaults from real props
+  // Monthly stats defaults from real props (never mix weekly revenue or invent 70% goal)
   const monthData: MonthlyGoalStats = monthlyStats ?? {
-    revenue: faturamentoSemana,
-    completedServices: clientesAtendidosHoje,
-    newClients: recentClients.length,
-    averageTicket:
-      clientesAtendidosHoje > 0
-        ? faturamentoHoje / clientesAtendidosHoje
-        : 0,
+    revenue: 0,
+    completedServices: 0,
+    newClients: 0,
+    averageTicket: 0,
   };
 
-  const monthGoalPct =
+  const hasConfiguredGoal = Boolean(
     monthData.targetRevenue && monthData.targetRevenue > 0
-      ? Math.min(
-          100,
-          Math.round((monthData.revenue / monthData.targetRevenue) * 100)
-        )
-      : 70;
+  );
+  const monthGoalPct = hasConfiguredGoal
+    ? Math.min(
+        100,
+        Math.round((monthData.revenue / monthData.targetRevenue!) * 100)
+      )
+    : 0;
 
-  // Channel performance defaults from real props
+  // Channel performance defaults from real props (never invent 52/28/15/5 or fake 100%)
+  const isChannelTrackingAvailable =
+    channelPerformance?.available !== undefined
+      ? channelPerformance.available
+      : Boolean(
+          channelPerformance &&
+            channelPerformance.channels.some((ch) => ch.count > 0)
+        );
+
   const channelsData: ChannelPerformanceStats = channelPerformance ?? {
-    total: todayAppointments.length,
+    available: false,
+    unavailableReason: "Origem do agendamento não rastreada",
+    total: 0,
     channels: [
-      {
-        name: "WhatsApp",
-        pct: todayAppointments.length > 0 ? 52 : 0,
-        count: todayAppointments.length,
-        color: "#16C784",
-      },
-      { name: "Site / Link", pct: 28, count: 0, color: "#6366F1" },
-      { name: "Instagram", pct: 15, count: 0, color: "#EF5A67" },
-      { name: "Outros", pct: 5, count: 0, color: "#94A3B8" },
+      { name: "WhatsApp", pct: 0, count: 0, color: "#16C784" },
+      { name: "Site / Link", pct: 0, count: 0, color: "#6366F1" },
+      { name: "Instagram", pct: 0, count: 0, color: "#EF5A67" },
+      { name: "Presencial", pct: 0, count: 0, color: "#94A3B8" },
     ],
   };
 
@@ -486,38 +584,42 @@ export function PremiumDashboardView({
   // SVG Donut calculation for Clientes Recentes
   const recR = 38;
   const recC = 2 * Math.PI * recR;
-  const recArc = (recurrence.recurringPct / 100) * recC;
-  const newArc = (recurrence.newPct / 100) * recC;
+  const recArc = hasRecurrenceData ? (recurrence.recurringPct / 100) * recC : 0;
+  const newArc = hasRecurrenceData ? (recurrence.newPct / 100) * recC : 0;
 
   // SVG Donut calculation for Performance por Canal
   const chR = 36;
   const chC = 2 * Math.PI * chR;
-  const channelSegments = channelsData.channels.reduce<
-    { name: string; color: string; len: number; offset: number }[]
-  >((acc, ch) => {
-    const prevEnd =
-      acc.length > 0 ? acc[acc.length - 1].offset + acc[acc.length - 1].len : 0;
-    const len = (ch.pct / 100) * chC;
-    acc.push({ name: ch.name, color: ch.color, len, offset: prevEnd });
-    return acc;
-  }, []);
+  const channelSegments = isChannelTrackingAvailable
+    ? channelsData.channels.reduce<
+        { name: string; color: string; len: number; offset: number }[]
+      >((acc, ch) => {
+        const prevEnd =
+          acc.length > 0
+            ? acc[acc.length - 1].offset + acc[acc.length - 1].len
+            : 0;
+        const len = (ch.pct / 100) * chC;
+        acc.push({ name: ch.name, color: ch.color, len, offset: prevEnd });
+        return acc;
+      }, [])
+    : [];
 
   return (
     <div className="w-full max-w-[1440px] mx-auto">
       {/* ═══════════════════════════════════════════════════════════════════
           MOBILE DEDICATED COMPOSITION (< 1024px)
-          Matches approved mobile reference (Left Phone in media_1793382159313)
+          Matches approved mobile reference & guarantees 320px full readability
          ═══════════════════════════════════════════════════════════════════ */}
       <div className="lg:hidden -mt-[57px] px-3.5 pt-4 pb-6 space-y-3.5">
         {/* Mobile Top Header */}
         <div className="pb-1">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#252015] to-[#15171C] border border-[#D3AE55]/45 flex items-center justify-center font-serif font-bold text-[#E8C76E] text-base shrink-0 shadow-[0_0_16px_rgba(211,174,85,0.16)]">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-[#252015] to-[#15171C] border border-[#D3AE55]/45 flex items-center justify-center font-serif font-bold text-[#E8C76E] text-sm sm:text-base shrink-0 shadow-[0_0_16px_rgba(211,174,85,0.16)]">
                 {initials}
               </div>
               <div className="min-w-0">
-                <p className="font-serif text-lg font-bold text-white tracking-wide truncate leading-tight">
+                <p className="font-serif text-[15px] sm:text-lg font-bold text-white tracking-wide line-clamp-2 leading-snug">
                   {barbershopName}
                 </p>
                 <div className="flex items-center gap-1 text-xs text-[#A6ADB9] mt-0.5">
@@ -537,11 +639,11 @@ export function PremiumDashboardView({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
               <Link
-                href="/admin/agendamentos"
-                aria-label="Notificações e agenda"
-                className="relative w-10 h-10 rounded-full bg-[#181B22] border border-white/[0.09] flex items-center justify-center text-zinc-200"
+                href={bellHref}
+                aria-label={bellAriaLabel}
+                className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#181B22] border border-white/[0.09] flex items-center justify-center text-zinc-200"
               >
                 <svg
                   className="w-4 h-4"
@@ -553,13 +655,18 @@ export function PremiumDashboardView({
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                 </svg>
-                <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-[#EF5A67]" />
+                {hasActiveAlerts && (
+                  <span
+                    data-testid="mobile-bell-alert-dot"
+                    className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-[#EF5A67]"
+                  />
+                )}
               </Link>
 
               <Link
                 href="/admin/configuracoes"
                 aria-label="Perfil e configurações"
-                className="h-10 px-2.5 rounded-full bg-[#181B22] border border-[#D3AE55]/40 flex items-center gap-1 text-[#E8C76E] font-serif font-bold text-xs"
+                className="h-9 sm:h-10 px-2 rounded-full bg-[#181B22] border border-[#D3AE55]/40 flex items-center gap-1 text-[#E8C76E] font-serif font-bold text-xs"
               >
                 <span className="w-6 h-6 rounded-full bg-[#242016] flex items-center justify-center">
                   {userName.charAt(0).toUpperCase()}
@@ -577,120 +684,156 @@ export function PremiumDashboardView({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 mt-2.5 text-xs text-[#9CA3AF]">
+          <div className="flex items-center gap-1.5 mt-2 text-xs text-[#9CA3AF]">
             <span>{capitalizedDate}</span>
             <span aria-hidden="true">☀️</span>
           </div>
         </div>
 
-        {/* Mobile 2x2 KPI Grid */}
+        {/* Mobile 2x2 KPI Grid — full-width titles & values inside each card so 320px never truncates */}
         <div className="grid grid-cols-2 gap-2.5">
           {/* Card 1: FATURAMENTO HOJE */}
-          <DashboardCard variant="highlight" className="p-3">
-            <div className="flex items-start gap-2">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/40 text-[#E8C76E] flex items-center justify-center shrink-0">
-                <span className="font-bold text-xs">$</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="text-[8.5px] font-bold uppercase tracking-tight text-[#9CA3AF] whitespace-nowrap">
-                    Faturamento hoje
-                  </span>
-                  <span className="text-zinc-500 text-[10px]">⋮</span>
+          <DashboardCard
+            variant="highlight"
+            className="p-3 flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/40 text-[#E8C76E] flex items-center justify-center shrink-0">
+                  <span className="font-bold text-xs">$</span>
                 </div>
-                <p className="text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
-                  {formatBRL(faturamentoHoje)}
-                </p>
+                <MiniSparklineSvg className="w-12 h-5 shrink-0" />
               </div>
-            </div>
-            <div className="mt-2 flex items-end justify-between gap-1">
-              <span className="text-[9.5px] text-[#8E95A2] whitespace-nowrap">
-                <strong className="text-[#16C784]">
-                  ▲ {faturamentoHojeTrend}
-                </strong>{" "}
-                vs. ontem
+              <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
+                Faturamento hoje
               </span>
-              <MiniSparklineSvg className="w-12 h-5 shrink-0" />
+              <p className="text-[16px] sm:text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
+                {formatBRL(faturamentoHoje)}
+              </p>
+            </div>
+            <div className="mt-1.5">
+              {faturamentoHojeTrend ? (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  <strong
+                    className={
+                      faturamentoHojeTrend.startsWith("-")
+                        ? "text-[#EF5A67]"
+                        : "text-[#16C784]"
+                    }
+                  >
+                    {faturamentoHojeTrend.startsWith("-") ? "▼" : "▲"}{" "}
+                    {faturamentoHojeTrend}
+                  </strong>{" "}
+                  vs. ontem
+                </span>
+              ) : (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  Realizado hoje
+                </span>
+              )}
             </div>
           </DashboardCard>
 
           {/* Card 2: AGENDAMENTOS HOJE */}
-          <DashboardCard variant="highlight" className="p-3">
-            <div className="flex items-start gap-2">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/40 text-[#E8C76E] flex items-center justify-center shrink-0">
-                <svg
-                  className="w-3.5 h-3.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="text-[8.5px] font-bold uppercase tracking-tight text-[#9CA3AF] whitespace-nowrap">
-                    Agendamentos hoje
-                  </span>
-                  <span className="text-zinc-500 text-[10px]">⋮</span>
+          <DashboardCard
+            variant="highlight"
+            className="p-3 flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/40 text-[#E8C76E] flex items-center justify-center shrink-0">
+                  <svg
+                    className="w-3.5 h-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
                 </div>
-                <p className="text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
-                  {mobApptsCount}
-                </p>
+                <MiniBarsSvg variant="gold" className="w-11 h-5 shrink-0" />
               </div>
-            </div>
-            <div className="mt-2 flex items-end justify-between gap-1">
-              <span className="text-[9.5px] text-[#8E95A2] whitespace-nowrap">
-                <strong className="text-[#16C784]">
-                  ▲ {agendamentosHojeTrend}
-                </strong>{" "}
-                vs. ontem
+              <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
+                Agendamentos hoje
               </span>
-              <MiniBarsSvg variant="gold" className="w-11 h-5 shrink-0" />
+              <p className="text-[16px] sm:text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
+                {mobApptsCount}
+              </p>
+            </div>
+            <div className="mt-1.5">
+              {agendamentosHojeTrend ? (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  <strong
+                    className={
+                      agendamentosHojeTrend.startsWith("-")
+                        ? "text-[#EF5A67]"
+                        : "text-[#16C784]"
+                    }
+                  >
+                    {agendamentosHojeTrend.startsWith("-") ? "▼" : "▲"}{" "}
+                    {agendamentosHojeTrend}
+                  </strong>{" "}
+                  vs. ontem
+                </span>
+              ) : (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  Programados hoje
+                </span>
+              )}
             </div>
           </DashboardCard>
 
           {/* Card 3: CLIENTES ATENDIDOS */}
-          <DashboardCard className="p-3">
-            <div className="flex items-start gap-2">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/35 text-[#E8C76E] flex items-center justify-center shrink-0">
-                <svg
-                  className="w-3.5 h-3.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="text-[8.5px] font-bold uppercase tracking-tight text-[#9CA3AF] whitespace-nowrap">
-                    Clientes atendidos
-                  </span>
-                  <span className="text-zinc-500 text-[10px]">⋮</span>
+          <DashboardCard className="p-3 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2C2416] to-[#1A1712] border border-[#D3AE55]/35 text-[#E8C76E] flex items-center justify-center shrink-0">
+                  <svg
+                    className="w-3.5 h-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
                 </div>
-                <p className="text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
-                  {mobClientsAttended}
-                </p>
+                <MiniBarsSvg variant="slate" className="w-11 h-5 shrink-0" />
               </div>
-            </div>
-            <div className="mt-2 flex items-end justify-between gap-1">
-              <span className="text-[9.5px] text-[#8E95A2] whitespace-nowrap">
-                <strong className="text-[#16C784]">
-                  ▲ {clientesAtendidosTrend}
-                </strong>{" "}
-                vs. ontem
+              <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
+                Clientes atendidos
               </span>
-              <MiniBarsSvg variant="slate" className="w-11 h-5 shrink-0" />
+              <p className="text-[16px] sm:text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
+                {mobClientsAttended}
+              </p>
+            </div>
+            <div className="mt-1.5">
+              {clientesAtendidosTrend ? (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  <strong
+                    className={
+                      clientesAtendidosTrend.startsWith("-")
+                        ? "text-[#EF5A67]"
+                        : "text-[#16C784]"
+                    }
+                  >
+                    {clientesAtendidosTrend.startsWith("-") ? "▼" : "▲"}{" "}
+                    {clientesAtendidosTrend}
+                  </strong>{" "}
+                  vs. ontem
+                </span>
+              ) : (
+                <span className="text-[10px] text-[#8E95A2] block">
+                  Concluídos hoje
+                </span>
+              )}
             </div>
           </DashboardCard>
 
@@ -700,46 +843,46 @@ export function PremiumDashboardView({
               href="/admin/financeiro/contas?kind=PAYABLE"
               className="rounded-2xl p-3 border border-[#DC4854]/60 bg-gradient-to-br from-[#2E161B] via-[#211317] to-[#151215] shadow-[0_0_24px_rgba(220,72,84,0.2)] flex flex-col justify-between"
             >
-              <div className="flex items-start gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#DC4854]/20 border border-[#DC4854]/45 text-[#FF6B78] flex items-center justify-center shrink-0">
-                  <svg
-                    className="w-3.5 h-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                  >
-                    <circle cx="12" cy="12" r="9" />
-                    <polyline points="12 7 12 12 15 14" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[8.5px] font-bold uppercase tracking-tight text-zinc-200 block whitespace-nowrap">
-                    Contas a vencer
-                  </span>
-                  <div className="flex items-center justify-between mt-0.5">
-                    <p className="text-[17px] font-extrabold text-white tabular-nums leading-tight">
-                      {mobDueCount}
-                    </p>
-                    <span className="text-[#FF6B78] text-sm font-bold">›</span>
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-[#DC4854]/20 border border-[#DC4854]/45 text-[#FF6B78] flex items-center justify-center shrink-0">
+                    <svg
+                      className="w-3.5 h-3.5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                    >
+                      <circle cx="12" cy="12" r="9" />
+                      <polyline points="12 7 12 12 15 14" />
+                    </svg>
                   </div>
+                  <span className="text-[#FF6B78] text-sm font-bold">›</span>
                 </div>
+                <span className="mt-2 block text-[10px] font-bold uppercase tracking-tight text-zinc-200 leading-tight">
+                  Contas a vencer
+                </span>
+                <p className="text-[16px] sm:text-[17px] font-extrabold text-white tabular-nums leading-tight mt-0.5">
+                  {mobDueCount}
+                </p>
               </div>
-              <div className="mt-2">
-                <span className="text-xs font-extrabold text-[#FF6B78] tabular-nums">
+              <div className="mt-1.5">
+                <span className="text-[11px] font-extrabold text-[#FF6B78] tabular-nums block">
                   {formatCentsBRL(mobDueCents)}
                 </span>
               </div>
             </Link>
           ) : (
-            <DashboardCard className="p-3">
-              <span className="text-[8.5px] font-bold uppercase tracking-tight text-[#9CA3AF]">
-                Taxa de ocupação
-              </span>
-              <p className="text-[17px] font-extrabold text-white mt-1">
-                {taxaOcupacaoPct}%
-              </p>
-              <span className="text-[10px] text-[#8E95A2] mt-2 block">
+            <DashboardCard className="p-3 flex flex-col justify-between">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-tight text-[#B4BAC6] leading-tight">
+                  Taxa de ocupação
+                </span>
+                <p className="text-[16px] sm:text-[17px] font-extrabold text-white mt-1 tabular-nums">
+                  {taxaOcupacaoPct}%
+                </p>
+              </div>
+              <span className="text-[10px] text-[#8E95A2] mt-1.5 block">
                 {horariosOcupados} ocupados hoje
               </span>
             </DashboardCard>
@@ -748,14 +891,14 @@ export function PremiumDashboardView({
 
         {/* Mobile Agenda de hoje */}
         <TodayScheduleCard
-          appointments={mobileAppointments ?? todayAppointments}
+          appointments={mobileAppointments ?? filteredTodayAppointments}
           compact
         />
 
         {/* Mobile Contas a vencer */}
         <FinancialDueCard
           summary={financialSummary}
-          items={mobileDueItems ?? dueItems}
+          items={mobileDueItems ?? filteredDueItems}
           canAccessFinancial={canAccessFinancial}
           civilToday={civilToday}
           compactMobile
@@ -796,8 +939,8 @@ export function PremiumDashboardView({
           <MobileRevenueLineChart
             dailyRevenue={dailyRevenue}
             totalRevenue={chartTotal}
-            trendText="+18%"
-            peakDateLabel={peakDateLabel || "Sex, 30/10"}
+            trendText={effectiveChartTrend}
+            peakDateLabel={peakDateLabel}
           />
         </DashboardCard>
       </div>
@@ -854,10 +997,10 @@ export function PremiumDashboardView({
             </div>
           </div>
 
-          {/* Center: Search Input */}
+          {/* Center: Live Dashboard Search Input with real Ctrl+K shortcut */}
           <form
-            action="/admin/agendamentos"
-            method="GET"
+            role="search"
+            onSubmit={(e) => e.preventDefault()}
             className="flex-1 max-w-md mx-4"
           >
             <div className="relative flex items-center">
@@ -872,23 +1015,36 @@ export function PremiumDashboardView({
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
               <input
+                ref={searchInputRef}
                 type="search"
-                name="q"
-                placeholder="Buscar cliente, agendamento ou serviço..."
-                aria-label="Buscar cliente, agendamento ou serviço"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filtrar agenda de hoje, profissional ou conta..."
+                aria-label="Filtrar agenda de hoje, profissional ou conta"
                 className="w-full h-10 pl-10 pr-16 rounded-xl bg-[#161920] border border-white/[0.08] text-xs text-white placeholder-[#7E8594] focus:outline-none focus:border-[#D3AE55]/50 transition-colors"
               />
-              <span className="absolute right-2.5 px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.08] text-[10px] text-[#8E95A2] font-mono">
-                Ctrl K
-              </span>
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Limpar filtro"
+                  className="absolute right-2.5 px-1.5 py-0.5 rounded bg-white/[0.08] hover:bg-white/[0.14] text-[10px] text-zinc-200 cursor-pointer"
+                >
+                  Limpar
+                </button>
+              ) : (
+                <kbd className="absolute right-2.5 px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.08] text-[10px] text-[#8E95A2] font-mono pointer-events-none">
+                  Ctrl K
+                </kbd>
+              )}
             </div>
           </form>
 
           {/* Right: Notification Bell + Primary CTA + Secondary CTA */}
           <div className="flex items-center gap-2.5 shrink-0">
             <Link
-              href="/admin/financeiro/contas?kind=PAYABLE"
-              aria-label="Alertas e vencimentos"
+              href={bellHref}
+              aria-label={bellAriaLabel}
               className="relative w-10 h-10 rounded-xl bg-[#161920] hover:bg-[#1E222B] border border-white/[0.08] flex items-center justify-center text-zinc-300 transition-colors"
             >
               <svg
@@ -901,7 +1057,12 @@ export function PremiumDashboardView({
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#EF5A67]" />
+              {hasActiveAlerts && (
+                <span
+                  data-testid="desktop-bell-alert-dot"
+                  className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#EF5A67]"
+                />
+              )}
             </Link>
 
             <Link
@@ -938,11 +1099,16 @@ export function PremiumDashboardView({
           <MetricCard
             label="Faturamento hoje"
             value={formatBRL(faturamentoHoje)}
-            trend={{
-              value: faturamentoHojeTrend,
-              label: "vs. ontem",
-              positive: !faturamentoHojeTrend.startsWith("-"),
-            }}
+            sublabel="Realizado hoje"
+            trend={
+              faturamentoHojeTrend
+                ? {
+                    value: faturamentoHojeTrend,
+                    label: "vs. ontem",
+                    positive: !faturamentoHojeTrend.startsWith("-"),
+                  }
+                : undefined
+            }
             visualType="sparkline"
             highlight
             icon={<span className="text-lg font-extrabold">$</span>}
@@ -951,11 +1117,16 @@ export function PremiumDashboardView({
           <MetricCard
             label="Faturamento semanal"
             value={formatBRL(faturamentoSemana)}
-            trend={{
-              value: faturamentoSemanaTrend,
-              label: "vs. semana anterior",
-              positive: !faturamentoSemanaTrend.startsWith("-"),
-            }}
+            sublabel="Acumulado nos últimos 7 dias"
+            trend={
+              faturamentoSemanaTrend
+                ? {
+                    value: faturamentoSemanaTrend,
+                    label: "vs. semana anterior",
+                    positive: !faturamentoSemanaTrend.startsWith("-"),
+                  }
+                : undefined
+            }
             visualType="bars-gold"
             icon={
               <svg
@@ -1000,11 +1171,16 @@ export function PremiumDashboardView({
           <MetricCard
             label="Clientes atendidos"
             value={clientesAtendidosHoje}
-            trend={{
-              value: clientesAtendidosTrend,
-              label: "vs. semana anterior",
-              positive: !clientesAtendidosTrend.startsWith("-"),
-            }}
+            sublabel="Concluídos hoje"
+            trend={
+              clientesAtendidosTrend
+                ? {
+                    value: clientesAtendidosTrend,
+                    label: "vs. ontem",
+                    positive: !clientesAtendidosTrend.startsWith("-"),
+                  }
+                : undefined
+            }
             visualType="bars-slate"
             icon={
               <svg
@@ -1027,13 +1203,13 @@ export function PremiumDashboardView({
         <div className="grid grid-cols-12 gap-4 items-stretch">
           {/* Col 1 (5 cols): Agenda de hoje */}
           <div className="col-span-5">
-            <TodayScheduleCard appointments={todayAppointments} />
+            <TodayScheduleCard appointments={filteredTodayAppointments} />
           </div>
 
           {/* Col 2 (3 cols): Desempenho por profissional */}
           <div className="col-span-3">
             <ProfessionalPerformanceCard
-              professionals={professionals}
+              professionals={filteredProfessionals}
               canAccessFinancial={canAccessFinancial}
             />
           </div>
@@ -1043,7 +1219,7 @@ export function PremiumDashboardView({
             {canAccessFinancial ? (
               <FinancialDueCard
                 summary={financialSummary}
-                items={dueItems}
+                items={filteredDueItems}
                 canAccessFinancial={canAccessFinancial}
                 civilToday={civilToday}
               />
@@ -1095,7 +1271,8 @@ export function PremiumDashboardView({
                 dailyRevenue={dailyRevenue}
                 weekRevenue={chartTotal}
                 occupancy={occupancyData}
-                trendText={faturamentoGraficoTrend}
+                trendText={effectiveChartTrend}
+                trendPositive={!effectiveChartTrend?.startsWith("-")}
                 peakDateLabel={peakDateLabel}
               />
             </DashboardCard>
@@ -1107,6 +1284,10 @@ export function PremiumDashboardView({
             <DashboardCard className="p-4 sm:p-5 flex-1">
               <SectionHeader
                 title="Clientes recentes"
+                subtitle={
+                  recurrence.periodLabel ??
+                  "Ativos nos últimos 30 dias vs. histórico"
+                }
                 icon={
                   <svg
                     className="w-4 h-4 text-[#E8C76E]"
@@ -1180,10 +1361,10 @@ export function PremiumDashboardView({
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <span className="text-base font-extrabold text-white leading-none tabular-nums">
-                      {recurrence.recurringPct}%
+                      {hasRecurrenceData ? `${recurrence.recurringPct}%` : "0%"}
                     </span>
                     <span className="text-[10px] text-[#9CA3AF] mt-0.5">
-                      Recorrentes
+                      {hasRecurrenceData ? "Recorrentes" : "Sem base"}
                     </span>
                   </div>
                 </div>
@@ -1196,7 +1377,7 @@ export function PremiumDashboardView({
                       Clientes recorrentes
                     </span>
                     <span className="font-bold text-white tabular-nums">
-                      {recurrence.recurringPct}%
+                      {hasRecurrenceData ? `${recurrence.recurringPct}%` : "0%"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -1205,7 +1386,7 @@ export function PremiumDashboardView({
                       Novos clientes
                     </span>
                     <span className="font-bold text-white tabular-nums">
-                      {recurrence.newPct}%
+                      {hasRecurrenceData ? `${recurrence.newPct}%` : "0%"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -1214,9 +1395,14 @@ export function PremiumDashboardView({
                       Inativos
                     </span>
                     <span className="font-bold text-zinc-300 tabular-nums">
-                      {recurrence.inactivePct}%
+                      {hasRecurrenceData ? `${recurrence.inactivePct}%` : "0%"}
                     </span>
                   </div>
+                  {!hasRecurrenceData && (
+                    <p className="text-[10.5px] text-[#8E95A2] pt-0.5">
+                      Sem histórico de visitas para cálculo de recorrência.
+                    </p>
+                  )}
                 </div>
               </div>
             </DashboardCard>
@@ -1255,9 +1441,9 @@ export function PremiumDashboardView({
                     <span className="text-lg font-extrabold text-white tabular-nums">
                       {formatBRL(monthData.revenue)}
                     </span>
-                    {monthData.targetRevenue && monthData.targetRevenue > 0 ? (
+                    {hasConfiguredGoal ? (
                       <span className="text-xs text-[#8E95A2] tabular-nums">
-                        de {formatBRL(monthData.targetRevenue)}
+                        de {formatBRL(monthData.targetRevenue!)}
                       </span>
                     ) : (
                       <span className="text-xs text-[#8E95A2]">
@@ -1265,16 +1451,24 @@ export function PremiumDashboardView({
                       </span>
                     )}
                   </div>
-                  <span className="text-xs font-bold text-[#E8C76E] tabular-nums">
-                    {monthGoalPct}%
-                  </span>
+                  {hasConfiguredGoal ? (
+                    <span className="text-xs font-bold text-[#E8C76E] tabular-nums">
+                      {monthGoalPct}%
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-medium text-[#8E95A2]">
+                      Meta não configurada
+                    </span>
+                  )}
                 </div>
 
                 <div className="h-2 w-full bg-white/[0.08] rounded-full overflow-hidden mb-3.5">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#D3AE55] to-[#F0D78C] rounded-full shadow-[0_0_10px_rgba(211,174,85,0.35)]"
-                    style={{ width: `${monthGoalPct}%` }}
-                  />
+                  {hasConfiguredGoal && (
+                    <div
+                      className="h-full bg-gradient-to-r from-[#D3AE55] to-[#F0D78C] rounded-full shadow-[0_0_10px_rgba(211,174,85,0.35)]"
+                      style={{ width: `${monthGoalPct}%` }}
+                    />
+                  )}
                 </div>
 
                 {/* 3 Bottom Sub-Boxes */}
@@ -1317,8 +1511,17 @@ export function PremiumDashboardView({
                       {formatBRL(monthData.averageTicket)}
                     </p>
                     {monthData.averageTicketTrend && (
-                      <span className="inline-block mt-0.5 text-[9.5px] font-bold text-[#16C784] bg-[#16C784]/15 px-1.5 py-0.2 rounded">
-                        ▲ {monthData.averageTicketTrend}
+                      <span
+                        className={`inline-block mt-0.5 text-[9.5px] font-bold px-1.5 py-0.2 rounded ${
+                          monthData.averageTicketTrend.startsWith("-")
+                            ? "text-[#EF5A67] bg-[#EF5A67]/15"
+                            : "text-[#16C784] bg-[#16C784]/15"
+                        }`}
+                      >
+                        {monthData.averageTicketTrend.startsWith("-")
+                          ? "▼"
+                          : "▲"}{" "}
+                        {monthData.averageTicketTrend}
                       </span>
                     )}
                   </div>
@@ -1333,6 +1536,12 @@ export function PremiumDashboardView({
             <DashboardCard className="p-4 sm:p-5 flex-1">
               <SectionHeader
                 title="Performance por canal"
+                subtitle={
+                  !isChannelTrackingAvailable
+                    ? channelsData.unavailableReason ??
+                      "Origem do agendamento não rastreada"
+                    : undefined
+                }
                 icon={
                   <svg
                     className="w-4 h-4 text-[#E8C76E]"
@@ -1393,10 +1602,10 @@ export function PremiumDashboardView({
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <span className="text-sm font-extrabold text-white leading-none tabular-nums">
-                      {channelsData.total}
+                      {isChannelTrackingAvailable ? channelsData.total : "—"}
                     </span>
                     <span className="text-[8.5px] text-[#9CA3AF] mt-0.5">
-                      agendamentos
+                      {isChannelTrackingAvailable ? "agendamentos" : "sem origem"}
                     </span>
                   </div>
                 </div>
@@ -1416,9 +1625,11 @@ export function PremiumDashboardView({
                         <span className="truncate">{ch.name}</span>
                       </span>
                       <div className="flex items-center gap-3 shrink-0 tabular-nums">
-                        <span className="text-[#9CA3AF]">{ch.pct}%</span>
+                        <span className="text-[#9CA3AF]">
+                          {isChannelTrackingAvailable ? `${ch.pct}%` : "—"}
+                        </span>
                         <span className="font-bold text-white w-6 text-right">
-                          {ch.count}
+                          {isChannelTrackingAvailable ? ch.count : "—"}
                         </span>
                       </div>
                     </div>
