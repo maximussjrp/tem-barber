@@ -1,4 +1,8 @@
-import { formatTimestampToCivilDateBR } from "@/lib/time-utils";
+import {
+  formatTimestampToCivilDateBR,
+  localDateToUTCBoundary,
+  shiftDateISO,
+} from "@/lib/time-utils";
 
 export interface RawWorkingHourInput {
   dayOfWeek?: number;
@@ -74,6 +78,49 @@ export interface RawStandaloneComandaInput {
       durationMin?: number | null;
     } | null;
   }[];
+}
+
+/**
+ * Constrói a cláusula `where` do Prisma para consulta de comandas avulsas.
+ * Garante:
+ * - barbershopId obrigatório
+ * - appointmentId: null (sem vínculo com agendamento para evitar dupla contagem)
+ * - status da comanda !== CANCELLED
+ * - itens com type === SERVICE e status === DONE
+ * - intervalo semiaberto [inicioLocalEmUTC, inicioDoDiaLocalSeguinteEmUTC) em America/Sao_Paulo
+ * - sem ramos arbitrários baseados em createdAt, openedAt ou closedAt
+ */
+export function buildStandaloneComandasWhereClause(
+  barbershopId: string,
+  todayStr: string
+) {
+  const gte = localDateToUTCBoundary(todayStr);
+  const lt = localDateToUTCBoundary(shiftDateISO(todayStr, 1));
+  return {
+    barbershopId,
+    appointmentId: null,
+    status: { not: "CANCELLED" as const },
+    items: {
+      some: {
+        type: "SERVICE" as const,
+        status: "DONE" as const,
+        completedAt: { gte, lt },
+      },
+    },
+  };
+}
+
+/**
+ * Constrói o filtro `where` para a seleção de itens de serviços concluídos da comanda.
+ */
+export function buildStandaloneComandaItemsWhereClause(todayStr: string) {
+  const gte = localDateToUTCBoundary(todayStr);
+  const lt = localDateToUTCBoundary(shiftDateISO(todayStr, 1));
+  return {
+    type: "SERVICE" as const,
+    status: "DONE" as const,
+    completedAt: { gte, lt },
+  };
 }
 
 export type TodaySlotStatus =
@@ -478,19 +525,21 @@ export function computeDashboardOperationalMetrics(params: {
       }
       if (item.type && item.type.toUpperCase() !== "SERVICE") continue;
 
-      // Problema A: ComandaItemStatus real enum: PENDING, DONE, CANCELLED.
       // Contabiliza APENAS itens efetivamente concluídos (DONE). Itens PENDING ou CANCELLED ficam de fora.
       const itemStatus = (item.status ?? "").toUpperCase();
       if (itemStatus !== "DONE") continue;
 
-      // Problema B: Data de execução efetiva (America/Sao_Paulo).
-      // Fonte canônica canônica: item.completedAt. Se o item possui completedAt, ele é o registro soberano de quando o serviço foi feito.
-      // Se não possui completedAt, utiliza comanda.closedAt ou openedAt como fallback.
-      const effectiveDateObj =
-        item.completedAt ?? comanda.closedAt ?? comanda.openedAt ?? null;
-      if (!effectiveDateObj) continue;
+      // Exigir item.completedAt válido para atribuir o atendimento ao dia civil em America/Sao_Paulo.
+      // NÃO utilizar comanda.closedAt, comanda.openedAt ou item.createdAt como substitutos.
+      // Itens históricos ou avulsos com completedAt === null/undefined ou data inválida são descartados (fail-closed).
+      if (!item.completedAt) continue;
+      const completedDate =
+        item.completedAt instanceof Date
+          ? item.completedAt
+          : new Date(item.completedAt);
+      if (isNaN(completedDate.getTime())) continue;
 
-      const itemCivilDate = formatTimestampToCivilDateBR(effectiveDateObj);
+      const itemCivilDate = formatTimestampToCivilDateBR(completedDate);
       if (itemCivilDate !== todayStr) {
         // Concluído em outra data civil (ex: ontem) -> não entra na carga de hoje
         continue;

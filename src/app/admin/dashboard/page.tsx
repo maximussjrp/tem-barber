@@ -23,6 +23,8 @@ import { DashboardAppointmentItem } from "@/components/admin/dashboard/TodaySche
 import {
   computeDashboardOperationalMetrics,
   deduplicateTodayAppointments,
+  buildStandaloneComandasWhereClause,
+  buildStandaloneComandaItemsWhereClause,
 } from "@/lib/dashboard/operational-metrics";
 
 function getTodayBR() {
@@ -308,27 +310,12 @@ export default async function DashboardPage() {
       },
     }),
 
-    // 10. Comandas avulsas com serviços concluídos hoje sem agendamento vinculado (Problema A & B: status DONE, data de conclusão em America/Sao_Paulo, sem duplicar appointmentId)
+    // 10. Comandas avulsas com serviços concluídos hoje sem agendamento vinculado
+    // Utiliza limites UTC do dia civil em America/Sao_Paulo [inicioLocalEmUTC, inicioDoDiaLocalSeguinteEmUTC)
+    // Sem ramos arbitrários por createdAt ou closedAt e descartando itens sem completedAt (fail-closed)
     prisma.comanda?.findMany
       ? prisma.comanda.findMany({
-          where: {
-            barbershopId: barbershopId!,
-            appointmentId: null,
-            status: { not: "CANCELLED" },
-            items: {
-              some: {
-                type: "SERVICE",
-                status: "DONE",
-                OR: [
-                  { completedAt: { gte: startOfDay, lte: endOfDay } },
-                  {
-                    completedAt: null,
-                    createdAt: { gte: startOfDay, lte: endOfDay },
-                  },
-                ],
-              },
-            },
-          },
+          where: buildStandaloneComandasWhereClause(barbershopId!, todayStr),
           select: {
             id: true,
             appointmentId: true,
@@ -336,10 +323,7 @@ export default async function DashboardPage() {
             openedAt: true,
             closedAt: true,
             items: {
-              where: {
-                type: "SERVICE",
-                status: "DONE",
-              },
+              where: buildStandaloneComandaItemsWhereClause(todayStr),
               select: {
                 id: true,
                 type: true,

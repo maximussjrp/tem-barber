@@ -6,6 +6,8 @@ import {
   resolveReliableDurationMin,
   formatOccupancyPercent,
   formatEquivalentUnits,
+  buildStandaloneComandasWhereClause,
+  buildStandaloneComandaItemsWhereClause,
 } from "@/lib/dashboard/operational-metrics";
 import { resolveSidebarActiveState } from "@/components/admin/Sidebar";
 import { ADMIN_NAV_CONFIG } from "@/components/admin/navigation/nav-config";
@@ -415,6 +417,15 @@ describe("Dashboard Operational Metrics — Unit Suite (Corrections 2, 3, 4, 5, 
             service: { durationMin: 30 },
           },
           {
+            id: "item-null-completed-at",
+            type: "SERVICE",
+            status: "DONE", // DONE mas completedAt === null -> FAIL-CLOSED (não somar)
+            executorId: "member-1",
+            completedAt: null,
+            quantity: 1,
+            service: { durationMin: 45 },
+          },
+          {
             id: "item-cancelled",
             type: "SERVICE",
             status: "CANCELLED", // CANCELLED não deve ser contabilizado
@@ -688,6 +699,237 @@ describe("Dashboard Operational Metrics — Unit Suite (Corrections 2, 3, 4, 5, 
         cancelled: 1,
         noShow: 1,
       });
+    });
+  });
+
+  describe("Filtro SQL e Limites de Dia Civil em São Paulo (Ajuste Final Pré-Push)", () => {
+    const BARBERSHOP_ID = "shop-dom-brio-1";
+
+    it("30. Cláusula WHERE do Prisma utiliza limites UTC semiabertos para o dia civil em America/Sao_Paulo", () => {
+      const whereClause = buildStandaloneComandasWhereClause(
+        BARBERSHOP_ID,
+        "2026-10-30"
+      );
+
+      // BarbershopId obrigatório
+      expect(whereClause.barbershopId).toBe(BARBERSHOP_ID);
+      // AppointmentId estritamente null (evita duplicar agendamento)
+      expect(whereClause.appointmentId).toBeNull();
+      // Comandas canceladas excluídas
+      expect(whereClause.status).toEqual({ not: "CANCELLED" });
+
+      // Limites em UTC para 2026-10-30 em São Paulo (UTC-3):
+      // Início: 2026-10-30 00:00:00 BRT = 2026-10-30 03:00:00 UTC
+      // Fim exclusivo: 2026-10-31 00:00:00 BRT = 2026-10-31 03:00:00 UTC
+      const expectedGte = new Date(Date.UTC(2026, 9, 30, 3, 0, 0, 0));
+      const expectedLt = new Date(Date.UTC(2026, 9, 31, 3, 0, 0, 0));
+
+      expect(whereClause.items.some.type).toBe("SERVICE");
+      expect(whereClause.items.some.status).toBe("DONE");
+      expect(whereClause.items.some.completedAt.gte).toEqual(expectedGte);
+      expect(whereClause.items.some.completedAt.lt).toEqual(expectedLt);
+
+      // Rejeita qualquer propriedade createdAt no filtro
+      expect((whereClause.items.some as Record<string, unknown>).createdAt).toBeUndefined();
+      expect((whereClause.items.some as Record<string, unknown>).OR).toBeUndefined();
+
+      // Filtro dos itens selecionados
+      const itemsFilter = buildStandaloneComandaItemsWhereClause("2026-10-30");
+      expect(itemsFilter.type).toBe("SERVICE");
+      expect(itemsFilter.status).toBe("DONE");
+      expect(itemsFilter.completedAt.gte).toEqual(expectedGte);
+      expect(itemsFilter.completedAt.lt).toEqual(expectedLt);
+    });
+
+    it("31. Serviço concluído às 22h de 30/10 em São Paulo (01h UTC de 31/10) pertence a 30/10", () => {
+      // 22:00 BRT de 30/10/2026 = 01:00 UTC de 31/10/2026
+      const lateNightTimestamp = new Date("2026-10-31T01:00:00.000Z");
+
+      // 1) Validação no filtro SQL/Prisma
+      const filter = buildStandaloneComandasWhereClause(BARBERSHOP_ID, "2026-10-30");
+      const { gte, lt } = filter.items.some.completedAt;
+      expect(lateNightTimestamp.getTime()).toBeGreaterThanOrEqual(gte.getTime());
+      expect(lateNightTimestamp.getTime()).toBeLessThan(lt.getTime());
+
+      // 2) Validação na função de métricas operacionais
+      const comanda = {
+        id: "cmd-late-night",
+        appointmentId: null,
+        status: "CLOSED",
+        items: [
+          {
+            id: "item-22h",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: lateNightTimestamp,
+            service: { durationMin: 40 },
+          },
+        ],
+      };
+
+      const res = computeDashboardOperationalMetrics({
+        todayStr: "2026-10-30",
+        currentMinutesBR: 23 * 60,
+        activeMembers: [makeStandardBarber()],
+        todayAppointments: [],
+        standaloneComandas: [comanda],
+      });
+
+      expect(res.occupancyBreakdown.completedMinutes).toBe(40);
+      expect(res.professionals[0].completedCount).toBe(1);
+    });
+
+    it("32. Serviço concluído às 00h30 de 31/10 em São Paulo (03h30 UTC de 31/10) pertence a 31/10 e NÃO a 30/10", () => {
+      // 00:30 BRT de 31/10/2026 = 03:30 UTC de 31/10/2026
+      const earlyMorningTimestamp = new Date("2026-10-31T03:30:00.000Z");
+
+      // 1) Não pertence a 30/10
+      const filter30 = buildStandaloneComandasWhereClause(BARBERSHOP_ID, "2026-10-30");
+      expect(earlyMorningTimestamp.getTime()).toBeGreaterThanOrEqual(
+        filter30.items.some.completedAt.lt.getTime()
+      );
+
+      // 2) Pertence a 31/10
+      const filter31 = buildStandaloneComandasWhereClause(BARBERSHOP_ID, "2026-10-31");
+      expect(earlyMorningTimestamp.getTime()).toBeGreaterThanOrEqual(
+        filter31.items.some.completedAt.gte.getTime()
+      );
+      expect(earlyMorningTimestamp.getTime()).toBeLessThan(
+        filter31.items.some.completedAt.lt.getTime()
+      );
+
+      // 3) Validação nas métricas: não entra em 30/10, entra em 31/10
+      const comanda = {
+        id: "cmd-early-morning",
+        appointmentId: null,
+        status: "CLOSED",
+        items: [
+          {
+            id: "item-00h30",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: earlyMorningTimestamp,
+            service: { durationMin: 50 },
+          },
+        ],
+      };
+
+      const res30 = computeDashboardOperationalMetrics({
+        todayStr: "2026-10-30",
+        currentMinutesBR: 23 * 60,
+        activeMembers: [makeStandardBarber()],
+        todayAppointments: [],
+        standaloneComandas: [comanda],
+      });
+      expect(res30.occupancyBreakdown.completedMinutes).toBe(0);
+
+      const res31 = computeDashboardOperationalMetrics({
+        todayStr: "2026-10-31",
+        currentMinutesBR: 1 * 60,
+        activeMembers: [makeStandardBarber()],
+        todayAppointments: [],
+        standaloneComandas: [comanda],
+      });
+      expect(res31.occupancyBreakdown.completedMinutes).toBe(50);
+    });
+
+    it("33. Serviço DONE com completedAt null/undefined/inválido é descartado (fail-closed)", () => {
+      const comandaWithNulls = {
+        id: "cmd-null-dates",
+        appointmentId: null,
+        status: "CLOSED",
+        closedAt: new Date("2026-10-30T15:00:00.000Z"), // Mesmo que a comanda tenha closedAt hoje
+        items: [
+          {
+            id: "item-null-1",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: null,
+            service: { durationMin: 30 },
+          },
+          {
+            id: "item-undefined-2",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: undefined,
+            service: { durationMin: 30 },
+          },
+          {
+            id: "item-invalid-str-3",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: "data-invalida",
+            service: { durationMin: 30 },
+          },
+        ],
+      };
+
+      const res = computeDashboardOperationalMetrics({
+        todayStr: "2026-10-30",
+        currentMinutesBR: 16 * 60,
+        activeMembers: [makeStandardBarber()],
+        todayAppointments: [],
+        standaloneComandas: [comandaWithNulls],
+      });
+
+      // Nenhum dos 3 itens com completedAt não comprovado deve ser contabilizado
+      expect(res.occupancyBreakdown.completedMinutes).toBe(0);
+      expect(res.professionals[0].completedCount).toBe(0);
+    });
+
+    it("34. Preserva cálculo canônico de sobrecarga: 480 min capacidade e 570 min demanda = 118,75%", () => {
+      // 480 minutos de capacidade (08:00 às 17:00 com 60 min de almoço)
+      // 360 minutos concluídos (300 min via agendamentos + 60 min via comanda avulsa DONE hoje)
+      // 210 minutos agendados/confirmados
+      // Demanda = 360 + 210 = 570 minutos
+      // Carga = 570 / 480 * 100 = 118,75% (+90 min excedente / +3 cortes eq.)
+      const completedAppts = [
+        makeAppt({ id: "a-c1", hhmm: "08:00", durationMin: 120, status: "COMPLETED" }),
+        makeAppt({ id: "a-c2", hhmm: "10:00", durationMin: 120, status: "COMPLETED" }),
+        makeAppt({ id: "a-c3", hhmm: "13:00", durationMin: 60, status: "COMPLETED" }),
+      ]; // 300 min concluídos
+
+      const scheduledAppts = [
+        makeAppt({ id: "a-s1", hhmm: "14:00", durationMin: 90, status: "CONFIRMED" }),
+        makeAppt({ id: "a-s2", hhmm: "15:30", durationMin: 120, status: "PENDING" }),
+      ]; // 210 min agendados
+
+      const standaloneComanda = {
+        id: "cmd-approved-scenario",
+        appointmentId: null,
+        status: "CLOSED",
+        items: [
+          {
+            id: "item-approved-done",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: new Date("2026-10-30T16:30:00.000Z"), // Hoje em SP
+            service: { durationMin: 60 },
+          },
+        ],
+      }; // 60 min avulsos concluídos
+
+      const res = computeDashboardOperationalMetrics({
+        todayStr: "2026-10-30",
+        currentMinutesBR: 17 * 60,
+        activeMembers: [makeStandardBarber()],
+        todayAppointments: [...completedAppts, ...scheduledAppts],
+        standaloneComandas: [standaloneComanda],
+      });
+
+      expect(res.occupancyBreakdown.capacityMinutes).toBe(480);
+      expect(res.occupancyBreakdown.completedMinutes).toBe(360);
+      expect(res.occupancyBreakdown.scheduledMinutes).toBe(210);
+      expect(res.occupancyBreakdown.totalDemandMinutes).toBe(570);
+      expect(res.occupancyBreakdown.workloadPctDisplay).toBe(118.75);
+      expect(res.occupancyBreakdown.overloadMinutes).toBe(90);
+      expect(res.occupancyBreakdown.equivalentOverload30).toBe(3);
     });
   });
 });
