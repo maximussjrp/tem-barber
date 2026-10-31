@@ -381,7 +381,7 @@ describe("Dashboard Operational Metrics — Unit Suite (Corrections 2, 3, 4, 5, 
       expect(res.occupancyBreakdown.physicalOccupancyPct).toBe(100);
     });
 
-    it("15 & 16. Comanda avulsa concluída soma na carga produtiva, enquanto comanda vinculada a agendamento não duplica", () => {
+    it("15 & 16. Comanda avulsa com serviço DONE soma na carga produtiva, enquanto PENDING/CANCELLED/fora da data não somam e comanda vinculada não duplica", () => {
       const apptWithLinkedComanda = makeAppt({
         id: "appt-linked",
         hhmm: "09:00",
@@ -390,32 +390,100 @@ describe("Dashboard Operational Metrics — Unit Suite (Corrections 2, 3, 4, 5, 
         hasLinkedComanda: true,
       });
 
-      const standaloneClosedComanda = {
+      // Comanda avulsa fechada com serviço DONE concluído hoje
+      const standaloneValidComanda = {
         id: "cmd-standalone-1",
         appointmentId: null,
         status: "CLOSED",
+        closedAt: new Date(`${TODAY_STR}T14:00:00.000Z`),
         items: [
           {
-            id: "item-1",
+            id: "item-done-today",
             type: "SERVICE",
-            status: "COMPLETED",
+            status: "DONE", // Real ComandaItemStatus enum
             executorId: "member-1",
+            completedAt: new Date(`${TODAY_STR}T11:00:00.000Z`),
             quantity: 1,
             service: { durationMin: 45 },
+          },
+          {
+            id: "item-pending",
+            type: "SERVICE",
+            status: "PENDING", // PENDING não deve ser contabilizado como concluído
+            executorId: "member-1",
+            quantity: 1,
+            service: { durationMin: 30 },
+          },
+          {
+            id: "item-cancelled",
+            type: "SERVICE",
+            status: "CANCELLED", // CANCELLED não deve ser contabilizado
+            executorId: "member-1",
+            quantity: 1,
+            service: { durationMin: 30 },
+          },
+          {
+            id: "item-product",
+            type: "PRODUCT",
+            status: "DONE", // Produto não contabiliza minutos de serviço
+            executorId: "member-1",
+            quantity: 2,
+            service: null,
           },
         ],
       };
 
+      // Comanda avulsa aberta mas com serviço DONE concluído hoje (Cenário 2)
+      const standaloneOpenComandaWithDoneService = {
+        id: "cmd-standalone-open",
+        appointmentId: null,
+        status: "OPEN",
+        openedAt: new Date(`${TODAY_STR}T09:00:00.000Z`),
+        items: [
+          {
+            id: "item-done-in-open-comanda",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: new Date(`${TODAY_STR}T10:30:00.000Z`),
+            quantity: 1,
+            service: { durationMin: 30 },
+          },
+        ],
+      };
+
+      // Serviço concluído ontem em comanda fechada hoje (Cenário 1) -> NÃO deve contabilizar hoje
+      const standaloneYesterdayService = {
+        id: "cmd-yesterday-service",
+        appointmentId: null,
+        status: "CLOSED",
+        closedAt: new Date(`${TODAY_STR}T08:00:00.000Z`),
+        items: [
+          {
+            id: "item-done-yesterday",
+            type: "SERVICE",
+            status: "DONE",
+            executorId: "member-1",
+            completedAt: new Date("2026-10-29T17:00:00.000Z"), // Ontem em relação a TODAY_STR (2026-10-30)
+            quantity: 1,
+            service: { durationMin: 60 },
+          },
+        ],
+      };
+
+      // Comanda vinculada a agendamento (Cenário 5) -> NÃO deve duplicar carga produtiva
       const linkedClosedComanda = {
         id: "cmd-linked-dup",
         appointmentId: "appt-linked",
         status: "CLOSED",
+        closedAt: new Date(`${TODAY_STR}T10:00:00.000Z`),
         items: [
           {
-            id: "item-2",
+            id: "item-linked-dup",
             type: "SERVICE",
-            status: "COMPLETED",
+            status: "DONE",
             executorId: "member-1",
+            completedAt: new Date(`${TODAY_STR}T09:30:00.000Z`),
             quantity: 1,
             service: { durationMin: 30 },
           },
@@ -424,14 +492,20 @@ describe("Dashboard Operational Metrics — Unit Suite (Corrections 2, 3, 4, 5, 
 
       const res = computeDashboardOperationalMetrics({
         todayStr: TODAY_STR,
-        currentMinutesBR: 9 * 60,
+        currentMinutesBR: 12 * 60,
         activeMembers: [makeStandardBarber()],
-        todayAppointments: [apptWithLinkedComanda],
-        standaloneComandas: [standaloneClosedComanda, linkedClosedComanda],
+        todayAppointments: [apptWithLinkedComanda], // 30 min concluídos via Appointment
+        standaloneComandas: [
+          standaloneValidComanda, // +45 min (item-done-today)
+          standaloneOpenComandaWithDoneService, // +30 min (item-done-in-open-comanda)
+          standaloneYesterdayService, // 0 min (concluído ontem)
+          linkedClosedComanda, // 0 min (duplicação evitada)
+        ],
       });
 
-      expect(res.occupancyBreakdown.completedMinutes).toBe(75);
-      expect(res.professionals[0].completedCount).toBe(2);
+      // Total concluído = 30 min (appt) + 45 min + 30 min = 105 min
+      expect(res.occupancyBreakdown.completedMinutes).toBe(105);
+      expect(res.professionals[0].completedCount).toBe(3); // 1 appt + 2 standalone DONE services
     });
 
     it("17. Capacidade zero (todos os profissionais em folga) trata sem divisão por zero", () => {

@@ -25,11 +25,11 @@ export default function DashboardCharts({
   compact?: boolean;
 }) {
   void occupancy;
-  const W = 440;
-  const H = compact ? 135 : 190;
+  const W = 400;
+  const H = compact ? 135 : 290;
   const padLeft = 48;
   const padRight = 18;
-  const padTop = 34;
+  const padTop = 32;
   const padBottom = 24;
   const plotW = W - padLeft - padRight;
   const plotH = H - padTop - padBottom;
@@ -76,7 +76,7 @@ export default function DashboardCharts({
 
   return (
     <div
-      className="w-full flex-1 flex flex-col justify-between gap-2"
+      className="w-full flex-1 flex flex-col justify-start gap-2.5"
       data-testid="desktop-revenue-chart-container"
     >
       {/* Summary Header Inside Chart — positioned directly below SectionHeader */}
@@ -84,7 +84,7 @@ export default function DashboardCharts({
         <p className="text-2xl sm:text-[28px] font-extrabold text-white tracking-tight tabular-nums leading-tight">
           {fmtBRL(weekRevenue)}
         </p>
-        <div className="flex items-center gap-1.5 text-xs mt-1">
+        <div className="flex items-center gap-1.5 text-xs mt-0.5">
           {trendText ? (
             <>
               <span
@@ -107,10 +107,10 @@ export default function DashboardCharts({
       </div>
 
       {/* Rich SVG Area + Line Chart */}
-      <div className="relative w-full flex-1 flex items-center">
+      <div className="relative w-full flex-1 flex items-center min-h-[240px]">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="w-full h-auto overflow-visible"
+          className="w-full h-full overflow-visible"
           role="img"
           aria-label="Gráfico de faturamento dos últimos 7 dias"
         >

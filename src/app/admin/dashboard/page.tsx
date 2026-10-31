@@ -308,17 +308,26 @@ export default async function DashboardPage() {
       },
     }),
 
-    // 10. Comandas avulsas concluídas hoje sem agendamento vinculado (evitando omissão de carga e sem duplicar comandas com appointmentId)
+    // 10. Comandas avulsas com serviços concluídos hoje sem agendamento vinculado (Problema A & B: status DONE, data de conclusão em America/Sao_Paulo, sem duplicar appointmentId)
     prisma.comanda?.findMany
       ? prisma.comanda.findMany({
           where: {
             barbershopId: barbershopId!,
             appointmentId: null,
-            status: "CLOSED",
-            OR: [
-              { closedAt: { gte: startOfDay, lte: endOfDay } },
-              { closedAt: null, openedAt: { gte: startOfDay, lte: endOfDay } },
-            ],
+            status: { not: "CANCELLED" },
+            items: {
+              some: {
+                type: "SERVICE",
+                status: "DONE",
+                OR: [
+                  { completedAt: { gte: startOfDay, lte: endOfDay } },
+                  {
+                    completedAt: null,
+                    createdAt: { gte: startOfDay, lte: endOfDay },
+                  },
+                ],
+              },
+            },
           },
           select: {
             id: true,
@@ -327,12 +336,17 @@ export default async function DashboardPage() {
             openedAt: true,
             closedAt: true,
             items: {
+              where: {
+                type: "SERVICE",
+                status: "DONE",
+              },
               select: {
                 id: true,
                 type: true,
                 status: true,
                 quantity: true,
                 executorId: true,
+                completedAt: true,
                 service: { select: { name: true, durationMin: true } },
               },
             },

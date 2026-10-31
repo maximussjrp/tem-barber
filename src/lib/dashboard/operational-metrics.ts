@@ -1,3 +1,5 @@
+import { formatTimestampToCivilDateBR } from "@/lib/time-utils";
+
 export interface RawWorkingHourInput {
   dayOfWeek?: number;
   startTime: string;
@@ -66,6 +68,7 @@ export interface RawStandaloneComandaInput {
     status?: string;
     quantity?: unknown;
     executorId?: string | null;
+    completedAt?: Date | string | null;
     service?: {
       name?: string | null;
       durationMin?: number | null;
@@ -443,7 +446,8 @@ export function computeDashboardOperationalMetrics(params: {
 
   const deduplicatedAppts = deduplicateTodayAppointments(todayAppointments);
 
-  // Process standalone closed comandas (ONLY those WITHOUT appointmentId so linked comandas never duplicate workload)
+  // Process standalone comandas (ONLY those WITHOUT appointmentId so linked comandas never duplicate workload)
+  // Considers ONLY items with status === "DONE" (real enum) completed today (in America/Sao_Paulo)
   const seenComandaIds = new Set<string>();
   const standaloneByMember = new Map<
     string,
@@ -459,7 +463,8 @@ export function computeDashboardOperationalMetrics(params: {
 
     // Never duplicate workload when comanda is linked to an appointment
     if (comanda.appointmentId) continue;
-    if ((comanda.status ?? "").toUpperCase() !== "CLOSED") continue;
+    // Comanda status must be active or closed, never cancelled
+    if ((comanda.status ?? "").toUpperCase() === "CANCELLED") continue;
 
     const seenItemIds = new Set<string>();
     const memberMinutesInComanda = new Map<string, number>();
@@ -472,7 +477,24 @@ export function computeDashboardOperationalMetrics(params: {
         seenItemIds.add(item.id);
       }
       if (item.type && item.type.toUpperCase() !== "SERVICE") continue;
-      if ((item.status ?? "").toUpperCase() === "CANCELLED") continue;
+
+      // Problema A: ComandaItemStatus real enum: PENDING, DONE, CANCELLED.
+      // Contabiliza APENAS itens efetivamente concluídos (DONE). Itens PENDING ou CANCELLED ficam de fora.
+      const itemStatus = (item.status ?? "").toUpperCase();
+      if (itemStatus !== "DONE") continue;
+
+      // Problema B: Data de execução efetiva (America/Sao_Paulo).
+      // Fonte canônica canônica: item.completedAt. Se o item possui completedAt, ele é o registro soberano de quando o serviço foi feito.
+      // Se não possui completedAt, utiliza comanda.closedAt ou openedAt como fallback.
+      const effectiveDateObj =
+        item.completedAt ?? comanda.closedAt ?? comanda.openedAt ?? null;
+      if (!effectiveDateObj) continue;
+
+      const itemCivilDate = formatTimestampToCivilDateBR(effectiveDateObj);
+      if (itemCivilDate !== todayStr) {
+        // Concluído em outra data civil (ex: ontem) -> não entra na carga de hoje
+        continue;
+      }
 
       const rawDur = item.service?.durationMin;
       if (

@@ -175,7 +175,7 @@ export function ProfessionalPerformanceCard({
                     )}
 
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-baseline justify-between gap-1.5">
                         <p className="text-xs font-bold text-white truncate leading-tight">
                           {m.memberName}
                         </p>
@@ -195,8 +195,8 @@ export function ProfessionalPerformanceCard({
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <span className="text-[10.5px] text-[#9CA3AF] tabular-nums truncate">
+                      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 mt-0.5">
+                        <span className="text-[10.5px] text-[#9CA3AF] tabular-nums">
                           {shiftLabel}
                         </span>
                         {showDailyRev && (
