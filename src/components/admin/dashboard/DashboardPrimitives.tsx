@@ -236,6 +236,8 @@ export interface MetricCardProps {
   label: string;
   value: string | number;
   sublabel?: string;
+  subtitleBadge?: string;
+  extraContent?: React.ReactNode;
   trend?: {
     value: string;
     label?: string;
@@ -244,7 +246,7 @@ export interface MetricCardProps {
   };
   icon?: React.ReactNode;
   progress?: {
-    value: number; // 0 to 100
+    value: number; // 0 to 100 (or >100, clamped visually)
     color?: string;
   };
   visualType?: "sparkline" | "bars-gold" | "bars-slate" | "none";
@@ -256,6 +258,8 @@ export function MetricCard({
   label,
   value,
   sublabel,
+  subtitleBadge,
+  extraContent,
   trend,
   icon,
   progress,
@@ -281,12 +285,18 @@ export function MetricCard({
             <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#9CA3AF] truncate">
               {label}
             </span>
-            <span
-              className="text-zinc-500 hover:text-zinc-300 transition-colors select-none text-sm leading-none px-1"
-              aria-hidden="true"
-            >
-              ⋮
-            </span>
+            {subtitleBadge ? (
+              <span className="text-[9.5px] font-semibold text-[#E8C76E] bg-[#D3AE55]/12 border border-[#D3AE55]/30 rounded px-1.5 py-0.5 shrink-0">
+                {subtitleBadge}
+              </span>
+            ) : (
+              <span
+                className="text-zinc-500 hover:text-zinc-300 transition-colors select-none text-sm leading-none px-1"
+                aria-hidden="true"
+              >
+                ⋮
+              </span>
+            )}
           </div>
 
           <p className="mt-1 text-2xl sm:text-[28px] font-extrabold tracking-tight text-white tabular-nums leading-tight">
@@ -342,6 +352,8 @@ export function MetricCard({
               </span>
             )
           )}
+
+          {extraContent && <div className="mt-1.5">{extraContent}</div>}
         </div>
 
         {visualType === "sparkline" && (

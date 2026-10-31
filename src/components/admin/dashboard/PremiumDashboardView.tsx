@@ -24,6 +24,20 @@ import {
 } from "./ProfessionalPerformanceCard";
 import DashboardCharts from "@/components/admin/DashboardCharts";
 import BookingLinkShare from "@/components/admin/BookingLinkShare";
+import {
+  OccupancyBreakdown,
+  AttendanceSummaryStats,
+  TodaySlotItem,
+  computeAttendanceSummary,
+  formatOccupancyPercent,
+  formatEquivalentUnits,
+} from "@/lib/dashboard/operational-metrics";
+
+export type {
+  OccupancyBreakdown,
+  AttendanceSummaryStats,
+  TodaySlotItem,
+};
 
 export interface ClientRecurrenceStats {
   recurringPct: number;
@@ -86,6 +100,7 @@ export interface PremiumDashboardProps {
   faturamentoGraficoTrend?: string;
   peakDateLabel?: string;
   taxaOcupacaoPct: number;
+  occupancyBreakdown?: OccupancyBreakdown;
   horariosOcupados: number;
   horariosDisponiveis: number;
   clientesAtendidosHoje: number;
@@ -100,6 +115,7 @@ export interface PremiumDashboardProps {
   mobileAppointments?: DashboardAppointmentItem[];
   mobileDueItems?: DueAccountItem[];
   todayAppointments: DashboardAppointmentItem[];
+  attendanceSummary?: AttendanceSummaryStats;
   professionals: ProfessionalSlotInfo[];
   financialSummary: DueAccountSummary;
   dueItems: DueAccountItem[];
@@ -109,7 +125,13 @@ export interface PremiumDashboardProps {
   weeklyRevenueSeries?: number[];
   completedClientsSeries?: number[];
   appointmentsSeries?: number[];
-  occupancyData: { occupied: number; available: number; blocked: number };
+  occupancyData: {
+    occupied: number;
+    available: number;
+    blocked: number;
+    completed?: number;
+    scheduled?: number;
+  };
   onboarding: {
     done: number;
     total: number;
@@ -125,9 +147,8 @@ export interface PremiumDashboardProps {
   monthlyStats?: MonthlyGoalStats;
   channelPerformance?: ChannelPerformanceStats;
   operationalAlerts?: OperationalAlertItem[];
-  // Compatibility elements for existing tests
   todaySlotsLegendProps?: {
-    slots: { time: string; status: "available" | "occupied" | "blocked" }[];
+    slots: TodaySlotItem[];
   };
 }
 
@@ -359,6 +380,7 @@ export function PremiumDashboardView({
   faturamentoGraficoTrend,
   peakDateLabel,
   taxaOcupacaoPct,
+  occupancyBreakdown,
   horariosOcupados,
   horariosDisponiveis,
   clientesAtendidosHoje,
@@ -370,6 +392,7 @@ export function PremiumDashboardView({
   mobileAppointments,
   mobileDueItems,
   todayAppointments,
+  attendanceSummary,
   professionals,
   financialSummary,
   dueItems,
@@ -389,6 +412,7 @@ export function PremiumDashboardView({
   todaySlotsLegendProps,
 }: PremiumDashboardProps) {
   void recentClients;
+  void channelPerformance;
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -463,6 +487,29 @@ export function PremiumDashboardView({
   const effectiveCompletedClientsSeries = completedClientsSeries;
   const effectiveAppointmentsSeries = appointmentsSeries;
 
+  // Canonical occupancy values (Correction 3)
+  const effectiveOccupancyPct =
+    occupancyBreakdown !== undefined
+      ? occupancyBreakdown.workloadPctDisplay
+      : taxaOcupacaoPct;
+  const formattedOccupancyValue = formatOccupancyPercent(effectiveOccupancyPct);
+  const visualOccupancyBarPct =
+    occupancyBreakdown !== undefined
+      ? occupancyBreakdown.workloadBarPct
+      : Math.min(100, Math.max(0, taxaOcupacaoPct));
+
+  const occupancySublabel = occupancyBreakdown
+    ? !occupancyBreakdown.capacityAvailable
+      ? "Capacidade indisponível hoje (0 min)"
+      : `Carga: ${occupancyBreakdown.totalDemandMinutes} min de ${occupancyBreakdown.capacityMinutes} min (${formatEquivalentUnits(
+          occupancyBreakdown.equivalentDemand30
+        )}/${formatEquivalentUnits(
+          occupancyBreakdown.equivalentCapacity30
+        )} eq.)`
+    : `${horariosOcupados} ocupados de ${
+        horariosOcupados + horariosDisponiveis
+      } horários · Carga sobre capacidade`;
+
   // Real notification alert computation (no hardcoded red dot when 0 alerts)
   const financialAlertCount = canAccessFinancial
     ? financialSummary.overdueCount + financialSummary.todayCount
@@ -513,26 +560,58 @@ export function PremiumDashboardView({
       )
     : 0;
 
-  // Channel performance defaults from real props (never invent 52/28/15/5 or fake 100%)
-  const isChannelTrackingAvailable =
-    channelPerformance?.available !== undefined
-      ? channelPerformance.available
-      : Boolean(
-          channelPerformance &&
-            channelPerformance.channels.some((ch) => ch.count > 0)
-        );
+  // Attendance Summary (Correction 6 — replaces non-functional "Performance por canal")
+  const effectiveAttendanceSummary: AttendanceSummaryStats = useMemo(
+    () => attendanceSummary ?? computeAttendanceSummary(todayAppointments),
+    [attendanceSummary, todayAppointments]
+  );
 
-  const channelsData: ChannelPerformanceStats = channelPerformance ?? {
-    available: false,
-    unavailableReason: "Origem do agendamento não rastreada",
-    total: 0,
-    channels: [
-      { name: "WhatsApp", pct: 0, count: 0, color: "#16C784" },
-      { name: "Site / Link", pct: 0, count: 0, color: "#6366F1" },
-      { name: "Instagram", pct: 0, count: 0, color: "#EF5A67" },
-      { name: "Presencial", pct: 0, count: 0, color: "#94A3B8" },
-    ],
-  };
+  const attendanceRows = useMemo(() => {
+    const s = effectiveAttendanceSummary;
+    const tot = s.total > 0 ? s.total : 1;
+    return [
+      {
+        key: "completed",
+        label: "Concluídos",
+        count: s.completed,
+        pct: s.total > 0 ? Math.round((s.completed / tot) * 100) : 0,
+        color: "#A78BFA",
+        dotClass: "bg-violet-400",
+      },
+      {
+        key: "confirmed",
+        label: "Confirmados",
+        count: s.confirmed,
+        pct: s.total > 0 ? Math.round((s.confirmed / tot) * 100) : 0,
+        color: "#16C784",
+        dotClass: "bg-[#16C784]",
+      },
+      {
+        key: "pending",
+        label: "Pendentes / Agendados",
+        count: s.pending,
+        pct: s.total > 0 ? Math.round((s.pending / tot) * 100) : 0,
+        color: "#E8C76E",
+        dotClass: "bg-[#E8C76E]",
+      },
+      {
+        key: "cancelled",
+        label: "Cancelados",
+        count: s.cancelled,
+        pct: s.total > 0 ? Math.round((s.cancelled / tot) * 100) : 0,
+        color: "#EF5A67",
+        dotClass: "bg-[#EF5A67]",
+      },
+      {
+        key: "noShow",
+        label: "Não comparecimentos",
+        count: s.noShow,
+        pct: s.total > 0 ? Math.round((s.noShow / tot) * 100) : 0,
+        color: "#94A3B8",
+        dotClass: "bg-slate-400",
+      },
+    ];
+  }, [effectiveAttendanceSummary]);
 
   // Operational alerts
   const alertsList: OperationalAlertItem[] =
@@ -604,23 +683,6 @@ export function PremiumDashboardView({
   const recC = 2 * Math.PI * recR;
   const recArc = hasRecurrenceData ? (recurrence.recurringPct / 100) * recC : 0;
   const newArc = hasRecurrenceData ? (recurrence.newPct / 100) * recC : 0;
-
-  // SVG Donut calculation for Performance por Canal
-  const chR = 36;
-  const chC = 2 * Math.PI * chR;
-  const channelSegments = isChannelTrackingAvailable
-    ? channelsData.channels.reduce<
-        { name: string; color: string; len: number; offset: number }[]
-      >((acc, ch) => {
-        const prevEnd =
-          acc.length > 0
-            ? acc[acc.length - 1].offset + acc[acc.length - 1].len
-            : 0;
-        const len = (ch.pct / 100) * chC;
-        acc.push({ name: ch.name, color: ch.color, len, offset: prevEnd });
-        return acc;
-      }, [])
-    : [];
 
   return (
     <div className="w-full max-w-[1440px] mx-auto">
@@ -908,11 +970,13 @@ export function PremiumDashboardView({
                   Taxa de ocupação
                 </span>
                 <p className="text-[16px] sm:text-[17px] font-extrabold text-white mt-1 tabular-nums">
-                  {taxaOcupacaoPct}%
+                  {formattedOccupancyValue}
                 </p>
               </div>
               <span className="text-[10px] text-[#8E95A2] mt-1.5 block">
-                {horariosOcupados} ocupados hoje
+                {occupancyBreakdown
+                  ? `${occupancyBreakdown.totalDemandMinutes}/${occupancyBreakdown.capacityMinutes} min`
+                  : `${horariosOcupados} ocupados hoje`}
               </span>
             </DashboardCard>
           )}
@@ -1176,13 +1240,59 @@ export function PremiumDashboardView({
 
           <MetricCard
             label="Taxa de ocupação"
-            value={`${taxaOcupacaoPct}%`}
-            sublabel={`${horariosOcupados} ocupados de ${
-              horariosOcupados + horariosDisponiveis
-            } horários`}
+            subtitleBadge="Carga / capacidade"
+            value={formattedOccupancyValue}
+            sublabel={occupancySublabel}
             progress={{
-              value: taxaOcupacaoPct,
+              value: visualOccupancyBarPct,
+              color:
+                effectiveOccupancyPct > 100
+                  ? "bg-gradient-to-r from-[#D3AE55] via-[#F2D785] to-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.45)]"
+                  : undefined,
             }}
+            extraContent={
+              occupancyBreakdown ? (
+                <div
+                  data-testid="occupancy-breakdown-details"
+                  className="space-y-1 text-[10px] text-[#A6ADB9] tabular-nums"
+                >
+                  {occupancyBreakdown.capacityAvailable ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+                        <span className="text-violet-300 font-medium">
+                          Concluídos: {occupancyBreakdown.completedMinutes} min
+                        </span>
+                        <span className="text-[#E8C76E] font-medium">
+                          Agendados: {occupancyBreakdown.scheduledMinutes} min
+                        </span>
+                      </div>
+                      {occupancyBreakdown.overloadMinutes > 0 && (
+                        <div className="flex items-center justify-between text-amber-300 font-semibold">
+                          <span>
+                            Excedente: +{occupancyBreakdown.overloadMinutes} min
+                            (+
+                            {formatOccupancyPercent(
+                              occupancyBreakdown.overloadPct
+                            )}
+                            )
+                          </span>
+                          <span className="text-[#8E95A2] font-normal">
+                            Ocup. física:{" "}
+                            {formatOccupancyPercent(
+                              occupancyBreakdown.physicalOccupancyPct
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-zinc-400">
+                      Sem jornada produtiva configurada hoje
+                    </span>
+                  )}
+                </div>
+              ) : undefined
+            }
             icon={
               <svg
                 className="w-5 h-5"
@@ -1265,9 +1375,12 @@ export function PremiumDashboardView({
 
         {/* ─── Row 3: Bottom Analytics & Management Grid (4 + 4 + 4 = 12 cols) ─── */}
         <div className="grid grid-cols-12 gap-4 items-stretch">
-          {/* Left (4 cols): Visão geral do faturamento */}
+          {/* Left (4 cols): Visão geral do faturamento — Correction 1: flex-col without justify-between */}
           <div className="col-span-4">
-            <DashboardCard className="p-5 h-full flex flex-col justify-between">
+            <DashboardCard
+              data-testid="desktop-revenue-overview-card"
+              className="p-5 h-full flex flex-col"
+            >
               <SectionHeader
                 title="Visão geral do faturamento"
                 icon={
@@ -1562,112 +1675,88 @@ export function PremiumDashboardView({
             </DashboardCard>
           </div>
 
-          {/* Right (4 cols): Stacked Performance por canal + Lembretes e avisos */}
+          {/* Right (4 cols): Stacked Resumo dos atendimentos + Lembretes e avisos */}
           <div className="col-span-4 flex flex-col gap-4">
-            {/* Top card: Performance por canal */}
-            <DashboardCard className="p-4 sm:p-5 flex-1">
-              <SectionHeader
-                title="Performance por canal"
-                subtitle={
-                  !isChannelTrackingAvailable
-                    ? channelsData.unavailableReason ??
-                      "Origem do agendamento não rastreada"
-                    : undefined
-                }
-                icon={
-                  <svg
-                    className="w-4 h-4 text-[#E8C76E]"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 3a9 9 0 0 1 9 9" />
-                  </svg>
-                }
-                action={
-                  <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-[#A6ADB9] bg-white/[0.04] border border-white/[0.08] rounded-lg px-2.5 py-1">
-                    Este mês
+            {/* Top card: Resumo dos atendimentos (Correction 6 — replaces non-functional "Performance por canal") */}
+            <DashboardCard
+              data-testid="attendance-summary-card"
+              className="p-4 sm:p-5 flex-1 flex flex-col justify-between"
+            >
+              <div>
+                <SectionHeader
+                  title="Resumo dos atendimentos"
+                  subtitle="Status dos agendamentos do dia"
+                  icon={
                     <svg
-                      className="w-3 h-3 text-zinc-500"
+                      className="w-4 h-4 text-[#E8C76E]"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="2"
                     >
-                      <polyline points="6 9 12 15 18 9" />
+                      <path d="M9 11l3 3L22 4" />
+                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
                     </svg>
-                  </span>
-                }
-              />
+                  }
+                  action={
+                    <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-[#E8C76E] bg-[#D3AE55]/12 border border-[#D3AE55]/30 rounded-lg px-2.5 py-0.5">
+                      Hoje · {effectiveAttendanceSummary.total}
+                    </span>
+                  }
+                />
 
-              <div className="flex items-center gap-4 pt-1">
-                {/* Multi-segment Donut */}
-                <div className="relative w-20 h-20 shrink-0">
-                  <svg
-                    viewBox="0 0 100 100"
-                    className="w-20 h-20 -rotate-90"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r={chR}
-                      fill="none"
-                      stroke="#252932"
-                      strokeWidth="11"
-                    />
-                    {channelSegments.map((seg) => (
-                      <circle
-                        key={seg.name}
-                        cx="50"
-                        cy="50"
-                        r={chR}
-                        fill="none"
-                        stroke={seg.color}
-                        strokeWidth="11"
-                        strokeDasharray={`${seg.len} ${chC - seg.len}`}
-                        strokeDashoffset={-seg.offset}
-                      />
-                    ))}
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-sm font-extrabold text-white leading-none tabular-nums">
-                      {isChannelTrackingAvailable ? channelsData.total : "—"}
-                    </span>
-                    <span className="text-[8.5px] text-[#9CA3AF] mt-0.5">
-                      {isChannelTrackingAvailable ? "agendamentos" : "sem origem"}
-                    </span>
-                  </div>
+                {/* Proportional horizontal status distribution bar */}
+                <div className="h-2 w-full bg-white/[0.06] rounded-full overflow-hidden flex mb-3">
+                  {effectiveAttendanceSummary.total > 0 ? (
+                    attendanceRows.map((row) =>
+                      row.count > 0 ? (
+                        <div
+                          key={row.key}
+                          style={{
+                            width: `${(row.count / effectiveAttendanceSummary.total) * 100}%`,
+                            backgroundColor: row.color,
+                          }}
+                          className="h-full first:rounded-l-full last:rounded-r-full transition-all duration-300"
+                        />
+                      ) : null
+                    )
+                  ) : (
+                    <div className="h-full w-full bg-white/[0.04]" />
+                  )}
                 </div>
 
-                {/* Channel Legend */}
-                <div className="flex-1 space-y-2 text-xs">
-                  {channelsData.channels.map((ch) => (
+                {/* Status breakdown list */}
+                <div className="space-y-1.5 text-xs">
+                  {attendanceRows.map((row) => (
                     <div
-                      key={ch.name}
-                      className="flex items-center justify-between gap-2"
+                      key={row.key}
+                      data-testid={`attendance-row-${row.key}`}
+                      className="flex items-center justify-between gap-2 py-0.5"
                     >
                       <span className="flex items-center gap-2 text-zinc-200 truncate">
                         <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: ch.color }}
+                          className={`w-2 h-2 rounded-full shrink-0 ${row.dotClass}`}
                         />
-                        <span className="truncate">{ch.name}</span>
+                        <span className="truncate">{row.label}</span>
                       </span>
-                      <div className="flex items-center gap-3 shrink-0 tabular-nums">
-                        <span className="text-[#9CA3AF]">
-                          {isChannelTrackingAvailable ? `${ch.pct}%` : "—"}
+                      <div className="flex items-center gap-2.5 shrink-0 tabular-nums">
+                        <span className="text-[11px] text-[#8E95A2]">
+                          {row.pct}%
                         </span>
                         <span className="font-bold text-white w-6 text-right">
-                          {isChannelTrackingAvailable ? ch.count : "—"}
+                          {row.count}
                         </span>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
+
+              {effectiveAttendanceSummary.total === 0 && (
+                <p className="text-[10.5px] text-[#8E95A2] pt-2 border-t border-white/[0.05] mt-2">
+                  Nenhum atendimento registrado para hoje até o momento.
+                </p>
+              )}
             </DashboardCard>
 
             {/* Bottom card: Lembretes e avisos */}
@@ -1735,21 +1824,32 @@ export function PremiumDashboardView({
           </div>
         </div>
 
-        {/* Slots Availability Legend for UI test backward compatibility */}
+        {/* ─── Horários de hoje (Correction 4: 4 distinct operational states + per-professional details) ─── */}
         {todaySlotsLegendProps && (
-          <DashboardCard className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                Horários de hoje
-              </span>
-              <div className="flex items-center gap-3 text-xs">
+          <DashboardCard className="p-4" data-testid="today-slots-card">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Horários de hoje
+                </span>
+                <span className="text-[11px] text-[#8E95A2]">
+                  Grade operacional consolidada (30 min)
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3.5 text-xs">
                 <span className="flex items-center gap-1.5 text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   Disponível
                 </span>
                 <span className="flex items-center gap-1.5 text-[#D3AE55]">
                   <span className="w-2 h-2 rounded-full bg-[#D3AE55]" />
-                  Ocupado
+                  <span>Agendado</span>
+                  <span className="sr-only">Ocupado</span>
+                </span>
+                <span className="flex items-center gap-1.5 text-violet-300">
+                  <span className="w-2 h-2 rounded-full bg-violet-400" />
+                  Concluído
                 </span>
                 <span className="flex items-center gap-1.5 text-zinc-500">
                   <span className="w-2 h-2 rounded-full bg-zinc-600" />
@@ -1757,23 +1857,64 @@ export function PremiumDashboardView({
                 </span>
               </div>
             </div>
+
             <div className="flex flex-wrap gap-2 pt-1">
               {todaySlotsLegendProps.slots.map((slot) => {
                 let cls =
                   "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-                if (slot.status === "occupied") {
+                if (
+                  slot.status === "scheduled" ||
+                  slot.status === "occupied"
+                ) {
                   cls =
                     "text-[var(--gold)] bg-[var(--gold-surface)] border-[var(--gold-border)]";
+                } else if (slot.status === "completed") {
+                  cls =
+                    "text-violet-300 bg-violet-500/15 border-violet-500/35";
                 } else if (slot.status === "blocked") {
                   cls = "text-zinc-500 bg-zinc-800/50 border-zinc-700/30";
                 }
+
+                const hasMultiProf =
+                  typeof slot.totalWorking === "number" &&
+                  slot.totalWorking > 1;
+                const profTooltip = slot.professionals
+                  ? slot.professionals
+                      .map((p) => {
+                        const stLabel =
+                          p.status === "available"
+                            ? "Disponível"
+                            : p.status === "scheduled"
+                            ? "Agendado"
+                            : p.status === "completed"
+                            ? "Concluído"
+                            : "Bloqueado";
+                        return `${p.memberName}: ${stLabel}`;
+                      })
+                      .join(" | ")
+                  : undefined;
+
                 return (
-                  <span
+                  <div
                     key={slot.time}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border ${cls}`}
+                    title={profTooltip}
+                    className="inline-flex items-center gap-1"
                   >
-                    {slot.time}
-                  </span>
+                    <span
+                      data-slot-status={slot.status}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border ${cls}`}
+                    >
+                      {slot.time}
+                    </span>
+                    {hasMultiProf && (
+                      <span
+                        data-testid={`slot-prof-summary-${slot.time}`}
+                        className="text-[10px] font-mono text-[#9CA3AF] bg-white/[0.04] border border-white/[0.07] rounded px-1.5 py-0.5 tabular-nums"
+                      >
+                        {slot.availableCount ?? 0}/{slot.totalWorking} disp.
+                      </span>
+                    )}
+                  </div>
                 );
               })}
             </div>

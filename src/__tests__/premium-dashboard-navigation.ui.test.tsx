@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import React from "react";
 import { MobileBottomNavigation } from "@/components/admin/navigation/MobileBottomNavigation";
 import { MobileFullScreenMenu } from "@/components/admin/navigation/MobileFullScreenMenu";
@@ -11,15 +11,25 @@ import DashboardPage from "@/app/admin/dashboard/page";
 import prisma from "@/lib/prisma";
 import { requireManagerialAdmin } from "@/lib/admin-guard";
 
-const { redirectMock, defaultAdminContext } = vi.hoisted(() => ({
+const {
+  redirectMock,
+  usePathnameMock,
+  useSearchParamsMock,
+  defaultAdminContext,
+} = vi.hoisted(() => ({
   redirectMock: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
+  usePathnameMock: vi.fn(() => "/admin/dashboard"),
+  useSearchParamsMock: vi.fn(() => new URLSearchParams("")),
   defaultAdminContext: {
     barbershopId: "tenant-1",
     role: "OWNER",
     isPlatform: false,
-    session: { user: { name: "Carlos Barber", role: "OWNER" }, expires: "2099-01-01" },
+    session: {
+      user: { name: "Carlos Barber", role: "OWNER" },
+      expires: "2099-01-01",
+    },
     barbershop: {
       id: "tenant-1",
       name: "Barbearia Dom Brio",
@@ -33,7 +43,8 @@ const { redirectMock, defaultAdminContext } = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/admin/dashboard",
+  usePathname: () => usePathnameMock(),
+  useSearchParams: () => useSearchParamsMock(),
   redirect: redirectMock,
 }));
 
@@ -60,6 +71,9 @@ vi.mock("@/lib/prisma", () => ({
     financialTitle: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    comanda: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -68,12 +82,16 @@ vi.mock("next-auth/react", () => ({
 }));
 
 vi.mock("@/lib/push/logout-cleanup", () => ({
-  cleanupCurrentPushSubscriptionBeforeLogout: vi.fn().mockResolvedValue(undefined),
+  cleanupCurrentPushSubscriptionBeforeLogout: vi
+    .fn()
+    .mockResolvedValue(undefined),
 }));
 
-describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
+describe("TEM BARBER — Premium Dashboard V2 & Operational Corrections Tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    usePathnameMock.mockReturnValue("/admin/dashboard");
+    useSearchParamsMock.mockReturnValue(new URLSearchParams(""));
   });
 
   describe("1. Mobile Bottom Navigation (Regra Global)", () => {
@@ -92,8 +110,9 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       expect(screen.getByText("Financeiro")).toBeInTheDocument();
       expect(screen.getByText("Menu")).toBeInTheDocument();
 
-      // Dispara o menu em tela cheia ao clicar na 5ª aba
-      const menuBtn = screen.getByRole("button", { name: /abrir menu completo/i });
+      const menuBtn = screen.getByRole("button", {
+        name: /abrir menu completo/i,
+      });
       fireEvent.click(menuBtn);
       expect(handleOpenMenu).toHaveBeenCalledTimes(1);
     });
@@ -127,18 +146,15 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         />
       );
 
-      // Header com identificação real da barbearia
       expect(screen.getByText("Dom Brio Barbearia")).toBeInTheDocument();
       expect(screen.getByText("São José do Rio Preto")).toBeInTheDocument();
 
-      // Grupos visuais organizados
       expect(screen.getByText("Principal")).toBeInTheDocument();
       expect(screen.getByText("Clientes e produtos")).toBeInTheDocument();
       expect(screen.getAllByText("Financeiro").length).toBeGreaterThan(0);
       expect(screen.getByText("Contas a Pagar / Receber")).toBeInTheDocument();
       expect(screen.getByText("Serviços e gestão")).toBeInTheDocument();
 
-      // Botão de fechar fecha o menu
       const closeBtn = screen.getByRole("button", { name: /fechar menu/i });
       fireEvent.click(closeBtn);
       expect(handleClose).toHaveBeenCalledTimes(1);
@@ -160,9 +176,10 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
     });
   });
 
-  describe("3. Desktop Sidebar", () => {
-    it("renderiza a barra lateral em desktop sem a navegação inferior móvel", () => {
-      render(
+  describe("3. Desktop Sidebar — Correção 2 (Destaques de Rota Ativa vs Grupo Expandido)", () => {
+    it("em /admin/dashboard destaca apenas Dashboard e nunca destaca Financeiro ou Relatórios mesmo quando expandidos", () => {
+      usePathnameMock.mockReturnValue("/admin/dashboard");
+      const { container } = render(
         <AdminSidebar
           barbershopName="Dom Brio Barbearia"
           userName="Admin"
@@ -170,9 +187,92 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         />
       );
 
-      // Marca e link do dashboard
-      expect(screen.getAllByText("Dom Brio Barbearia").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("Dashboard").length).toBeGreaterThan(0);
+      const activeLinks = container.querySelectorAll('[aria-current="page"]');
+      expect(activeLinks.length).toBe(1);
+      expect(activeLinks[0].textContent).toContain("Dashboard");
+
+      const financeiroBtn = screen.getByTestId("sidebar-group-financeiro");
+      const relatoriosBtn = screen.getByTestId("sidebar-group-relatorios");
+
+      // Expandir Financeiro e Relatórios na página Dashboard NÃO deve marcar grupo como ativo nem aplicar borda dourada
+      fireEvent.click(financeiroBtn);
+      fireEvent.click(relatoriosBtn);
+
+      expect(financeiroBtn).toHaveAttribute("data-group-active", "false");
+      expect(financeiroBtn).toHaveAttribute("data-expanded", "true");
+      expect(financeiroBtn.className).not.toContain("border-[#D3AE55]");
+
+      expect(relatoriosBtn).toHaveAttribute("data-group-active", "false");
+      expect(relatoriosBtn).toHaveAttribute("data-expanded", "true");
+      expect(relatoriosBtn.className).not.toContain("border-[#D3AE55]");
+
+      // Continua havendo apenas 1 item com aria-current="page"
+      expect(container.querySelectorAll('[aria-current="page"]').length).toBe(
+        1
+      );
+    });
+
+    it("separa corretamente Financeiro (/admin/financeiro), Relatórios (/admin/financeiro/relatorio-gerencial), Contas a Pagar (?kind=PAYABLE) e Contas a Receber (?kind=RECEIVABLE)", () => {
+      // 1. Rota /admin/financeiro/relatorio-gerencial -> destaca Relatório Gerencial em Relatórios, NÃO destaca Financeiro
+      const { container, unmount } = render(
+        <AdminSidebar
+          barbershopName="Dom Brio Barbearia"
+          userName="Admin"
+          userRole="OWNER"
+          currentPathname="/admin/financeiro/relatorio-gerencial"
+          currentSearch=""
+        />
+      );
+
+      expect(screen.getByTestId("sidebar-group-relatorios")).toHaveAttribute(
+        "data-group-active",
+        "true"
+      );
+      expect(screen.getByTestId("sidebar-group-financeiro")).toHaveAttribute(
+        "data-group-active",
+        "false"
+      );
+
+      const activeOnRel = container.querySelectorAll('[aria-current="page"]');
+      expect(activeOnRel.length).toBe(1);
+      expect(activeOnRel[0].textContent).toContain("Relatório Gerencial");
+      unmount();
+
+      // 2. Rota /admin/financeiro/contas?kind=PAYABLE -> destaca apenas Contas a Pagar
+      const { container: c2, unmount: u2 } = render(
+        <AdminSidebar
+          barbershopName="Dom Brio Barbearia"
+          userName="Admin"
+          userRole="OWNER"
+          currentPathname="/admin/financeiro/contas"
+          currentSearch="kind=PAYABLE"
+        />
+      );
+      const activeOnPayable = c2.querySelectorAll('[aria-current="page"]');
+      expect(activeOnPayable.length).toBe(1);
+      expect(activeOnPayable[0].textContent).toContain("Contas a Pagar");
+      expect(
+        screen.getByTestId("sidebar-subitem-contas-receber")
+      ).toHaveAttribute("data-active", "false");
+      u2();
+
+      // 3. Rota /admin/financeiro/contas?kind=RECEIVABLE -> destaca apenas Contas a Receber
+      const { container: c3, unmount: u3 } = render(
+        <AdminSidebar
+          barbershopName="Dom Brio Barbearia"
+          userName="Admin"
+          userRole="OWNER"
+          currentPathname="/admin/financeiro/contas"
+          currentSearch="kind=RECEIVABLE"
+        />
+      );
+      const activeOnReceivable = c3.querySelectorAll('[aria-current="page"]');
+      expect(activeOnReceivable.length).toBe(1);
+      expect(activeOnReceivable[0].textContent).toContain("Contas a Receber");
+      expect(
+        screen.getByTestId("sidebar-subitem-contas-pagar")
+      ).toHaveAttribute("data-active", "false");
+      u3();
     });
   });
 
@@ -232,7 +332,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
     });
 
     it("respeita data civil e pagamentos parciais no cálculo de status", () => {
-      // 1. Título vencendo hoje não é atrasado
       const dueToday = calculateTitleDerivedStatus({
         cancelledAt: null,
         originalAmountCents: 10000,
@@ -243,7 +342,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       expect(dueToday.status).toBe("OPEN");
       expect(dueToday.outstandingPrincipalCents).toBe(10000);
 
-      // 2. Título de ontem é atrasado
       const dueYesterday = calculateTitleDerivedStatus({
         cancelledAt: null,
         originalAmountCents: 10000,
@@ -253,7 +351,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       });
       expect(dueYesterday.status).toBe("OVERDUE");
 
-      // 3. Título parcialmente pago calcula saldo restante
       const partial = calculateTitleDerivedStatus({
         cancelledAt: null,
         originalAmountCents: 10000,
@@ -264,7 +361,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       expect(partial.status).toBe("PARTIAL");
       expect(partial.outstandingPrincipalCents).toBe(6000);
 
-      // 4. Título totalmente pago é PAID
       const paid = calculateTitleDerivedStatus({
         cancelledAt: null,
         originalAmountCents: 10000,
@@ -321,18 +417,11 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         />
       );
 
-      // Cenário 7 (vencida ontem no mobile): NUNCA exibe "Vence hoje • 29/10", exibe "Venceu em 29/10"
       expect(screen.getByText("Venceu em 29/10")).toBeInTheDocument();
       expect(screen.queryByText(/Vence hoje.*29\/10/)).not.toBeInTheDocument();
-
-      // Cenário 8 (vencendo hoje no mobile): exibe "Vence hoje · 30/10"
       expect(screen.getByText("Vence hoje · 30/10")).toBeInTheDocument();
-
-      // Cenário 9 (vencendo amanhã): exibe "Vence amanhã" e "31/10"
       expect(screen.getByText("Vence amanhã")).toBeInTheDocument();
       expect(screen.getByText(/31\/10/)).toBeInTheDocument();
-
-      // Cenário 10 (parcialmente paga): exibe badge "Parcial" e saldo restante R$ 1.800,00
       expect(screen.getByText("Parcial")).toBeInTheDocument();
       expect(screen.getAllByText(/1\.800,00/).length).toBeGreaterThan(0);
 
@@ -340,7 +429,7 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
     });
   });
 
-  describe("5. Integridade de Dados, Métricas Mensais, Recorrência, Canais e Metas (Cenários 1 a 15)", () => {
+  describe("5. Integridade de Dados, Ocupação Real, Horários de Hoje, Produtividade e Resumo dos Atendimentos", () => {
     it("Cenário 1 — Mês com mais de 60 agendamentos agrega todos os registros reais sem truncar em take: 60", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-10-30T15:00:00.000Z"));
@@ -353,8 +442,17 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
           memberId: "member-1",
           status: "COMPLETED",
           totalPrice: 80.0,
-          dateTime: new Date(`2026-10-${String(day).padStart(2, "0")}T14:00:00.000Z`),
-          comandas: [{ status: "CLOSED", total: 80.0, discountTotal: 0, surchargeTotal: 0 }],
+          dateTime: new Date(
+            `2026-10-${String(day).padStart(2, "0")}T14:00:00.000Z`
+          ),
+          comandas: [
+            {
+              status: "CLOSED",
+              total: 80.0,
+              discountTotal: 0,
+              surchargeTotal: 0,
+            },
+          ],
         };
       });
 
@@ -367,15 +465,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
             typeof prisma.appointment.findMany
           >;
         }
-        if (typeof where?.status === "object" && where?.status?.notIn) {
-          return Promise.resolve(
-            sixtyFiveMonthAppts.map((a) => ({
-              customerId: a.customerId,
-              dateTime: a.dateTime,
-              status: a.status,
-            }))
-          ) as unknown as ReturnType<typeof prisma.appointment.findMany>;
-        }
         return Promise.resolve([]) as unknown as ReturnType<
           typeof prisma.appointment.findMany
         >;
@@ -384,7 +473,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       const pageElement = await DashboardPage();
       const { container } = render(pageElement);
 
-      // 65 * R$ 80,00 = R$ 5.200,00 no acumulado do mês e 65 serviços concluídos
       expect(container.textContent).toContain("5.200,00");
       expect(screen.getByText("65")).toBeInTheDocument();
 
@@ -393,7 +481,6 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
 
     it("Cenário 2 — Semana com receita maior que amostra mensal (virada de mês) não usa Math.max para inflar o mês", async () => {
       vi.useFakeTimers();
-      // 02/10/2026 (sexta-feira): semana iniciou em 28/09/2026
       vi.setSystemTime(new Date("2026-10-02T15:00:00.000Z"));
 
       const periodCompleted = [
@@ -404,7 +491,14 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
           status: "COMPLETED",
           totalPrice: 2000.0,
           dateTime: new Date("2026-09-29T14:00:00.000Z"),
-          comandas: [{ status: "CLOSED", total: 2000.0, discountTotal: 0, surchargeTotal: 0 }],
+          comandas: [
+            {
+              status: "CLOSED",
+              total: 2000.0,
+              discountTotal: 0,
+              surchargeTotal: 0,
+            },
+          ],
         },
         {
           id: "oct-appt",
@@ -413,7 +507,14 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
           status: "COMPLETED",
           totalPrice: 500.0,
           dateTime: new Date("2026-10-02T13:00:00.000Z"),
-          comandas: [{ status: "CLOSED", total: 500.0, discountTotal: 0, surchargeTotal: 0 }],
+          comandas: [
+            {
+              status: "CLOSED",
+              total: 500.0,
+              discountTotal: 0,
+              surchargeTotal: 0,
+            },
+          ],
         },
       ];
 
@@ -432,14 +533,13 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       const pageElement = await DashboardPage();
       const { container } = render(pageElement);
 
-      // Semana = R$ 2.500,00; Mês de outubro = R$ 500,00
       expect(container.textContent).toContain("2.500,00");
       expect(container.textContent).toContain("500,00");
 
       vi.useRealTimers();
     });
 
-    it("Cenários 3, 4, 5 e 11 — Barbearia sem dados e sem período anterior não exibe percentuais falsos (+40%, +18%, +15%, 68%, 70%, 52%, 100%)", async () => {
+    it("Cenários 3, 4, 5 e 11 — Barbearia sem dados não exibe percentuais falsos, remove Performance por canal e exibe Resumo dos atendimentos", async () => {
       vi.mocked(prisma.appointment.findMany).mockResolvedValue([]);
       vi.mocked(prisma.financialTitle.findMany).mockResolvedValue([]);
 
@@ -448,33 +548,48 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
 
       const text = container.textContent ?? "";
 
-      // Cenário 3: Nenhuma variação demonstrativa falsa
       expect(text).not.toContain("+40%");
       expect(text).not.toContain("+18%");
       expect(text).not.toContain("+15%");
       expect(text).not.toContain("+28%");
       expect(text).not.toContain("+33%");
 
-      // Cenário 4: Metas mensais não configuradas
       expect(screen.getByText("Meta não configurada")).toBeInTheDocument();
       expect(text).not.toContain("70%");
 
-      // Cenário 5: Origem de agendamento desconhecida / não rastreada
+      // Correção 6: "Performance por canal" foi substituído por "Resumo dos atendimentos"
       expect(
-        screen.getByText("Origem do agendamento não rastreada")
+        screen.queryByText("Performance por canal")
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Origem do agendamento não rastreada")
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("Resumo dos atendimentos")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Nenhum atendimento registrado para hoje até o momento."
+        )
       ).toBeInTheDocument();
-      expect(text).not.toContain("52%");
 
-      // Cenário 6/11: Sem histórico de recorrência não inventa 68% / 24% / 8%
+      // Correção 3: Capacidade zero tratada sem divisão por zero
+      expect(
+        screen.getByText("Capacidade indisponível hoje (0 min)")
+      ).toBeInTheDocument();
+
       expect(text).not.toContain("68%");
       expect(text).not.toContain("24%");
       expect(
-        screen.getByText("Sem histórico de visitas para cálculo de recorrência.")
+        screen.getByText(
+          "Sem histórico de visitas para cálculo de recorrência."
+        )
       ).toBeInTheDocument();
 
-      // Sino de notificações não exibe ponto vermelho quando não há alertas
-      expect(screen.queryByTestId("mobile-bell-alert-dot")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("desktop-bell-alert-dot")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("mobile-bell-alert-dot")
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("desktop-bell-alert-dot")
+      ).not.toBeInTheDocument();
     });
 
     it("Cenário 6 — Recorrência considera exclusivamente visitas COMPLETED até hoje (ignora agendamentos futuros, PENDING, CONFIRMED e CANCELLED)", async () => {
@@ -482,24 +597,57 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       vi.setSystemTime(new Date("2026-10-30T15:00:00.000Z"));
 
       const mixedRows = [
-        // 2 clientes recorrentes (múltiplas visitas COMPLETED, última nos últimos 30 dias)
-        { customerId: "c-rec-1", dateTime: new Date("2026-09-10T14:00:00.000Z"), status: "COMPLETED" },
-        { customerId: "c-rec-1", dateTime: new Date("2026-10-28T14:00:00.000Z"), status: "COMPLETED" },
-        { customerId: "c-rec-2", dateTime: new Date("2026-10-05T14:00:00.000Z"), status: "COMPLETED" },
-        { customerId: "c-rec-2", dateTime: new Date("2026-10-29T14:00:00.000Z"), status: "COMPLETED" },
-        // 1 cliente novo (1 única visita COMPLETED nos últimos 30 dias, dentro de outubro)
-        { customerId: "c-new-1", dateTime: new Date("2026-10-25T14:00:00.000Z"), status: "COMPLETED" },
-        // 1 cliente inativo (última visita COMPLETED há mais de 30 dias)
-        { customerId: "c-ina-1", dateTime: new Date("2026-08-15T14:00:00.000Z"), status: "COMPLETED" },
-        // Cliente apenas com agendamento futuro / PENDING / CONFIRMED sem visita concluída (NÃO deve contar)
-        { customerId: "c-future-only", dateTime: new Date("2026-11-05T14:00:00.000Z"), status: "CONFIRMED" },
-        { customerId: "c-pending-only", dateTime: new Date("2026-10-30T18:00:00.000Z"), status: "PENDING" },
-        // Cliente apenas com agendamento CANCELLED (NÃO deve contar)
-        { customerId: "c-cancelled-only", dateTime: new Date("2026-10-20T14:00:00.000Z"), status: "CANCELLED" },
+        {
+          customerId: "c-rec-1",
+          dateTime: new Date("2026-09-10T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-rec-1",
+          dateTime: new Date("2026-10-28T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-rec-2",
+          dateTime: new Date("2026-10-05T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-rec-2",
+          dateTime: new Date("2026-10-29T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-new-1",
+          dateTime: new Date("2026-10-25T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-ina-1",
+          dateTime: new Date("2026-08-15T14:00:00.000Z"),
+          status: "COMPLETED",
+        },
+        {
+          customerId: "c-future-only",
+          dateTime: new Date("2026-11-05T14:00:00.000Z"),
+          status: "CONFIRMED",
+        },
+        {
+          customerId: "c-pending-only",
+          dateTime: new Date("2026-10-30T18:00:00.000Z"),
+          status: "PENDING",
+        },
+        {
+          customerId: "c-cancelled-only",
+          dateTime: new Date("2026-10-20T14:00:00.000Z"),
+          status: "CANCELLED",
+        },
       ];
 
       vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
-        const select = args?.select as { status?: boolean; comandas?: unknown } | undefined;
+        const select = args?.select as
+          | { status?: boolean; comandas?: unknown }
+          | undefined;
         if (!args?.take && select?.status && !select?.comandas) {
           expect(args?.where).toMatchObject({
             barbershopId: "tenant-1",
@@ -517,21 +665,182 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
       const pageElement = await DashboardPage();
       const { container } = render(pageElement);
 
-      // Apenas os 4 clientes com visitas COMPLETED entram no cálculo:
-      // 2 recorrentes (50%), 1 novo (25%), 1 inativo (25%)
       expect(container.textContent).toContain("50%");
       expect(container.textContent).toContain("25%");
       expect(container.textContent).not.toContain("68%");
-
-      // Novos clientes do mês: c-rec-2 (1ª visita COMPLETED em 05/10) + c-new-1 (1ª visita COMPLETED em 25/10) = 2
-      // c-future-only, c-pending-only e c-cancelled-only NÃO entram como novos clientes do mês
       expect(screen.getAllByText("2").length).toBeGreaterThan(0);
 
       vi.useRealTimers();
     });
 
+    it("Correções 1, 3, 4, 5 e 6 — Renderiza sobrecarga >100% (118,75%), Horários de hoje com estado Concluído (roxo) e Agendado (dourado), Desempenho Diário e Resumo dos Atendimentos", async () => {
+      vi.useFakeTimers();
+      // 12:00 UTC = 09:00 BR em 2026-10-30
+      vi.setSystemTime(new Date("2026-10-30T12:00:00.000Z"));
+
+      // Profissional com jornada de 8h (09:00 às 17:00 = 480 min = 16 cortes de 30m)
+      vi.mocked(prisma.barbershopMember.findMany).mockResolvedValue([
+        {
+          id: "member-1",
+          user: { name: "Lucas Mendes", avatarUrl: null },
+          services: [{ serviceId: "srv-1" }],
+          workingHours: [
+            {
+              dayOfWeek: 5,
+              startTime: "09:00",
+              endTime: "17:00",
+              breakStart: null,
+              breakEnd: null,
+              isActive: true,
+            },
+          ],
+          timeOffs: [],
+        } as unknown as Awaited<
+          ReturnType<typeof prisma.barbershopMember.findMany>
+        >[number],
+      ]);
+
+      // 12 atendimentos COMPLETED de 30m (09:00..14:30) + 7 agendamentos CONFIRMED/PENDING de 30m (15:00..18:00) = 19 cortes (570 min) -> 118,75%
+      // + 1 CANCELLED e 1 NO_SHOW (excluídos da ocupação, mas exibidos no Resumo dos atendimentos)
+      const todayAppts = [
+        ...Array.from({ length: 12 }, (_, i) => ({
+          id: `comp-${i + 1}`,
+          memberId: "member-1",
+          customerId: `cust-c-${i + 1}`,
+          dateTime: new Date(
+            Date.UTC(2026, 9, 30, 9 + Math.floor(i / 2), (i % 2) * 30, 0)
+          ),
+          durationMin: 30,
+          status: "COMPLETED",
+          totalPrice: 50,
+          customer: { name: `Cliente Concluído ${i + 1}`, avatarUrl: null },
+          services: [{ service: { name: "Corte", durationMin: 30 } }],
+          comandas: [
+            {
+              id: `cmd-${i + 1}`,
+              status: "CLOSED",
+              total: 50,
+              discountTotal: 0,
+              surchargeTotal: 0,
+            },
+          ],
+        })),
+        ...Array.from({ length: 5 }, (_, i) => ({
+          id: `conf-${i + 1}`,
+          memberId: "member-1",
+          customerId: `cust-f-${i + 1}`,
+          dateTime: new Date(
+            Date.UTC(2026, 9, 30, 15 + Math.floor(i / 2), (i % 2) * 30, 0)
+          ),
+          durationMin: 30,
+          status: "CONFIRMED",
+          totalPrice: 50,
+          customer: { name: `Cliente Confirmado ${i + 1}`, avatarUrl: null },
+          services: [{ service: { name: "Corte", durationMin: 30 } }],
+          comandas: [],
+        })),
+        ...Array.from({ length: 2 }, (_, i) => ({
+          id: `pend-${i + 1}`,
+          memberId: "member-1",
+          customerId: `cust-p-${i + 1}`,
+          dateTime: new Date(Date.UTC(2026, 9, 30, 16, (i % 2) * 30, 0)),
+          durationMin: 30,
+          status: "PENDING",
+          totalPrice: 50,
+          customer: { name: `Cliente Pendente ${i + 1}`, avatarUrl: null },
+          services: [{ service: { name: "Corte", durationMin: 30 } }],
+          comandas: [],
+        })),
+        {
+          id: "canc-1",
+          memberId: "member-1",
+          customerId: "cust-canc",
+          dateTime: new Date(Date.UTC(2026, 9, 30, 14, 0, 0)),
+          durationMin: 30,
+          status: "CANCELLED",
+          totalPrice: 50,
+          customer: { name: "Cliente Cancelado", avatarUrl: null },
+          services: [{ service: { name: "Corte", durationMin: 30 } }],
+          comandas: [],
+        },
+        {
+          id: "noshow-1",
+          memberId: "member-1",
+          customerId: "cust-ns",
+          dateTime: new Date(Date.UTC(2026, 9, 30, 15, 0, 0)),
+          durationMin: 30,
+          status: "NO_SHOW",
+          totalPrice: 50,
+          customer: { name: "Cliente Falta", avatarUrl: null },
+          services: [{ service: { name: "Corte", durationMin: 30 } }],
+          comandas: [],
+        },
+      ];
+
+      vi.mocked(prisma.appointment.findMany).mockImplementation((args) => {
+        const where = args?.where as
+          | { status?: unknown; dateTime?: { gte?: Date } }
+          | undefined;
+        if (where?.dateTime?.gte && !where?.status) {
+          return Promise.resolve(todayAppts) as unknown as ReturnType<
+            typeof prisma.appointment.findMany
+          >;
+        }
+        return Promise.resolve([]) as unknown as ReturnType<
+          typeof prisma.appointment.findMany
+        >;
+      });
+
+      const pageElement = await DashboardPage();
+      render(pageElement);
+
+      // Correção 1: Card "Visão geral do faturamento" não usa justify-between no container externo
+      const revOverviewCard = screen.getByTestId(
+        "desktop-revenue-overview-card"
+      );
+      expect(revOverviewCard.className).toContain("flex-col");
+      expect(revOverviewCard.className).not.toContain("justify-between");
+
+      // Correção 3 & 5: Percentual de capacidade real 118,75% (sem travar em 100%)
+      expect(screen.getAllByText("118,75%").length).toBeGreaterThanOrEqual(2);
+      expect(
+        screen.getByText(/Carga: 570 min de 480 min \(19\/16 eq\.\)/)
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Concluídos: 12 \(360m\)/)).toBeInTheDocument();
+      expect(screen.getByText(/Agendados: 7 \(210m\)/)).toBeInTheDocument();
+
+      // Correção 4: Horários de hoje com estados Concluído (roxo) e Agendado (dourado)
+      const slotsCard = within(screen.getByTestId("today-slots-card"));
+      expect(slotsCard.getByText("Concluído")).toBeInTheDocument();
+      const slot0900 = slotsCard.getByText("09:00");
+      expect(slot0900.className).toContain("text-violet-300");
+      expect(slot0900.className).toContain("bg-violet-500/15");
+
+      const slot1500 = slotsCard.getByText("15:00");
+      expect(slot1500.className).toContain("text-[var(--gold)]");
+      expect(slot1500.className).toContain("bg-[var(--gold-surface)]");
+
+      // Correção 6: Resumo dos atendimentos mostra contagens reais por status
+      expect(
+        screen.getByTestId("attendance-row-completed").textContent
+      ).toContain("12");
+      expect(
+        screen.getByTestId("attendance-row-confirmed").textContent
+      ).toContain("5");
+      expect(
+        screen.getByTestId("attendance-row-pending").textContent
+      ).toContain("2");
+      expect(
+        screen.getByTestId("attendance-row-cancelled").textContent
+      ).toContain("1");
+      expect(screen.getByTestId("attendance-row-noShow").textContent).toContain(
+        "1"
+      );
+
+      vi.useRealTimers();
+    });
+
     it("Minigráficos dos KPIs refletem séries reais consultadas e usam estado neutro plano quando não há série confiável", () => {
-      // 1. Sem série positiva -> todos os minigráficos em modo neutro plano (sem escada 14,20,26,33,40)
       const { unmount } = render(
         <PremiumDashboardView
           barbershop={{
@@ -582,13 +891,11 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         expect(bars).toHaveAttribute("data-mode", "neutral");
         const rects = Array.from(bars.querySelectorAll("rect"));
         const heights = rects.map((r) => Number(r.getAttribute("height")));
-        // Em modo neutro todas as barras têm exatamente a mesma altura (14), nunca escada crescente
         expect(new Set(heights).size).toBe(1);
         expect(heights[0]).toBe(14);
       }
       unmount();
 
-      // 2. Com série real -> minigráficos refletem os valores reais da série
       render(
         <PremiumDashboardView
           barbershop={{
@@ -634,21 +941,23 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
 
       for (const spark of screen.getAllByTestId("mini-sparkline")) {
         expect(spark).toHaveAttribute("data-mode", "series");
-        expect(spark).toHaveAttribute("data-series", "500,200,400,100,300,0,0");
+        expect(spark).toHaveAttribute(
+          "data-series",
+          "500,200,400,100,300,0,0"
+        );
       }
 
       const seriesBars = screen
         .getAllByTestId("mini-bars")
         .filter((el) => el.getAttribute("data-mode") === "series");
       expect(seriesBars.length).toBeGreaterThanOrEqual(2);
-      // A primeira barra (Seg=500 / 5 clientes) deve ser maior que a segunda barra (Ter=200 / 2 clientes)
       const firstBarRects = seriesBars[0].querySelectorAll("rect");
       const h0 = Number(firstBarRects[0].getAttribute("height"));
       const h1 = Number(firstBarRects[1].getAttribute("height"));
       expect(h0).toBeGreaterThan(h1);
     });
 
-    it("Cenários 12 e 13 — Isolamento multi-tenant em todas as queries (incluindo títulos financeiros) e bloqueio RBAC", async () => {
+    it("Cenários 12 e 13 — Isolamento multi-tenant em todas as queries (incluindo títulos financeiros e comandas) e bloqueio RBAC", async () => {
       vi.mocked(prisma.appointment.findMany).mockResolvedValue([]);
       vi.mocked(prisma.financialTitle.findMany).mockResolvedValue([]);
 
@@ -662,12 +971,13 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         expect(call[0]?.where?.barbershopId).toBe("tenant-1");
       }
 
-      // RECEPTIONIST bloqueado antes de qualquer query
       vi.clearAllMocks();
       vi.mocked(requireManagerialAdmin).mockImplementationOnce(async () => {
         throw new Error("NEXT_REDIRECT:/admin/agendamentos");
       });
-      await expect(DashboardPage()).rejects.toThrow("NEXT_REDIRECT:/admin/agendamentos");
+      await expect(DashboardPage()).rejects.toThrow(
+        "NEXT_REDIRECT:/admin/agendamentos"
+      );
       expect(prisma.appointment.findMany).not.toHaveBeenCalled();
       expect(prisma.financialTitle.findMany).not.toHaveBeenCalled();
     });
@@ -757,19 +1067,16 @@ describe("TEM BARBER — Premium Dashboard & Navigation Tests", () => {
         />
       );
 
-      // Atalho Ctrl+K foca o campo de filtro real do painel
       const searchInput = screen.getByRole("searchbox", {
         name: /filtrar agenda de hoje, profissional ou conta/i,
       });
       fireEvent.keyDown(window, { key: "k", ctrlKey: true });
       expect(document.activeElement).toBe(searchInput);
 
-      // Filtrar por "Gabriel" mantém Gabriel Ferreira e oculta Marcos Almeida
       fireEvent.change(searchInput, { target: { value: "Gabriel" } });
       expect(screen.getAllByText("Gabriel Ferreira").length).toBeGreaterThan(0);
       expect(screen.queryByText("Marcos Almeida")).not.toBeInTheDocument();
 
-      // Botão Limpar restaura os itens
       const clearBtn = screen.getByRole("button", { name: /limpar filtro/i });
       fireEvent.click(clearBtn);
       expect(screen.getAllByText("Marcos Almeida").length).toBeGreaterThan(0);

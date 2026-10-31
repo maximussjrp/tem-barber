@@ -26,7 +26,7 @@ export default function DashboardCharts({
 }) {
   void occupancy;
   const W = 440;
-  const H = compact ? 135 : 170;
+  const H = compact ? 135 : 190;
   const padLeft = 48;
   const padRight = 18;
   const padTop = 34;
@@ -75,9 +75,12 @@ export default function DashboardCharts({
   const peakPt = pts[peakIdx];
 
   return (
-    <div className="w-full">
-      {/* Summary Header Inside Chart */}
-      <div className="mb-2">
+    <div
+      className="w-full flex-1 flex flex-col justify-between gap-2"
+      data-testid="desktop-revenue-chart-container"
+    >
+      {/* Summary Header Inside Chart — positioned directly below SectionHeader */}
+      <div>
         <p className="text-2xl sm:text-[28px] font-extrabold text-white tracking-tight tabular-nums leading-tight">
           {fmtBRL(weekRevenue)}
         </p>
@@ -104,7 +107,7 @@ export default function DashboardCharts({
       </div>
 
       {/* Rich SVG Area + Line Chart */}
-      <div className="relative w-full">
+      <div className="relative w-full flex-1 flex items-center">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full h-auto overflow-visible"

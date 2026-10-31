@@ -20,7 +20,10 @@ import {
 } from "@/components/admin/dashboard/PremiumDashboardView";
 import { DueAccountSummary, DueAccountItem } from "@/components/admin/dashboard/FinancialDueCard";
 import { DashboardAppointmentItem } from "@/components/admin/dashboard/TodayScheduleCard";
-import { ProfessionalSlotInfo } from "@/components/admin/dashboard/ProfessionalPerformanceCard";
+import {
+  computeDashboardOperationalMetrics,
+  deduplicateTodayAppointments,
+} from "@/lib/dashboard/operational-metrics";
 
 function getTodayBR() {
   const br = nowBR();
@@ -29,7 +32,8 @@ function getTodayBR() {
   const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   const startOfDay = startOfDayUTC(y, m, d);
   const endOfDay = endOfDayUTC(y, m, d);
-  return { str, dayOfWeek, startOfDay, endOfDay };
+  const currentMinutesBR = br.getUTCHours() * 60 + br.getUTCMinutes();
+  return { str, dayOfWeek, startOfDay, endOfDay, currentMinutesBR };
 }
 
 function getWeekStartBR() {
@@ -39,11 +43,6 @@ function getWeekStartBR() {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   const daysToMon = (dow + 6) % 7;
   return new Date(Date.UTC(y, m - 1, d - daysToMon, 0, 0, 0));
-}
-
-function parseTime(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
 }
 
 function formatApptTimeBR(dateTime: Date): string {
@@ -107,7 +106,13 @@ export default async function DashboardPage() {
   const canAccessFinancial =
     role === "OWNER" || role === "MANAGER" || role === "SUPER_ADMIN" || isPlatform;
 
-  const { str: todayStr, dayOfWeek, startOfDay, endOfDay } = getTodayBR();
+  const {
+    str: todayStr,
+    dayOfWeek,
+    startOfDay,
+    endOfDay,
+    currentMinutesBR,
+  } = getTodayBR();
   const [ty, tm, td] = todayStr.split("-").map(Number);
 
   // Yesterday boundaries (America/Sao_Paulo civil day)
@@ -159,8 +164,9 @@ export default async function DashboardPage() {
     bookedAppointments,
     payableTitles,
     customerHistoryRows,
+    standaloneComandas,
   ] = await Promise.all([
-    // 1. Agendamentos de hoje
+    // 1. Agendamentos de hoje (incluindo durationMin dos serviços para carga produtiva real)
     prisma.appointment.findMany({
       where: {
         barbershopId: barbershopId!,
@@ -168,9 +174,14 @@ export default async function DashboardPage() {
       },
       include: {
         customer: { select: { name: true, avatarUrl: true } },
-        services: { include: { service: { select: { name: true } } } },
+        services: {
+          include: {
+            service: { select: { name: true, durationMin: true } },
+          },
+        },
         comandas: {
           select: {
+            id: true,
             status: true,
             total: true,
             discountTotal: true,
@@ -249,14 +260,18 @@ export default async function DashboardPage() {
       orderBy: { user: { name: "asc" } },
     }),
 
-    // 7. Agendamentos ocupando slots hoje
+    // 7. Agendamentos ocupando slots hoje (PENDING, CONFIRMED e COMPLETED)
     prisma.appointment.findMany({
       where: {
         barbershopId: barbershopId!,
         dateTime: { gte: startOfDay, lte: endOfDay },
-        status: { in: ["PENDING", "CONFIRMED"] },
+        status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] },
       },
-      select: { memberId: true, dateTime: true, durationMin: true },
+      select: {
+        memberId: true,
+        dateTime: true,
+        durationMin: true,
+      },
     }),
 
     // 8. Títulos a pagar reais (apenas se tiver permissão financeira e prisma suportar o model)
@@ -292,12 +307,53 @@ export default async function DashboardPage() {
         status: true,
       },
     }),
+
+    // 10. Comandas avulsas concluídas hoje sem agendamento vinculado (evitando omissão de carga e sem duplicar comandas com appointmentId)
+    prisma.comanda?.findMany
+      ? prisma.comanda.findMany({
+          where: {
+            barbershopId: barbershopId!,
+            appointmentId: null,
+            status: "CLOSED",
+            OR: [
+              { closedAt: { gte: startOfDay, lte: endOfDay } },
+              { closedAt: null, openedAt: { gte: startOfDay, lte: endOfDay } },
+            ],
+          },
+          select: {
+            id: true,
+            appointmentId: true,
+            status: true,
+            openedAt: true,
+            closedAt: true,
+            items: {
+              select: {
+                id: true,
+                type: true,
+                status: true,
+                quantity: true,
+                executorId: true,
+                service: { select: { name: true, durationMin: true } },
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
-  // ─── Métricas do Faturamento de Hoje ───
-  const revenueToday = todayDetailedAppts
-    .filter((a) => a.status === "COMPLETED")
-    .reduce((s, a) => s + getAppointmentNetRevenue(a), 0);
+  // ─── Métricas do Faturamento de Hoje & Faturamento Diário por Profissional ───
+  const memberDailyRev: Record<string, number> = {};
+  let revenueToday = 0;
+
+  for (const a of todayDetailedAppts) {
+    if (a.status === "COMPLETED") {
+      const netRev = getAppointmentNetRevenue(a);
+      revenueToday += netRev;
+      if (a.memberId) {
+        memberDailyRev[a.memberId] = (memberDailyRev[a.memberId] ?? 0) + netRev;
+      }
+    }
+  }
 
   // Clientes atendidos hoje (COMPLETED)
   const clientesAtendidosHoje = todayDetailedAppts.filter(
@@ -385,136 +441,31 @@ export default async function DashboardPage() {
     yesterdayCompletedCount
   );
 
-  // ─── Cálculo de Slots e Ocupação dos Profissionais ───
-  const SLOT_MIN = 30;
-  const legacyLegendSlots: {
-    time: string;
-    status: "available" | "occupied" | "blocked";
-  }[] = [];
+  // ─── Cálculo Canônico de Ocupação Gerencial, Horários de Hoje, Produtividade por Profissional e Resumo dos Atendimentos ───
+  const deduplicatedTodayAppts = deduplicateTodayAppointments(
+    todayDetailedAppts,
+    bookedAppointments
+  );
 
-  const professionalSlots: ProfessionalSlotInfo[] = activeMembers.map((m) => {
-    const wh = m.workingHours[0];
-    const onTimeOff = m.timeOffs.some((to) => to.allDay);
-
-    if (!wh || onTimeOff) {
-      return {
-        memberName: m.user?.name ?? "Colaborador",
-        avatarUrl: m.user?.avatarUrl ?? null,
-        weeklyRevenue: memberWeeklyRev[m.id] ?? 0,
-        working: false,
-        onTimeOff,
-        startTime: wh?.startTime ?? "--:--",
-        endTime: wh?.endTime ?? "--:--",
-        totalSlots: 0,
-        bookedSlots: 0,
-        blockedSlots: [],
-        freeSlots: [],
-      };
-    }
-
-    const start = parseTime(wh.startTime);
-    const end = parseTime(wh.endTime);
-    const breakStart = wh.breakStart ? parseTime(wh.breakStart) : null;
-    const breakEnd = wh.breakEnd ? parseTime(wh.breakEnd) : null;
-
-    const allSlots: number[] = [];
-    for (let t = start; t + SLOT_MIN <= end; t += SLOT_MIN) {
-      if (
-        breakStart !== null &&
-        breakEnd !== null &&
-        t >= breakStart &&
-        t < breakEnd
-      )
-        continue;
-      allSlots.push(t);
-    }
-
-    const memberBooked = bookedAppointments.filter((a) => a.memberId === m.id);
-    const occupiedMinutes = new Set<number>();
-    for (const appt of memberBooked) {
-      const apptStart =
-        new Date(appt.dateTime).getUTCHours() * 60 +
-        new Date(appt.dateTime).getUTCMinutes();
-      for (let t = apptStart; t < apptStart + appt.durationMin; t += SLOT_MIN) {
-        occupiedMinutes.add(t);
-      }
-    }
-
-    const [y, mMonth, d] = todayStr.split("-").map(Number);
-    const blockedSlots: number[] = [];
-    const partialTimeOffs = m.timeOffs.filter((to) => !to.allDay);
-    for (const t of allSlots) {
-      const slotStart = new Date(
-        Date.UTC(y, mMonth - 1, d, Math.floor(t / 60), t % 60)
-      );
-      const slotEnd = new Date(
-        Date.UTC(
-          y,
-          mMonth - 1,
-          d,
-          Math.floor((t + SLOT_MIN) / 60),
-          (t + SLOT_MIN) % 60
-        )
-      );
-      const isOverlapping = partialTimeOffs.some((to) => {
-        const toStart = new Date(to.startDate);
-        const toEnd = new Date(to.endDate);
-        return toStart < slotEnd && toEnd > slotStart;
-      });
-      if (isOverlapping) {
-        blockedSlots.push(t);
-      }
-    }
-
-    const freeSlots = allSlots.filter(
-      (t) => !occupiedMinutes.has(t) && !blockedSlots.includes(t)
-    );
-
-    // Populate legacy legend chips for test compatibility
-    for (const t of allSlots) {
-      const hh = String(Math.floor(t / 60)).padStart(2, "0");
-      const mm = String(t % 60).padStart(2, "0");
-      const timeStr = `${hh}:${mm}`;
-      let status: "available" | "occupied" | "blocked" = "available";
-      if (occupiedMinutes.has(t)) status = "occupied";
-      else if (blockedSlots.includes(t)) status = "blocked";
-      if (!legacyLegendSlots.some((s) => s.time === timeStr)) {
-        legacyLegendSlots.push({ time: timeStr, status });
-      }
-    }
-
-    return {
-      memberName: m.user?.name ?? "Colaborador",
-      avatarUrl: m.user?.avatarUrl ?? null,
-      weeklyRevenue: memberWeeklyRev[m.id] ?? 0,
-      working: true,
-      onTimeOff: false,
-      startTime: wh.startTime,
-      endTime: wh.endTime,
-      totalSlots: allSlots.length,
-      bookedSlots: occupiedMinutes.size,
-      blockedSlots,
-      freeSlots,
-    };
+  const {
+    professionals: professionalSlots,
+    occupancyBreakdown,
+    todaySlots,
+    attendanceSummary,
+    totalOccupiedSlots,
+    totalFreeSlots,
+    totalBlockedSlots,
+  } = computeDashboardOperationalMetrics({
+    todayStr,
+    currentMinutesBR,
+    activeMembers,
+    todayAppointments: deduplicatedTodayAppts,
+    standaloneComandas,
+    memberWeeklyRev,
+    memberDailyRev,
   });
 
-  const totalOccupiedSlots = professionalSlots.reduce(
-    (sum, m) => sum + m.bookedSlots,
-    0
-  );
-  const totalFreeSlots = professionalSlots.reduce(
-    (sum, m) => sum + m.freeSlots.length,
-    0
-  );
-  const totalBlockedSlots = professionalSlots.reduce(
-    (sum, m) => sum + m.blockedSlots.length,
-    0
-  );
-  const totalPossibleSlots = totalOccupiedSlots + totalFreeSlots;
-  const taxaOcupacaoPct =
-    totalPossibleSlots > 0
-      ? Math.round((totalOccupiedSlots / totalPossibleSlots) * 100)
-      : 0;
+  const taxaOcupacaoPct = occupancyBreakdown.workloadPctDisplay;
 
   const occupancyData = {
     occupied: totalOccupiedSlots,
@@ -726,7 +677,7 @@ export default async function DashboardPage() {
     averageTicketTrend,
   };
 
-  // Origem/canal não possui coluna dedicada em Appointment no schema atual
+  // Origem/canal não possui coluna dedicada em Appointment no schema atual (mantido por compatibilidade de contrato)
   const channelPerformance: ChannelPerformanceStats = {
     available: false,
     unavailableReason: "Origem do agendamento não rastreada",
@@ -824,11 +775,13 @@ export default async function DashboardPage() {
       faturamentoSemanaTrend={faturamentoSemanaTrend}
       faturamentoGraficoTrend={faturamentoSemanaTrend}
       taxaOcupacaoPct={taxaOcupacaoPct}
+      occupancyBreakdown={occupancyBreakdown}
       horariosOcupados={totalOccupiedSlots}
       horariosDisponiveis={totalFreeSlots}
       clientesAtendidosHoje={clientesAtendidosHoje}
       clientesAtendidosTrend={clientesAtendidosTrend}
       todayAppointments={dashboardAppointments}
+      attendanceSummary={attendanceSummary}
       professionals={professionalSlots}
       financialSummary={financialSummary}
       dueItems={pendingDueItems}
@@ -847,9 +800,7 @@ export default async function DashboardPage() {
       channelPerformance={channelPerformance}
       operationalAlerts={operationalAlerts}
       todaySlotsLegendProps={
-        legacyLegendSlots.length > 0
-          ? { slots: legacyLegendSlots }
-          : undefined
+        todaySlots.length > 0 ? { slots: todaySlots } : undefined
       }
     />
   );
