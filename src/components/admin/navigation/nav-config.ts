@@ -211,6 +211,8 @@ export const ADMIN_NAV_CONFIG: NavItemConfig[] = [
     iconName: "marketing",
     ownerOnly: true,
     children: [
+      { label: "Visão geral", href: "/admin/marketing" },
+      { label: "Sorteios de clientes", href: "/admin/marketing/sorteios" },
       { label: "Vitrine pública", href: "/admin/marketing/vitrine" },
     ],
   },

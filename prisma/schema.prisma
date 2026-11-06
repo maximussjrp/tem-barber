@@ -82,6 +82,10 @@ model User {
   createdStaffAccessTokens            StaffAccessToken[]                  @relation("CreatedStaffAccessTokens")
   permissionOverridesUpdated          MemberPermissionOverride[]          @relation("PermissionOverrideUpdatedBy")
   commissionEligibilityEvents         MemberCommissionEligibilityEvent[]
+  createdCustomerSweepstakes          CustomerSweepstake[]                @relation("SweepstakeCreatedBy")
+  customerSweepstakeParticipations    CustomerSweepstakeParticipant[]     @relation("SweepstakeParticipantCustomer")
+  customerSweepstakeChanceOrigins     CustomerSweepstakeChanceOrigin[]    @relation("SweepstakeChanceOriginCustomer")
+  executedCustomerSweepstakeDraws     CustomerSweepstakeDrawAudit[]       @relation("SweepstakeDrawnBy")
 
   @@map("users")
 }
@@ -189,6 +193,7 @@ model Barbershop {
   staffAccessTokens                  StaffAccessToken[]
   memberPermissionOverrides          MemberPermissionOverride[]
   commissionEligibilityEvents        MemberCommissionEligibilityEvent[]
+  customerSweepstakes                CustomerSweepstake[]
 
   @@map("barbershops")
 }
@@ -3153,4 +3158,206 @@ model MemberPermissionOverride {
   @@unique([memberId, permissionKey])
   @@index([barbershopId, memberId])
   @@map("member_permission_overrides")
+}
+
+// ============================================================================
+// MÓDULO MARKETING — SORTEIOS DE CLIENTES (V1)
+// ============================================================================
+
+enum SweepstakeStatus {
+  DRAFT
+  REGULATION_PENDING
+  ACTIVE
+  FROZEN
+  DRAWN
+  AUDITED
+  CANCELLED
+}
+
+enum SweepstakeParticipationMode {
+  ONE_PER_CUSTOMER
+  ONE_PER_APPOINTMENT
+  ONE_PER_SERVICE
+}
+
+enum SweepstakeCustomerSegment {
+  ALL_CUSTOMERS
+  CLUB_ONLY
+  REGULAR_ONLY
+}
+
+enum SweepstakeDrawMethod {
+  ELECTRONIC_DETERMINISTIC
+  FEDERAL_LOTTERY
+}
+
+model CustomerSweepstake {
+  id                          String                         @id @default(uuid())
+  barbershopId                String                         @map("barbershop_id")
+  title                       String                         @db.VarChar(140)
+  description                 String?
+  startDateCivil              String                         @map("start_date_civil") @db.VarChar(10)
+  endDateCivil                String                         @map("end_date_civil") @db.VarChar(10)
+  startInclusiveUtc           DateTime                       @map("start_inclusive_utc")
+  endExclusiveUtc             DateTime                       @map("end_exclusive_utc")
+  drawDateScheduled           DateTime                       @map("draw_date_scheduled")
+  status                      SweepstakeStatus               @default(DRAFT)
+  participationMode           SweepstakeParticipationMode    @default(ONE_PER_CUSTOMER) @map("participation_mode")
+  targetSegment               SweepstakeCustomerSegment      @default(ALL_CUSTOMERS) @map("target_segment")
+  serviceIds                  Json?                          @map("service_ids")
+  allowMultiplePrizesPerUser  Boolean                        @default(false) @map("allow_multiple_prizes_per_user")
+  drawMethod                  SweepstakeDrawMethod           @default(ELECTRONIC_DETERMINISTIC) @map("draw_method")
+  isRegulatedPromotion        Boolean                        @default(false) @map("is_regulated_promotion")
+  authorizationCode           String?                        @map("authorization_code")
+  regulationsSummary          String?                        @map("regulations_summary")
+  regulationsDocumentUrl      String?                        @map("regulations_document_url")
+  federalLotteryContestNumber String?                        @map("federal_lottery_contest_number")
+
+  // Snapshot metrics
+  totalEligibleCustomers      Int                            @default(0) @map("total_eligible_customers")
+  totalEligibleVisits         Int                            @default(0) @map("total_eligible_visits")
+  totalEligibleServices       Int                            @default(0) @map("total_eligible_services")
+  totalChancesAssigned        Int                            @default(0) @map("total_chances_assigned")
+  ticketsSha256Digest         String?                        @map("tickets_sha256_digest")
+  precommittedSeed            String?                        @map("precommitted_seed")
+  frozenAt                    DateTime?                      @map("frozen_at")
+  drawnAt                     DateTime?                      @map("drawn_at")
+
+  createdById                 String                         @map("created_by_id")
+  createdAt                   DateTime                       @default(now()) @map("created_at")
+  updatedAt                   DateTime                       @updatedAt @map("updated_at")
+
+  barbershop                  Barbershop                     @relation(fields: [barbershopId], references: [id], onDelete: Cascade)
+  createdBy                   User                           @relation("SweepstakeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  prizes                      CustomerSweepstakePrize[]
+  participants                CustomerSweepstakeParticipant[]
+  chanceOrigins               CustomerSweepstakeChanceOrigin[]
+  tickets                     CustomerSweepstakeTicket[]
+  winners                     CustomerSweepstakeWinner[]
+  drawAudit                   CustomerSweepstakeDrawAudit?
+
+  @@unique([id, barbershopId])
+  @@index([barbershopId, status, drawDateScheduled])
+  @@map("customer_sweepstakes")
+}
+
+model CustomerSweepstakePrize {
+  id             String             @id @default(uuid())
+  sweepstakeId   String             @map("sweepstake_id")
+  barbershopId   String             @map("barbershop_id")
+  position       Int
+  title          String             @db.VarChar(120)
+  description    String?
+
+  sweepstake     CustomerSweepstake @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+
+  @@unique([sweepstakeId, position])
+  @@index([barbershopId, sweepstakeId])
+  @@map("customer_sweepstake_prizes")
+}
+
+model CustomerSweepstakeParticipant {
+  id                    String                           @id @default(uuid())
+  sweepstakeId          String                           @map("sweepstake_id")
+  barbershopId          String                           @map("barbershop_id")
+  customerId            String                           @map("customer_id")
+  isClubMemberSnapshot  Boolean                          @default(false) @map("is_club_member_snapshot")
+  chancesCount          Int                              @default(1) @map("chances_count")
+  eligibleVisitsCount   Int                              @default(0) @map("eligible_visits_count")
+  eligibleServicesCount Int                              @default(0) @map("eligible_services_count")
+  createdAt             DateTime                         @default(now()) @map("created_at")
+
+  sweepstake            CustomerSweepstake               @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  customer              User                             @relation("SweepstakeParticipantCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  chanceOrigins         CustomerSweepstakeChanceOrigin[]
+  tickets               CustomerSweepstakeTicket[]
+  winnerRecords         CustomerSweepstakeWinner[]
+
+  @@unique([sweepstakeId, customerId])
+  @@index([barbershopId, customerId])
+  @@map("customer_sweepstake_participants")
+}
+
+model CustomerSweepstakeChanceOrigin {
+  id             String                        @id @default(uuid())
+  sweepstakeId   String                        @map("sweepstake_id")
+  barbershopId   String                        @map("barbershop_id")
+  participantId  String                        @map("participant_id")
+  customerId     String                        @map("customer_id")
+  appointmentId  String?                       @map("appointment_id")
+  comandaId      String?                       @map("comanda_id")
+  comandaItemId  String?                       @map("comanda_item_id")
+  serviceId      String?                       @map("service_id")
+  performedAt    DateTime                      @map("performed_at")
+  chancesGranted Int                           @default(1) @map("chances_granted")
+  justification  String                        @map("justification")
+  createdAt      DateTime                      @default(now()) @map("created_at")
+
+  sweepstake     CustomerSweepstake            @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  participant    CustomerSweepstakeParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  customer       User                          @relation("SweepstakeChanceOriginCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([barbershopId, sweepstakeId])
+  @@index([participantId])
+  @@index([customerId])
+  @@index([appointmentId])
+  @@index([comandaId])
+  @@index([comandaItemId])
+  @@map("customer_sweepstake_chance_origins")
+}
+
+model CustomerSweepstakeTicket {
+  id            String                        @id @default(uuid())
+  sweepstakeId  String                        @map("sweepstake_id")
+  barbershopId  String                        @map("barbershop_id")
+  participantId String                        @map("participant_id")
+  ticketNumber  Int                           @map("ticket_number")
+  createdAt     DateTime                      @default(now()) @map("created_at")
+
+  sweepstake    CustomerSweepstake            @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  participant   CustomerSweepstakeParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([sweepstakeId, ticketNumber])
+  @@index([sweepstakeId, participantId])
+  @@map("customer_sweepstake_tickets")
+}
+
+model CustomerSweepstakeWinner {
+  id                    String                        @id @default(uuid())
+  sweepstakeId          String                        @map("sweepstake_id")
+  barbershopId          String                        @map("barbershop_id")
+  participantId         String                        @map("participant_id")
+  winningTicketNumber   Int                           @map("winning_ticket_number")
+  prizePosition         Int                           @map("prize_position")
+  customerNameSnapshot  String                        @map("customer_name_snapshot")
+  customerPhoneSnapshot String                        @map("customer_phone_snapshot")
+  prizeDelivered        Boolean                       @default(false) @map("prize_delivered")
+  deliveredAt           DateTime?                     @map("delivered_at")
+  deliveryNotes         String?                       @map("delivery_notes")
+  createdAt             DateTime                      @default(now()) @map("created_at")
+
+  sweepstake            CustomerSweepstake            @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  participant           CustomerSweepstakeParticipant @relation(fields: [participantId], references: [id], onDelete: Restrict)
+
+  @@unique([sweepstakeId, prizePosition])
+  @@index([sweepstakeId, participantId])
+  @@map("customer_sweepstake_winners")
+}
+
+model CustomerSweepstakeDrawAudit {
+  id                    String               @id @default(uuid())
+  sweepstakeId          String               @unique @map("sweepstake_id")
+  barbershopId          String               @map("barbershop_id")
+  drawnById             String               @map("drawn_by_id")
+  drawnAt               DateTime             @default(now()) @map("drawn_at")
+  drawMethod            SweepstakeDrawMethod @map("draw_method")
+  seedUsed              String               @map("seed_used")
+  ticketsSha256Snapshot String               @map("tickets_sha256_snapshot")
+  auditLogJson          Json                 @map("audit_log_json")
+
+  sweepstake            CustomerSweepstake   @relation(fields: [sweepstakeId, barbershopId], references: [id, barbershopId], onDelete: Cascade)
+  drawnBy               User                 @relation("SweepstakeDrawnBy", fields: [drawnById], references: [id], onDelete: Restrict)
+
+  @@unique([sweepstakeId, barbershopId])
+  @@map("customer_sweepstake_draw_audits")
 }

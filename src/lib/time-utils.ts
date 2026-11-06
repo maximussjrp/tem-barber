@@ -50,7 +50,8 @@ export function todayIsoBR(): string {
 /**
  * Formata uma data nativa do JS no padrão brasileiro (DD/MM/YYYY).
  */
-export function formatDateBR(date: Date | string): string {
+export function formatDateBR(date: Date | string | null | undefined): string {
+  if (!date) return "-";
   if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
     const [y, m, d] = date.trim().split("-");
     return `${d}/${m}/${y}`;
