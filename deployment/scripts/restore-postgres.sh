@@ -3,17 +3,21 @@
 # TEM BARBER - SCRIPT DE RESTAURAÇÃO POSTGRESQL
 # ==========================================
 # Uso: ./restore-postgres.sh /caminho/para/db_backup_YYYYMMDD_HHMMSS.sql.gz
+# Alinhado com deployment/docker-compose.yml:
+#   Container padrão: tem-barber-postgres
+#   Usuário/Banco padrão: lidos de POSTGRES_USER / POSTGRES_DB do container
+#                         (fallback: tem_barber_user / tem_barber)
 # Variáveis opcionais de ambiente:
-#   DB_CONTAINER   (padrão: tembarber-postgres)
-#   DB_USER        (padrão: tembarber)
-#   DB_NAME        (padrão: tembarber_prod)
-#   FORCE_RESTORE  (padrão: false; definir "true" apenas em automação controlada)
+#   DB_CONTAINER          (padrão: tem-barber-postgres)
+#   DB_USER               (opcional: sobrescreve POSTGRES_USER do container)
+#   DB_NAME               (opcional: sobrescreve POSTGRES_DB do container)
+#   ALLOW_MISSING_SHA256  (padrão: false; exige arquivo .sha256 por padrão)
+#   FORCE_RESTORE         (padrão: false; bloqueado em containers/bancos de produção)
 
 set -Eeuo pipefail
 
-DB_CONTAINER="${DB_CONTAINER:-tembarber-postgres}"
-DB_USER="${DB_USER:-tembarber}"
-DB_NAME="${DB_NAME:-tembarber_prod}"
+DB_CONTAINER="${DB_CONTAINER:-tem-barber-postgres}"
+ALLOW_MISSING_SHA256="${ALLOW_MISSING_SHA256:-false}"
 FORCE_RESTORE="${FORCE_RESTORE:-false}"
 
 if [ -z "${1:-}" ]; then
@@ -39,7 +43,11 @@ fi
 
 echo "🔍 Validando integridade do arquivo de backup antes de tocar no banco..."
 
-if [ -f "${BACKUP_FILE}.sha256" ] && command -v sha256sum >/dev/null 2>&1; then
+if [ -f "${BACKUP_FILE}.sha256" ]; then
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "❌ Erro: sha256sum não disponível para validar ${BACKUP_FILE}.sha256." >&2
+    exit 1
+  fi
   BACKUP_DIR_PATH="$(dirname "$BACKUP_FILE")"
   SHA_FILE_NAME="$(basename "${BACKUP_FILE}.sha256")"
   if ! (cd "$BACKUP_DIR_PATH" && sha256sum -c "$SHA_FILE_NAME" >/dev/null 2>&1); then
@@ -47,6 +55,11 @@ if [ -f "${BACKUP_FILE}.sha256" ] && command -v sha256sum >/dev/null 2>&1; then
     exit 1
   fi
   echo "  ✔ Checksum SHA-256 verificado."
+elif [ "$ALLOW_MISSING_SHA256" = "true" ]; then
+  echo "  ⚠️ Aviso: Arquivo ${BACKUP_FILE}.sha256 ausente (prosseguindo por ALLOW_MISSING_SHA256=true)."
+else
+  echo "❌ Erro: Arquivo de checksum ${BACKUP_FILE}.sha256 não encontrado (defina ALLOW_MISSING_SHA256=true apenas para backups legados verificados manualmente)." >&2
+  exit 1
 fi
 
 if ! gzip -t "$BACKUP_FILE"; then
@@ -70,14 +83,44 @@ if ! docker inspect -f '{{.State.Running}}' "$DB_CONTAINER" 2>/dev/null | grep -
   exit 1
 fi
 
+# Resolver DB_USER e DB_NAME a partir do container caso não tenham sido fornecidos
+if [ -z "${DB_USER:-}" ]; then
+  DB_USER="$(docker exec -i "$DB_CONTAINER" sh -c 'printf "%s" "${POSTGRES_USER:-tem_barber_user}"')"
+fi
+if [ -z "${DB_NAME:-}" ]; then
+  DB_NAME="$(docker exec -i "$DB_CONTAINER" sh -c 'printf "%s" "${POSTGRES_DB:-tem_barber}"')"
+fi
+
 if ! docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "SELECT 1;" >/dev/null; then
-  echo "❌ Erro: Não foi possível conectar ao banco '${DB_NAME}' no container '${DB_CONTAINER}'." >&2
+  echo "❌ Erro: Não foi possível conectar ao banco '${DB_NAME}' no container '${DB_CONTAINER}' com o usuário '${DB_USER}'." >&2
   exit 1
 fi
-echo "  ✔ Conectividade com o container '${DB_CONTAINER}' (${DB_NAME}) verificada."
+echo "  ✔ Conectividade com o container '${DB_CONTAINER}' (banco '${DB_NAME}', usuário '${DB_USER}') verificada."
 
-if [ "$FORCE_RESTORE" != "true" ]; then
-  echo "⚠️ ATENÇÃO: Isso irá SOBRESCREVER todos os dados atuais do banco '$DB_NAME' com o backup:"
+# Trava de segurança: impedir que testes automatizados (FORCE_RESTORE=true) atinjam containers ou bancos de produção
+if [ "$FORCE_RESTORE" = "true" ]; then
+  case "$DB_CONTAINER" in
+    tem-barber-postgres|tembarber-postgres)
+      echo "❌ BLOQUEIO DE SEGURANÇA: FORCE_RESTORE=true é proibido no container de produção '${DB_CONTAINER}'." >&2
+      exit 1
+      ;;
+  esac
+  case "$DB_NAME" in
+    tem_barber|tembarber_prod)
+      echo "❌ BLOQUEIO DE SEGURANÇA: FORCE_RESTORE=true é proibido no banco de produção '${DB_NAME}'." >&2
+      exit 1
+      ;;
+  esac
+  case "$DB_NAME" in
+    *test*|*drill*)
+      ;;
+    *)
+      echo "❌ BLOQUEIO DE SEGURANÇA: FORCE_RESTORE=true exige banco explicitamente identificado como '*test*' ou '*drill*' (atual: '${DB_NAME}')." >&2
+      exit 1
+      ;;
+  esac
+else
+  echo "⚠️ ATENÇÃO: Isso irá SOBRESCREVER todos os dados atuais do banco '$DB_NAME' (container '$DB_CONTAINER') com o backup:"
   echo "Arquivo: $BACKUP_FILE"
   read -r -p "Tem certeza que deseja continuar? (digite 'SIM' para confirmar): " CONFIRM
   if [ "$CONFIRM" != "SIM" ]; then

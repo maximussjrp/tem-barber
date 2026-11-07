@@ -337,23 +337,24 @@ describe("P1 — Reconstrução Histórica do Clube (Cancelamento, Suspensão, R
     expect(paymentWhere.paidAt).toEqual({ lt: endExclusiveUtc });
   });
 
-  it("reconhece mudança de competência quando o pagamento ocorreu em 20/09 (ciclo de 31 dias cobrindo 01/10..15/10), mesmo que a assinatura tenha sido renovada ou cancelada depois", async () => {
-    const tx = makeClubTx({ payment: { id: "pay-sep-20" } });
+  it("não inventa janela retroativa de 31 dias antes de startInclusiveUtc em ClubSubscriptionPayment (evita falso-positivo de ciclo expirado antes do atendimento)", async () => {
+    const tx = makeClubTx({ payment: null, usage: null, subscription: null });
     const result = await isCustomerClubMemberInPeriod(tx, {
       barbershopId: "shop-1",
-      customerId: "cust-cross-month",
+      customerId: "cust-expired-cycle",
       startInclusiveUtc,
       endExclusiveUtc,
       startMonthCompetence: "2026-10",
       endMonthCompetence: "2026-10",
     });
 
-    expect(result).toBe(true);
+    expect(result).toBe(false);
     const paymentWhere = tx.clubSubscriptionPayment.findFirst.mock.calls[0][0].where;
-    const expectedFloor = new Date(startInclusiveUtc.getTime() - 31 * 24 * 60 * 60 * 1000);
-    expect(paymentWhere.OR).toContainEqual({
-      paidAt: { gte: expectedFloor, lt: endExclusiveUtc },
-    });
+    expect(paymentWhere.paidAt).toEqual({ lt: endExclusiveUtc });
+    expect(paymentWhere.OR).toEqual([
+      { competence: { gte: "2026-10", lte: "2026-10" } },
+      { paidAt: { gte: startInclusiveUtc, lt: endExclusiveUtc } },
+    ]);
   });
 
   it("descarta uso de benefício estornado (status REVERSED ou reversedAt preenchido) e rejeita assinatura SUSPENDED/CANCELED sem pagamento válido", async () => {

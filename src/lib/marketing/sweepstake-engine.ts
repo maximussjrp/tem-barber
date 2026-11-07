@@ -74,28 +74,32 @@ function getAppointmentCivilBoundaries(startDateCivil: string, endDateCivil: str
  * 1. `ClubSubscriptionPayment` (append-only, status="PAID"):
  *    - Exige obrigatoriamente `paidAt < endExclusiveUtc` (um pagamento realizado APÓS o término
  *      da campanha na mesma competência mensal NÃO concede elegibilidade retroativa ao período).
- *    - Cobre competência mensal coincidente (`startMonthCompetence..endMonthCompetence`) OU
- *      ciclo pago de 30 dias + 1 dia de carência (31 dias) iniciado nos 31 dias anteriores a
- *      `startInclusiveUtc` (cobrindo transição entre competências quando o pagamento ocorreu no
- *      mês anterior mas sua vigência atravessa o período avaliado, mesmo que a assinatura seja
- *      posteriormente renovada, suspensa ou cancelada).
+ *    - Exige `competence` dentro do intervalo `[startMonthCompetence, endMonthCompetence]` OU
+ *      `paidAt` dentro de `[startInclusiveUtc, endExclusiveUtc)`.
+ *    - NÃO inventa janela heurística de 31 dias anteriores a `startInclusiveUtc`: como a tabela
+ *      `club_subscription_payments` registra apenas `paidAt` e `competence` (sem `periodStart`,
+ *      `periodEnd` ou `gracePeriodEnd`), uma busca retroativa de 31 dias baseada no início da
+ *      campanha poderia classificar indevidamente como membro um cliente cujo ciclo pago anterior
+ *      encerrou ANTES da data efetiva do atendimento elegível (`performedAt`).
  * 2. `ClubBenefitUsage` (status="APPLIED" e `reversedAt: null`):
- *    - Comprova vínculo ativo na data `usedAt` dentro do intervalo `[startInclusiveUtc, endExclusiveUtc)`.
+ *    - Comprova vínculo ativo na data exata `usedAt` dentro de `[startInclusiveUtc, endExclusiveUtc)`.
  *    - Usos estornados (`status="REVERSED"` ou `reversedAt != null`) são estritamente descartados.
  * 3. `CustomerClubSubscription` (fallback conservador):
  *    - Como a tabela `customer_club_subscriptions` sobrescreve `status`, `currentPeriodStart`,
  *      `currentPeriodEnd` e `gracePeriodEnd` in-place (em cancelamentos, suspensões e renovações)
- *      e não possui histórico de transições de status (`canceledAt`/`suspendedAt`), status não
- *      vigentes (`CANCELED`, `SUSPENDED`, `EXPIRED`, `PAST_DUE`) NÃO são aceitos pelo estado atual
- *      da linha — dependem exclusivamente das evidências históricas 1 e 2 acima.
- *    - Mesmo quando `status` atual é `ACTIVE` ou `GRACE_PERIOD`, exige `createdAt < endExclusiveUtc`,
- *      `currentPeriodStart < endExclusiveUtc` e término (`currentPeriodEnd` ou `gracePeriodEnd`)
- *      `>= startInclusiveUtc`.
- *    - Limitação residual documentada: assinaturas criadas manualmente sem registro em
- *      `ClubSubscriptionPayment` e sem uso de benefício (`ClubBenefitUsage`) que forem posteriormente
- *      canceladas/suspensas ou tiverem seu ciclo sobrescrito por renovação em mês futuro sem pagamento
- *      do mês da campanha não terão trilha imutável daquele período; na operação padrão do Clube,
- *      toda ativação/renovação gera `ClubSubscriptionPayment` (`PAID`) ou `ClubBenefitUsage` (`APPLIED`).
+ *      e não possui histórico de transições (`canceledAt`/`suspendedAt`), status não vigentes
+ *      (`CANCELED`, `SUSPENDED`, `EXPIRED`, `PAST_DUE`) NÃO são aceitos pelo estado atual da linha —
+ *      dependem exclusivamente das evidências históricas 1 e 2 acima.
+ *    - Quando o status atual é `ACTIVE` ou `GRACE_PERIOD`, comprova as datas exatas do ciclo atual
+ *      (`createdAt < endExclusiveUtc`, `currentPeriodStart < endExclusiveUtc` e término
+ *      `currentPeriodEnd` ou `gracePeriodEnd >= startInclusiveUtc`).
+ *    - Risco residual documentado (`CLUB_HISTORICAL_RESIDUAL_RISK`): se um assinante pagou no mês
+ *      anterior (`competence < startMonthCompetence`), atendeu no início do mês da campanha sem
+ *      consumir benefício (`ClubBenefitUsage`) e posteriormente teve a assinatura cancelada/expirada
+ *      ou seu ciclo sobrescrito por renovação futura sem pagamento na competência da campanha, o
+ *      schema atual não preserva `periodStart`/`periodEnd` históricos em `ClubSubscriptionPayment`.
+ *      A eliminação completa desse risco residual exige decisão futura de schema (persistir
+ *      `periodStartSnapshot`/`periodEndSnapshot` por pagamento e validar por `performedAt`).
  */
 export async function isCustomerClubMemberInPeriod(
   tx: Prisma.TransactionClient,
@@ -110,12 +114,8 @@ export async function isCustomerClubMemberInPeriod(
 ): Promise<boolean> {
   const { barbershopId, customerId, startInclusiveUtc, endExclusiveUtc, startMonthCompetence, endMonthCompetence } = params;
 
-  // Janela de cobertura de ciclo pago anterior (30 dias de ciclo + 1 dia de carência = 31 dias)
-  // para contemplar mudança de competência (ex.: pago em 20/09 cobrindo campanha em 01/10..15/10).
-  const cycleCoverageFloorUtc = new Date(startInclusiveUtc.getTime() - 31 * 24 * 60 * 60 * 1000);
-
   // 1. Pagamento aprovado de assinatura realizado ANTES do fim do período avaliado,
-  // cobrindo a competência da campanha ou cujo ciclo pago de 31 dias intercepte o período.
+  // cobrindo a competência da campanha ou pago dentro da vigência da campanha.
   const validPayment = await tx.clubSubscriptionPayment.findFirst({
     where: {
       barbershopId,
@@ -124,7 +124,7 @@ export async function isCustomerClubMemberInPeriod(
       paidAt: { lt: endExclusiveUtc },
       OR: [
         { competence: { gte: startMonthCompetence, lte: endMonthCompetence } },
-        { paidAt: { gte: cycleCoverageFloorUtc, lt: endExclusiveUtc } },
+        { paidAt: { gte: startInclusiveUtc, lt: endExclusiveUtc } },
       ],
     },
     select: { id: true },
