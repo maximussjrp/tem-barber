@@ -111,11 +111,18 @@ export async function isCustomerClubMemberInPeriod(
   });
   if (validUsage) return true;
 
-  // 3. Assinatura ativa cujo período/carência cobria o intervalo da campanha
+  // 3. Assinatura cujo período/carência cobria o intervalo da campanha.
+  // Fallback restrito a status vigentes (ACTIVE / GRACE_PERIOD): o schema não registra a data de
+  // cancelamento, portanto uma assinatura CANCELED/EXPIRED/SUSPENDED/PAST_DUE NÃO é considerada ativa
+  // apenas porque suas datas se sobrepõem ao período. Para essas, valem somente as evidências históricas
+  // confiáveis acima (pagamento PAID ou uso APPLIED no período).
+  // Exceção documentada: assinante cancelado após o período, sem pagamento/uso registrado no período,
+  // não é classificado como membro do clube (comportamento conservador).
   const activeSub = await tx.customerClubSubscription.findFirst({
     where: {
       barbershopId,
       customerId,
+      status: { in: ["ACTIVE", "GRACE_PERIOD"] },
       createdAt: { lt: endExclusiveUtc },
       currentPeriodStart: { lt: endExclusiveUtc },
       OR: [
@@ -147,12 +154,29 @@ export async function calculateSweepstakeEligibility(
 
   const serviceFilterSet = serviceIds && serviceIds.length > 0 ? new Set(serviceIds) : null;
 
-  // 1. Buscar agendamentos no período
+  // 1. Buscar agendamentos: (a) com data agendada no período OU (b) com serviço concluído em comanda
+  // vinculada cuja data real de execução (completedAt) cai no período (intervalo semiaberto, America/Sao_Paulo).
   const appointments = await tx.appointment.findMany({
     where: {
       barbershopId,
-      dateTime: { gte: gteApp, lt: ltApp },
       status: { notIn: ["CANCELLED", "NO_SHOW"] },
+      OR: [
+        { dateTime: { gte: gteApp, lt: ltApp } },
+        {
+          comandas: {
+            some: {
+              status: { not: "CANCELLED" },
+              items: {
+                some: {
+                  type: "SERVICE",
+                  status: "DONE",
+                  completedAt: { gte: startInclusiveUtc, lt: endExclusiveUtc },
+                },
+              },
+            },
+          },
+        },
+      ],
     },
     include: {
       customer: { select: { id: true, name: true, phone: true } },
@@ -247,20 +271,31 @@ export async function calculateSweepstakeEligibility(
 
     const activeComanda = app.comandas && app.comandas.length > 0 ? app.comandas[0] : null;
     const hasComandaDoneServices = activeComanda && activeComanda.items && activeComanda.items.length > 0;
+    const appDateInPeriod = app.dateTime >= gteApp && app.dateTime < ltApp;
 
     let appEligibleServicesCount = 0;
+    let countsAsVisit = false;
     const currentOrigins: ChanceOriginItem[] = [];
 
     if (hasComandaDoneServices && activeComanda) {
-      // Prioridade Canônica: Serviços da Comanda com status DONE
+      // Prioridade Canônica: Serviços da Comanda com status DONE, avaliados pela data REAL de execução.
       for (const item of activeComanda.items) {
-        if (serviceFilterSet && item.serviceId && !serviceFilterSet.has(item.serviceId)) {
+        // Filtro de serviços: item sem serviceId NÃO entra quando a campanha restringe serviços.
+        if (serviceFilterSet && (!item.serviceId || !serviceFilterSet.has(item.serviceId))) {
           continue;
         }
+        // Data real: completedAt (UTC real) -> closedAt da comanda -> fallback dateTime do agendamento
+        // (somente quando não há evidência de execução pela comanda).
+        const executedAt = item.completedAt || activeComanda.closedAt || null;
+        const inPeriod = executedAt
+          ? executedAt >= startInclusiveUtc && executedAt < endExclusiveUtc
+          : appDateInPeriod;
+        if (!inPeriod) continue;
+
         const qty = Math.max(1, Math.round(Number(item.quantity) || 1));
         appEligibleServicesCount += qty;
         currentOrigins.push({
-          performedAt: item.completedAt || activeComanda.closedAt || app.dateTime,
+          performedAt: executedAt || app.dateTime,
           appointmentId: app.id,
           comandaId: activeComanda.id,
           comandaItemId: item.id,
@@ -270,8 +305,9 @@ export async function calculateSweepstakeEligibility(
           justification: `Serviço concluído na comanda vinculada (${app.status})`,
         });
       }
-    } else if (app.status === "COMPLETED") {
-      // Se não há itens DONE na comanda, mas o agendamento está COMPLETED
+      countsAsVisit = appEligibleServicesCount > 0;
+    } else if (app.status === "COMPLETED" && appDateInPeriod) {
+      // Sem evidência de execução pela comanda: preserva a semântica própria de Appointment.dateTime.
       for (const s of app.services) {
         if (serviceFilterSet && !serviceFilterSet.has(s.serviceId)) {
           continue;
@@ -288,10 +324,10 @@ export async function calculateSweepstakeEligibility(
           justification: `Agendamento concluído (Appointment COMPLETED)`,
         });
       }
+      countsAsVisit = appEligibleServicesCount > 0 || !serviceFilterSet;
     }
 
-    // Se houve pelo menos um serviço elegível no atendimento (ou se não filtrou serviços específicos)
-    if (appEligibleServicesCount > 0 || (!serviceFilterSet && (hasComandaDoneServices || app.status === "COMPLETED"))) {
+    if (countsAsVisit) {
       bucket.visitsCount += 1;
       bucket.servicesCount += appEligibleServicesCount;
       bucket.origins.push(...currentOrigins);
@@ -312,7 +348,8 @@ export async function calculateSweepstakeEligibility(
     const currentOrigins: ChanceOriginItem[] = [];
 
     for (const item of cmd.items) {
-      if (serviceFilterSet && item.serviceId && !serviceFilterSet.has(item.serviceId)) {
+      // Filtro de serviços: item sem serviceId NÃO entra quando a campanha restringe serviços.
+      if (serviceFilterSet && (!item.serviceId || !serviceFilterSet.has(item.serviceId))) {
         continue;
       }
       const qty = Math.max(1, Math.round(Number(item.quantity) || 1));
@@ -623,6 +660,142 @@ export class HmacDeterministicRNG {
   }
 }
 
+/**
+ * Bilhete mínimo necessário para a seleção de ganhadores (independente do Prisma).
+ */
+export interface DrawableTicket {
+  ticketNumber: number;
+  participantId: string;
+  customerId: string;
+}
+
+export interface WinnerSelectionInput {
+  tickets: DrawableTicket[];
+  prizePositions: number[];
+  allowMultiplePrizesPerUser: boolean;
+  method:
+    | { kind: "ELECTRONIC_DETERMINISTIC"; rng: { nextInt(min: number, max: number): number } }
+    | { kind: "FEDERAL_LOTTERY"; premios: string[] | null };
+}
+
+export interface WinnerSelection {
+  prizePosition: number;
+  ticketNumber: number;
+  participantId: string;
+  customerId: string;
+}
+
+/**
+ * Seleciona os ganhadores de forma pura (sem I/O), garantindo:
+ *  - Validação PRÉVIA de suficiência: se `allowMultiplePrizesPerUser = false`, exige ao menos
+ *    tantos clientes DISTINTOS quanto prêmios; caso contrário, ao menos tantos bilhetes quanto prêmios.
+ *    Insuficiência lança `INSUFFICIENT_ELIGIBLE_PARTICIPANTS` antes de qualquer gravação.
+ *  - Nenhum bilhete é contemplado duas vezes.
+ *  - Com `allowMultiplePrizesPerUser = false`, nenhum cliente é contemplado duas vezes em NENHUM caminho
+ *    (não existe fallback que contorne a regra).
+ *  - Terminação garantida: toda busca é limitada ao conjunto efetivamente disponível.
+ *
+ * Comportamento determinístico documentado:
+ *  - ELECTRONIC_DETERMINISTIC: para cada prêmio (ordem crescente de posição), monta o conjunto de bilhetes
+ *    ainda elegíveis em ordem crescente de número e escolhe o índice `rng.nextInt(0, n-1)`.
+ *    Mesma semente => mesmo resultado.
+ *  - FEDERAL_LOTTERY: número inicial = (prêmio federal da posição % totalBilhetes) + 1 (ou posição-base quando
+ *    ausente); se o bilhete não for elegível, avança ciclicamente (aproximação superior) visitando no máximo
+ *    `totalBilhetes` posições. Se nenhuma for elegível, lança erro (sem resultado parcial).
+ */
+export function selectSweepstakeWinners(input: WinnerSelectionInput): WinnerSelection[] {
+  const { prizePositions, allowMultiplePrizesPerUser, method } = input;
+  const tickets = [...input.tickets].sort((a, b) => a.ticketNumber - b.ticketNumber);
+  const totalTickets = tickets.length;
+  const requiredWinners = prizePositions.length;
+
+  if (requiredWinners === 0) {
+    throw new Error("Nenhum prêmio cadastrado para esta campanha.");
+  }
+  if (totalTickets === 0) {
+    throw new Error("Nenhum bilhete encontrado no snapshot congelado.");
+  }
+
+  const distinctCustomers = new Set(tickets.map((t) => t.customerId)).size;
+  const available = allowMultiplePrizesPerUser ? totalTickets : distinctCustomers;
+  if (available < requiredWinners) {
+    throw new Error(
+      `INSUFFICIENT_ELIGIBLE_PARTICIPANTS: a campanha possui ${requiredWinners} prêmio(s), mas apenas ${available} ` +
+        (allowMultiplePrizesPerUser ? "bilhete(s)" : "cliente(s) distinto(s)") +
+        " elegível(is). Nenhum ganhador foi registrado."
+    );
+  }
+
+  const ticketsByNumber = new Map(tickets.map((t) => [t.ticketNumber, t]));
+  const awardedTickets = new Set<number>();
+  const awardedCustomers = new Set<string>();
+  const isEligible = (t: DrawableTicket) =>
+    !awardedTickets.has(t.ticketNumber) && (allowMultiplePrizesPerUser || !awardedCustomers.has(t.customerId));
+
+  const orderedPositions = [...prizePositions].sort((a, b) => a - b);
+  const winners: WinnerSelection[] = [];
+
+  orderedPositions.forEach((position, index) => {
+    let chosen: DrawableTicket | null = null;
+
+    if (method.kind === "ELECTRONIC_DETERMINISTIC") {
+      const pool = tickets.filter(isEligible);
+      if (pool.length === 0) {
+        throw new Error(`INSUFFICIENT_ELIGIBLE_PARTICIPANTS: sem bilhetes elegíveis para o prêmio ${position}.`);
+      }
+      const idx = method.rng.nextInt(0, pool.length - 1);
+      chosen = pool[idx] ?? null;
+    } else {
+      let start: number | null = null;
+      const raw = method.premios && method.premios.length > index ? method.premios[index] : null;
+      if (raw) {
+        const num = parseInt(String(raw).replace(/\D/g, ""), 10);
+        if (!isNaN(num) && num > 0) start = (num % totalTickets) + 1;
+      }
+      if (start === null) start = ((position + index) % totalTickets) + 1;
+
+      // Busca cíclica limitada: no máximo totalTickets passos (sem loop infinito)
+      let current = start;
+      for (let step = 0; step < totalTickets; step++) {
+        const candidate = ticketsByNumber.get(current);
+        if (candidate && isEligible(candidate)) {
+          chosen = candidate;
+          break;
+        }
+        current = (current % totalTickets) + 1;
+      }
+    }
+
+    if (!chosen) {
+      throw new Error(
+        `INCONSISTENT_DRAW_RESULT: não foi possível determinar ganhador elegível para o prêmio ${position}. Nenhum ganhador foi registrado.`
+      );
+    }
+
+    awardedTickets.add(chosen.ticketNumber);
+    awardedCustomers.add(chosen.customerId);
+    winners.push({
+      prizePosition: position,
+      ticketNumber: chosen.ticketNumber,
+      participantId: chosen.participantId,
+      customerId: chosen.customerId,
+    });
+  });
+
+  // Validação final de consistência antes de qualquer persistência
+  if (winners.length !== requiredWinners) {
+    throw new Error("INCONSISTENT_DRAW_RESULT: quantidade de ganhadores difere da quantidade de prêmios.");
+  }
+  if (new Set(winners.map((w) => w.ticketNumber)).size !== winners.length) {
+    throw new Error("INCONSISTENT_DRAW_RESULT: bilhete contemplado mais de uma vez.");
+  }
+  if (!allowMultiplePrizesPerUser && new Set(winners.map((w) => w.customerId)).size !== winners.length) {
+    throw new Error("INCONSISTENT_DRAW_RESULT: cliente contemplado mais de uma vez com allowMultiplePrizesPerUser = false.");
+  }
+
+  return winners;
+}
+
 export interface DrawSweepstakeInput {
   sweepstakeId: string;
   barbershopId: string;
@@ -720,25 +893,19 @@ export async function executeSweepstakeDraw(
     );
   }
 
-  // Realizar apuração
-  const totalTickets = sweepstake.tickets.length;
+  // Realizar apuração (seleção pura e validada ANTES de qualquer gravação;
+  // qualquer erro aborta a transação sem ganhadores parciais)
   const ticketsByNumber = new Map(sweepstake.tickets.map((t) => [t.ticketNumber, t]));
-
-  interface SelectedWinner {
-    prizePosition: number;
-    winningTicketNumber: number;
-    participantId: string;
-    customerId: string;
-    customerName: string;
-    customerPhone: string;
-  }
-
-  const selectedWinners: SelectedWinner[] = [];
-  const awardedCustomerIds = new Set<string>();
-  const awardedTicketNumbers = new Set<number>();
-  const auditLog: Array<{ position: number; ticketNumber: number; customerId: string; reason: string }> = [];
+  const drawableTickets: DrawableTicket[] = sweepstake.tickets.map((t) => ({
+    ticketNumber: t.ticketNumber,
+    participantId: t.participantId,
+    customerId: t.participant.customerId,
+  }));
+  const prizePositions = sweepstake.prizes.map((p) => p.position);
 
   let seedUsedForAudit = sweepstake.precommittedSeed || "LOTERIA_FEDERAL";
+  let selection: WinnerSelection[];
+  let reasonText: string;
 
   if (sweepstake.drawMethod === "ELECTRONIC_DETERMINISTIC") {
     // Para impedir que o resultado seja antecipado ou calculado previamente a partir da precommittedSeed
@@ -751,118 +918,49 @@ export async function executeSweepstakeDraw(
       .digest("hex");
 
     seedUsedForAudit = `PRECOMMIT:${sweepstake.precommittedSeed || "none"}|EXEC_SALT:${executionEntropy}|EFFECTIVE:${effectiveSeed}`;
-    const rng = new HmacDeterministicRNG(effectiveSeed);
 
-    for (const prize of sweepstake.prizes) {
-      let candidateTicket: typeof sweepstake.tickets[0] | null = null;
-      let attempts = 0;
-      const maxAttempts = totalTickets * 5;
-
-      while (attempts < maxAttempts) {
-        attempts++;
-        const candidateNum = rng.nextInt(1, totalTickets);
-        const ticket = ticketsByNumber.get(candidateNum);
-        if (!ticket) continue;
-
-        if (awardedTicketNumbers.has(candidateNum)) continue;
-
-        if (!sweepstake.allowMultiplePrizesPerUser && awardedCustomerIds.has(ticket.participant.customerId)) {
-          // Cliente já contemplado e regulamento proíbe múltiplos prêmios
-          continue;
-        }
-
-        candidateTicket = ticket;
-        break;
-      }
-
-      // Se todas as tentativas falharam (ex: menos clientes que prêmios)
-      if (!candidateTicket) {
-        for (const t of sweepstake.tickets) {
-          if (!awardedTicketNumbers.has(t.ticketNumber)) {
-            candidateTicket = t;
-            break;
-          }
-        }
-      }
-
-      if (!candidateTicket) break;
-
-      awardedTicketNumbers.add(candidateTicket.ticketNumber);
-      awardedCustomerIds.add(candidateTicket.participant.customerId);
-
-      selectedWinners.push({
-        prizePosition: prize.position,
-        winningTicketNumber: candidateTicket.ticketNumber,
-        participantId: candidateTicket.participantId,
-        customerId: candidateTicket.participant.customerId,
-        customerName: candidateTicket.participant.customer.name,
-        customerPhone: candidateTicket.participant.customer.phone,
-      });
-
-      auditLog.push({
-        position: prize.position,
-        ticketNumber: candidateTicket.ticketNumber,
-        customerId: candidateTicket.participant.customerId,
-        reason: isTechnicalSimulation
-          ? `Simulação técnica local via CSPRNG HMAC-SHA256 (NIST SP 800-90A) com semente pré-comprometida`
-          : `Sorteio determinístico CSPRNG HMAC-SHA256 auditável com semente pré-comprometida`,
-      });
-    }
+    selection = selectSweepstakeWinners({
+      tickets: drawableTickets,
+      prizePositions,
+      allowMultiplePrizesPerUser: sweepstake.allowMultiplePrizesPerUser,
+      method: { kind: "ELECTRONIC_DETERMINISTIC", rng: new HmacDeterministicRNG(effectiveSeed) },
+    });
+    reasonText = isTechnicalSimulation
+      ? `Simulação técnica local via CSPRNG HMAC-SHA256 (NIST SP 800-90A) com semente pré-comprometida`
+      : `Sorteio determinístico CSPRNG HMAC-SHA256 auditável com semente pré-comprometida`;
   } else if (sweepstake.drawMethod === "FEDERAL_LOTTERY") {
     if (!federalLotteryConcurso || federalLotteryConcurso.trim().length === 0) {
       throw new Error("Número do concurso da Loteria Federal é obrigatório para este método.");
     }
-
-    // Extração baseada nas dezenas da Loteria Federal
-    let baseOffset = 0;
-    for (const prize of sweepstake.prizes) {
-      let winningTicketNum: number | null = null;
-      if (federalLotteryPremios && federalLotteryPremios.length >= prize.position) {
-        const rawPremio = federalLotteryPremios[prize.position - 1].replace(/\D/g, "");
-        const num = parseInt(rawPremio, 10);
-        if (!isNaN(num) && num > 0) {
-          // Mapeamento proporcional ou módulo
-          winningTicketNum = (num % totalTickets) + 1;
-        }
-      }
-
-      if (!winningTicketNum) {
-        winningTicketNum = ((prize.position + baseOffset) % totalTickets) + 1;
-      }
-
-      // Aproximação superior se já contemplado
-      while (
-        awardedTicketNumbers.has(winningTicketNum) ||
-        (!sweepstake.allowMultiplePrizesPerUser &&
-          awardedCustomerIds.has(ticketsByNumber.get(winningTicketNum)?.participant.customerId || ""))
-      ) {
-        winningTicketNum = (winningTicketNum % totalTickets) + 1;
-      }
-
-      const ticket = ticketsByNumber.get(winningTicketNum);
-      if (!ticket) break;
-
-      awardedTicketNumbers.add(winningTicketNum);
-      awardedCustomerIds.add(ticket.participant.customerId);
-
-      selectedWinners.push({
-        prizePosition: prize.position,
-        winningTicketNumber: ticket.ticketNumber,
-        participantId: ticket.participantId,
-        customerId: ticket.participant.customerId,
-        customerName: ticket.participant.customer.name,
-        customerPhone: ticket.participant.customer.phone,
-      });
-
-      auditLog.push({
-        position: prize.position,
-        ticketNumber: ticket.ticketNumber,
-        customerId: ticket.participant.customerId,
-        reason: `Mapeado pelo resultado do concurso ${federalLotteryConcurso} da Loteria Federal`,
-      });
-      baseOffset++;
-    }
+    selection = selectSweepstakeWinners({
+      tickets: drawableTickets,
+      prizePositions,
+      allowMultiplePrizesPerUser: sweepstake.allowMultiplePrizesPerUser,
+      method: { kind: "FEDERAL_LOTTERY", premios: federalLotteryPremios ?? null },
+    });
+    reasonText = `Mapeado pelo resultado do concurso ${federalLotteryConcurso} da Loteria Federal`;
+  } else {
+    throw new Error(`Método de apuração não suportado: ${String(sweepstake.drawMethod)}`);
   }
+
+  const selectedWinners = selection.map((w) => {
+    const ticket = ticketsByNumber.get(w.ticketNumber)!;
+    return {
+      prizePosition: w.prizePosition,
+      winningTicketNumber: w.ticketNumber,
+      participantId: w.participantId,
+      customerId: w.customerId,
+      customerName: ticket.participant.customer.name,
+      customerPhone: ticket.participant.customer.phone,
+    };
+  });
+
+  const auditLog = selection.map((w) => ({
+    position: w.prizePosition,
+    ticketNumber: w.ticketNumber,
+    customerId: w.customerId,
+    reason: reasonText,
+  }));
 
   // Gravar Ganhadores
   for (const win of selectedWinners) {

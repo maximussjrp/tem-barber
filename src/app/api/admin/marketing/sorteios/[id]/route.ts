@@ -184,7 +184,19 @@ export async function DELETE(
     return NextResponse.json({ success: true, message: "Rascunho excluído com sucesso." });
   }
 
-  // Se já foi ativada ou congelada, marcar como CANCELLED
+  // Imutabilidade do histórico: campanhas apuradas/auditadas preservam status, ganhadores e ata.
+  if (existing.status === "DRAWN" || existing.status === "AUDITED") {
+    return NextResponse.json(
+      { error: `Campanha com status ${existing.status} é imutável e não pode ser cancelada ou excluída.` },
+      { status: 422 }
+    );
+  }
+
+  if (existing.status === "CANCELLED") {
+    return NextResponse.json({ error: "Campanha já está cancelada." }, { status: 422 });
+  }
+
+  // Se já foi ativada ou congelada (ainda não apurada), marcar como CANCELLED
   const cancelled = await prisma.customerSweepstake.update({
     where: { id_barbershopId: { id, barbershopId } },
     data: { status: "CANCELLED" },

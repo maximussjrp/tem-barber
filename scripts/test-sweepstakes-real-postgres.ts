@@ -379,6 +379,58 @@ async function runSweepstakesRealPgTests() {
     (process.env as any).NODE_ENV = oldEnv;
   }
 
+  // 8.3 Insuficiência de clientes distintos: sem ganhadores parciais (rollback transacional real)
+  const sweepstakeInsufficient = await prisma.customerSweepstake.create({
+    data: {
+      barbershopId: shopA.id,
+      title: "Sorteio 3 Prêmios / 2 Clientes",
+      participationMode: "ONE_PER_SERVICE",
+      targetSegment: "ALL_CUSTOMERS",
+      startDateCivil,
+      endDateCivil,
+      startInclusiveUtc,
+      endExclusiveUtc,
+      drawDateScheduled: endExclusiveUtc,
+      status: "DRAFT",
+      allowMultiplePrizesPerUser: false,
+      createdById: adminA.id,
+      prizes: {
+        create: [
+          { position: 1, title: "Prêmio 1" },
+          { position: 2, title: "Prêmio 2" },
+          { position: 3, title: "Prêmio 3" },
+        ],
+      },
+    },
+  });
+  await prisma.$transaction(async (tx) => freezeCustomerSweepstake(tx, sweepstakeInsufficient.id, shopA.id, adminA.id));
+  let insufficientBlocked = false;
+  try {
+    await prisma.$transaction(async (tx) =>
+      executeSweepstakeDraw(tx, {
+        sweepstakeId: sweepstakeInsufficient.id,
+        barbershopId: shopA.id,
+        drawnByUserId: adminA.id,
+        isTechnicalSimulation: true,
+      })
+    );
+  } catch (err: any) {
+    if (!err.message.includes("INSUFFICIENT_ELIGIBLE_PARTICIPANTS")) throw err;
+    insufficientBlocked = true;
+  }
+  const partialWinners = await prisma.customerSweepstakeWinner.count({ where: { sweepstakeId: sweepstakeInsufficient.id } });
+  const partialAudit = await prisma.customerSweepstakeDrawAudit.count({ where: { sweepstakeId: sweepstakeInsufficient.id } });
+  const afterStatus = await prisma.customerSweepstake.findUniqueOrThrow({
+    where: { id_barbershopId: { id: sweepstakeInsufficient.id, barbershopId: shopA.id } },
+    select: { status: true },
+  });
+  if (!insufficientBlocked || partialWinners !== 0 || partialAudit !== 0 || afterStatus.status !== "FROZEN") {
+    throw new Error(
+      `FALHA: apuração com clientes insuficientes deveria falhar sem resultado parcial (bloqueado=${insufficientBlocked}, ganhadores=${partialWinners}, atas=${partialAudit}, status=${afterStatus.status}).`
+    );
+  }
+  console.log("   ✅ 8.3 Clientes distintos insuficientes: apuração rejeitada, 0 ganhadores parciais, status FROZEN preservado.");
+
   // 9. Auditoria de Neutralidade Financeira Pós-Execução
   console.log("\n-> 9. Verificando Neutralidade Financeira Absoluta...");
   const finalFinancialEntries = await prisma.financialEntry.count();
