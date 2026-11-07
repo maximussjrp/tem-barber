@@ -7,6 +7,7 @@ import {
   isCustomerClubMemberInPeriod,
   selectSweepstakeWinners,
   HmacDeterministicRNG,
+  computeSweepstakeTicketsDigest,
   type DrawableTicket,
 } from "@/lib/marketing/sweepstake-engine";
 
@@ -100,6 +101,10 @@ describe("P0 — Ganhadores duplicados (allowMultiplePrizesPerUser = false)", ()
   it("executeSweepstakeDraw não grava ganhadores, ata nem status quando a apuração falha", async () => {
     const tx = buildMockTx();
     tx.$queryRaw.mockResolvedValue([{ id: "sw-1", status: "FROZEN" }]);
+    const validDigest = computeSweepstakeTicketsDigest([
+      { ticketNumber: 1, participantId: "p-A", customerId: "cust-A" },
+      { ticketNumber: 2, participantId: "p-A", customerId: "cust-A" },
+    ]);
     tx.customerSweepstake.findUniqueOrThrow.mockResolvedValue({
       id: "sw-1",
       endDateCivil: "2026-10-31",
@@ -108,7 +113,11 @@ describe("P0 — Ganhadores duplicados (allowMultiplePrizesPerUser = false)", ()
       allowMultiplePrizesPerUser: false,
       drawMethod: "ELECTRONIC_DETERMINISTIC",
       precommittedSeed: "abc",
+      ticketsSha256Digest: validDigest,
+      totalEligibleCustomers: 1,
+      totalChancesAssigned: 2,
       prizes: [{ position: 1 }, { position: 2 }],
+      participants: [{ id: "p-A", customerId: "cust-A", chancesCount: 2 }],
       tickets: [1, 2].map((n) => ({
         ticketNumber: n,
         participantId: "p-A",

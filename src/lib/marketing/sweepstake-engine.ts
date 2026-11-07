@@ -69,6 +69,33 @@ function getAppointmentCivilBoundaries(startDateCivil: string, endDateCivil: str
 /**
  * Avalia se um cliente tinha assinatura ativa ou comprovada do clube no período avaliado.
  * Não confia exclusivamente em status atual mutável nem na flag clubBenefitRequested.
+ *
+ * Regras de reconstrução histórica e limitações documentadas do schema atual:
+ * 1. `ClubSubscriptionPayment` (append-only, status="PAID"):
+ *    - Exige obrigatoriamente `paidAt < endExclusiveUtc` (um pagamento realizado APÓS o término
+ *      da campanha na mesma competência mensal NÃO concede elegibilidade retroativa ao período).
+ *    - Cobre competência mensal coincidente (`startMonthCompetence..endMonthCompetence`) OU
+ *      ciclo pago de 30 dias + 1 dia de carência (31 dias) iniciado nos 31 dias anteriores a
+ *      `startInclusiveUtc` (cobrindo transição entre competências quando o pagamento ocorreu no
+ *      mês anterior mas sua vigência atravessa o período avaliado, mesmo que a assinatura seja
+ *      posteriormente renovada, suspensa ou cancelada).
+ * 2. `ClubBenefitUsage` (status="APPLIED" e `reversedAt: null`):
+ *    - Comprova vínculo ativo na data `usedAt` dentro do intervalo `[startInclusiveUtc, endExclusiveUtc)`.
+ *    - Usos estornados (`status="REVERSED"` ou `reversedAt != null`) são estritamente descartados.
+ * 3. `CustomerClubSubscription` (fallback conservador):
+ *    - Como a tabela `customer_club_subscriptions` sobrescreve `status`, `currentPeriodStart`,
+ *      `currentPeriodEnd` e `gracePeriodEnd` in-place (em cancelamentos, suspensões e renovações)
+ *      e não possui histórico de transições de status (`canceledAt`/`suspendedAt`), status não
+ *      vigentes (`CANCELED`, `SUSPENDED`, `EXPIRED`, `PAST_DUE`) NÃO são aceitos pelo estado atual
+ *      da linha — dependem exclusivamente das evidências históricas 1 e 2 acima.
+ *    - Mesmo quando `status` atual é `ACTIVE` ou `GRACE_PERIOD`, exige `createdAt < endExclusiveUtc`,
+ *      `currentPeriodStart < endExclusiveUtc` e término (`currentPeriodEnd` ou `gracePeriodEnd`)
+ *      `>= startInclusiveUtc`.
+ *    - Limitação residual documentada: assinaturas criadas manualmente sem registro em
+ *      `ClubSubscriptionPayment` e sem uso de benefício (`ClubBenefitUsage`) que forem posteriormente
+ *      canceladas/suspensas ou tiverem seu ciclo sobrescrito por renovação em mês futuro sem pagamento
+ *      do mês da campanha não terão trilha imutável daquele período; na operação padrão do Clube,
+ *      toda ativação/renovação gera `ClubSubscriptionPayment` (`PAID`) ou `ClubBenefitUsage` (`APPLIED`).
  */
 export async function isCustomerClubMemberInPeriod(
   tx: Prisma.TransactionClient,
@@ -83,22 +110,28 @@ export async function isCustomerClubMemberInPeriod(
 ): Promise<boolean> {
   const { barbershopId, customerId, startInclusiveUtc, endExclusiveUtc, startMonthCompetence, endMonthCompetence } = params;
 
-  // 1. Pagamento aprovado de assinatura cobrindo a competência ou pago na vigência
+  // Janela de cobertura de ciclo pago anterior (30 dias de ciclo + 1 dia de carência = 31 dias)
+  // para contemplar mudança de competência (ex.: pago em 20/09 cobrindo campanha em 01/10..15/10).
+  const cycleCoverageFloorUtc = new Date(startInclusiveUtc.getTime() - 31 * 24 * 60 * 60 * 1000);
+
+  // 1. Pagamento aprovado de assinatura realizado ANTES do fim do período avaliado,
+  // cobrindo a competência da campanha ou cujo ciclo pago de 31 dias intercepte o período.
   const validPayment = await tx.clubSubscriptionPayment.findFirst({
     where: {
       barbershopId,
       customerId,
       status: "PAID",
+      paidAt: { lt: endExclusiveUtc },
       OR: [
         { competence: { gte: startMonthCompetence, lte: endMonthCompetence } },
-        { paidAt: { gte: startInclusiveUtc, lt: endExclusiveUtc } },
+        { paidAt: { gte: cycleCoverageFloorUtc, lt: endExclusiveUtc } },
       ],
     },
     select: { id: true },
   });
   if (validPayment) return true;
 
-  // 2. Uso efetivo e comprovado de benefício do clube no período (não apenas solicitação)
+  // 2. Uso efetivo e comprovado de benefício do clube no período (não apenas solicitação e não estornado)
   const validUsage = await tx.clubBenefitUsage.findFirst({
     where: {
       barbershopId,
@@ -113,11 +146,9 @@ export async function isCustomerClubMemberInPeriod(
 
   // 3. Assinatura cujo período/carência cobria o intervalo da campanha.
   // Fallback restrito a status vigentes (ACTIVE / GRACE_PERIOD): o schema não registra a data de
-  // cancelamento, portanto uma assinatura CANCELED/EXPIRED/SUSPENDED/PAST_DUE NÃO é considerada ativa
+  // cancelamento/suspensão, portanto uma assinatura CANCELED/EXPIRED/SUSPENDED/PAST_DUE NÃO é considerada ativa
   // apenas porque suas datas se sobrepõem ao período. Para essas, valem somente as evidências históricas
-  // confiáveis acima (pagamento PAID ou uso APPLIED no período).
-  // Exceção documentada: assinante cancelado após o período, sem pagamento/uso registrado no período,
-  // não é classificado como membro do clube (comportamento conservador).
+  // imutáveis acima (pagamento PAID anterior ao fim do período ou uso APPLIED não estornado no período).
   const activeSub = await tx.customerClubSubscription.findFirst({
     where: {
       barbershopId,
@@ -536,9 +567,7 @@ export async function freezeCustomerSweepstake(
   }
 
   // 3. Gerar Hashes Criptográficos Imutáveis
-  ticketsToHash.sort((a, b) => a.ticketNumber - b.ticketNumber);
-  const ticketsJson = JSON.stringify(ticketsToHash);
-  const ticketsSha256Digest = crypto.createHash("sha256").update(ticketsJson).digest("hex");
+  const ticketsSha256Digest = computeSweepstakeTicketsDigest(ticketsToHash);
 
   const frozenAt = new Date();
   const precommittedSeed = crypto
@@ -796,10 +825,246 @@ export function selectSweepstakeWinners(input: WinnerSelectionInput): WinnerSele
   return winners;
 }
 
+export interface CanonicalTicketDigestItem {
+  ticketNumber: number;
+  participantId: string;
+  customerId: string;
+}
+
+/**
+ * Calcula o hash SHA-256 canônico e determinístico do conjunto ordenado de bilhetes (1..N).
+ * Deve utilizar exatamente a mesma serialização (`ticketNumber`, `participantId`, `customerId`)
+ * tanto no congelamento (`freezeCustomerSweepstake`) quanto na verificação pré-apuração (`executeSweepstakeDraw`).
+ */
+export function computeSweepstakeTicketsDigest(tickets: CanonicalTicketDigestItem[]): string {
+  const canonical: CanonicalTicketDigestItem[] = [...tickets]
+    .sort((a, b) => a.ticketNumber - b.ticketNumber)
+    .map((t) => ({
+      ticketNumber: Number(t.ticketNumber),
+      participantId: String(t.participantId),
+      customerId: String(t.customerId),
+    }));
+  const ticketsJson = JSON.stringify(canonical);
+  return crypto.createHash("sha256").update(ticketsJson).digest("hex");
+}
+
+export interface SnapshotIntegrityCheckInput {
+  ticketsSha256Digest: string | null | undefined;
+  totalEligibleCustomers: number;
+  totalChancesAssigned: number;
+  participants: Array<{
+    id: string;
+    customerId: string;
+    chancesCount: number;
+  }>;
+  tickets: Array<{
+    ticketNumber: number;
+    participantId: string;
+    customerId: string;
+  }>;
+}
+
+/**
+ * Verifica a integridade criptográfica e relacional do snapshot congelado antes de qualquer sorteio:
+ *  1. Presença do digest SHA-256 gravado no congelamento.
+ *  2. Consistência da tabela de participantes (`totalEligibleCustomers`, `chancesCount > 0`, soma de chances).
+ *  3. Sequência estrita e contínua de bilhetes `1..N` sem lacunas, duplicidades ou números fora de faixa.
+ *  4. Correspondência exata entre a quantidade de bilhetes de cada participante e `participant.chancesCount`,
+ *     bem como vínculo íntegro `participantId -> customerId`.
+ *  5. Recálculo do SHA-256 sobre os bilhetes persistidos e comparação estrita com `ticketsSha256Digest`.
+ */
+export function verifySweepstakeSnapshotIntegrity(input: SnapshotIntegrityCheckInput): string {
+  const {
+    ticketsSha256Digest,
+    totalEligibleCustomers,
+    totalChancesAssigned,
+    participants,
+    tickets,
+  } = input;
+
+  if (!ticketsSha256Digest || typeof ticketsSha256Digest !== "string" || !/^[a-f0-9]{64}$/i.test(ticketsSha256Digest.trim())) {
+    throw new Error(
+      "SNAPSHOT_INTEGRITY_ERROR: Hash SHA-256 do snapshot congelado está ausente ou malformado. Apuração abortada."
+    );
+  }
+
+  if (participants.length === 0 || tickets.length === 0) {
+    throw new Error(
+      "SNAPSHOT_INTEGRITY_ERROR: Snapshot congelado não possui participantes ou bilhetes persistidos. Apuração abortada."
+    );
+  }
+
+  if (participants.length !== totalEligibleCustomers) {
+    throw new Error(
+      `SNAPSHOT_INTEGRITY_ERROR: Divergência na contagem de participantes persistidos (${participants.length}) vs totalEligibleCustomers (${totalEligibleCustomers}).`
+    );
+  }
+
+  const participantMap = new Map<string, { id: string; customerId: string; chancesCount: number }>();
+  let sumParticipantChances = 0;
+
+  for (const p of participants) {
+    if (!Number.isInteger(p.chancesCount) || p.chancesCount <= 0) {
+      throw new Error(
+        `SNAPSHOT_INTEGRITY_ERROR: Participante ${p.id} possui chancesCount inválido (${p.chancesCount}).`
+      );
+    }
+    if (participantMap.has(p.id)) {
+      throw new Error(`SNAPSHOT_INTEGRITY_ERROR: Participante duplicado (${p.id}) no snapshot.`);
+    }
+    participantMap.set(p.id, p);
+    sumParticipantChances += p.chancesCount;
+  }
+
+  if (sumParticipantChances !== totalChancesAssigned || tickets.length !== totalChancesAssigned) {
+    throw new Error(
+      `SNAPSHOT_INTEGRITY_ERROR: Divergência no total de chances/bilhetes (soma participantes=${sumParticipantChances}, bilhetes=${tickets.length}, totalChancesAssigned=${totalChancesAssigned}).`
+    );
+  }
+
+  const sortedTickets = [...tickets].sort((a, b) => a.ticketNumber - b.ticketNumber);
+  const ticketCountByParticipant = new Map<string, number>();
+
+  for (let i = 0; i < sortedTickets.length; i++) {
+    const expectedTicketNumber = i + 1;
+    const t = sortedTickets[i];
+    if (t.ticketNumber !== expectedTicketNumber) {
+      throw new Error(
+        `SNAPSHOT_INTEGRITY_ERROR: Sequência de bilhetes corrompida (esperado bilhete #${expectedTicketNumber}, encontrado #${t.ticketNumber}).`
+      );
+    }
+    const owner = participantMap.get(t.participantId);
+    if (!owner) {
+      throw new Error(
+        `SNAPSHOT_INTEGRITY_ERROR: Bilhete #${t.ticketNumber} referencia participante inexistente (${t.participantId}) no snapshot.`
+      );
+    }
+    if (owner.customerId !== t.customerId) {
+      throw new Error(
+        `SNAPSHOT_INTEGRITY_ERROR: Bilhete #${t.ticketNumber} apresenta divergência de customerId (${t.customerId} vs ${owner.customerId}).`
+      );
+    }
+    ticketCountByParticipant.set(t.participantId, (ticketCountByParticipant.get(t.participantId) || 0) + 1);
+  }
+
+  for (const p of participants) {
+    const actualTickets = ticketCountByParticipant.get(p.id) || 0;
+    if (actualTickets !== p.chancesCount) {
+      throw new Error(
+        `SNAPSHOT_INTEGRITY_ERROR: Participante ${p.id} possui ${actualTickets} bilhete(s), mas chancesCount registrado é ${p.chancesCount}.`
+      );
+    }
+  }
+
+  const recalculatedDigest = computeSweepstakeTicketsDigest(sortedTickets);
+  const expectedBuf = Buffer.from(ticketsSha256Digest.trim().toLowerCase(), "utf-8");
+  const actualBuf = Buffer.from(recalculatedDigest.toLowerCase(), "utf-8");
+
+  if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) {
+    throw new Error(
+      `SNAPSHOT_INTEGRITY_ERROR: Divergência criptográfica no SHA-256 do snapshot de bilhetes (esperado ${ticketsSha256Digest}, recalculado ${recalculatedDigest}). Apuração bloqueada.`
+    );
+  }
+
+  return recalculatedDigest;
+}
+
+export interface TechnicalSimulationAuthContext {
+  isTechnicalSimulation: boolean;
+  userId: string;
+  userRole?: string | null;
+  userEmail?: string | null;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Controle de servidor para restringir a apuração e as simulações técnicas (V1):
+ *  - Se `isTechnicalSimulation !== true`, mantém a trava regulatória `APURACAO_OFICIAL_BLOQUEADA_V1`.
+ *  - O parâmetro `isTechnicalSimulation` enviado pelo navegador NUNCA autoriza a operação sozinho:
+ *    1. Em produção (`NODE_ENV === "production"`), simulações técnicas ficam DESABILITADAS por padrão,
+ *       exigindo habilitação expressa de servidor (`SWEEPSTAKE_ENABLE_TECH_SIMULATION === "true"`)
+ *       E usuário autorizado (`SUPER_ADMIN` ou ID/email explicitamente listado em `SWEEPSTAKE_TECH_SIMULATION_ALLOWED_USERS`).
+ *    2. Em qualquer ambiente, se `SWEEPSTAKE_ENABLE_TECH_SIMULATION === "false"`, a simulação é bloqueada.
+ *    3. Usuários comuns ou operacionais (`USER`, `BARBER`, `RECEPTIONIST`, `MANAGER`) são sempre rejeitados;
+ *       apenas `SUPER_ADMIN` ou `OWNER` (em ambiente não-produtivo ou quando explicitamente listado na allowlist) podem acionar.
+ */
+export function assertTechnicalSimulationAuthorized(ctx: TechnicalSimulationAuthContext): void {
+  const { isTechnicalSimulation, userId, userRole, userEmail } = ctx;
+  const env = ctx.env ?? process.env;
+
+  // TRAVA REGULATÓRIA ESTRITA V1:
+  // A legislação brasileira (Lei 5.768/71 e normativas SPA/MF) exige que sorteios eletrônicos comerciais
+  // com distribuição pública de prêmios sejam previamente certificados por laboratório de testes independente.
+  // Na versão V1, a execução oficial pública permanece bloqueada pelo servidor até a validação da modalidade aplicável.
+  // Nem o preenchimento de código de autorização nem a flag isRegulatedPromotion = false dispensam essa trava.
+  if (!isTechnicalSimulation) {
+    throw new Error(
+      "APURACAO_OFICIAL_BLOQUEADA_V1: Na versão V1, a apuração oficial permanece bloqueada aguardando a validação jurídica e técnica da modalidade aplicável (Loteria Federal ou sistema homologado SPA/MF). Apenas simulações técnicas internas são permitidas."
+    );
+  }
+
+  const normalizedRole = userRole ? String(userRole).trim().toUpperCase() : null;
+  const isProduction = env.NODE_ENV === "production";
+  const explicitFlag = env.SWEEPSTAKE_ENABLE_TECH_SIMULATION?.trim().toLowerCase();
+
+  // Bloqueio explícito via variável de servidor em qualquer ambiente
+  if (explicitFlag === "false" || explicitFlag === "0") {
+    throw new Error(
+      "SIMULACAO_TECNICA_DESABILITADA: As simulações técnicas de sorteios estão desabilitadas neste servidor."
+    );
+  }
+
+  // Em produção, simulações técnicas são DESABILITADAS por padrão
+  if (isProduction && explicitFlag !== "true") {
+    throw new Error(
+      "SIMULACAO_TECNICA_DESABILITADA: Simulações técnicas estão desabilitadas por padrão em produção até habilitação expressa do servidor (SWEEPSTAKE_ENABLE_TECH_SIMULATION=true)."
+    );
+  }
+
+  // Validação de papel (role): rejeitar usuários comuns ou sem papel administrativo máximo
+  if (normalizedRole !== null && normalizedRole !== "OWNER" && normalizedRole !== "SUPER_ADMIN") {
+    throw new Error(
+      `SIMULACAO_TECNICA_NAO_AUTORIZADA: O perfil '${normalizedRole}' não possui permissão para executar simulações técnicas de sorteios.`
+    );
+  }
+
+  if (isProduction) {
+    // Em produção, exige papel explicitamente verificado
+    if (!normalizedRole) {
+      throw new Error(
+        "SIMULACAO_TECNICA_NAO_AUTORIZADA: Perfil do usuário não identificado para execução de simulação técnica em produção."
+      );
+    }
+
+    const rawAllowedUsers = env.SWEEPSTAKE_TECH_SIMULATION_ALLOWED_USERS || "";
+    const allowedTokens = new Set(
+      rawAllowedUsers
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    const normalizedUserId = (userId || "").trim().toLowerCase();
+    const normalizedEmail = (userEmail || "").trim().toLowerCase();
+    const isExplicitlyAllowlisted =
+      (normalizedUserId.length > 0 && allowedTokens.has(normalizedUserId)) ||
+      (normalizedEmail.length > 0 && allowedTokens.has(normalizedEmail));
+
+    // Em produção, somente SUPER_ADMIN ou usuário explicitamente listado em SWEEPSTAKE_TECH_SIMULATION_ALLOWED_USERS
+    if (normalizedRole !== "SUPER_ADMIN" && !isExplicitlyAllowlisted) {
+      throw new Error(
+        "SIMULACAO_TECNICA_NAO_AUTORIZADA: Em produção, simulações técnicas são restritas a SUPER_ADMIN ou usuários explicitamente autorizados em SWEEPSTAKE_TECH_SIMULATION_ALLOWED_USERS."
+      );
+    }
+  }
+}
+
 export interface DrawSweepstakeInput {
   sweepstakeId: string;
   barbershopId: string;
   drawnByUserId: string;
+  drawnByUserRole?: string | null;
+  drawnByUserEmail?: string | null;
   federalLotteryConcurso?: string | null;
   federalLotteryPremios?: string[] | null;
   isTechnicalSimulation?: boolean;
@@ -807,7 +1072,8 @@ export interface DrawSweepstakeInput {
 
 /**
  * Executa a apuração oficial do sorteio com verificação estrita dos gates regulatórios,
- * bloqueio transacional e idempotência comprovada.
+ * controle de servidor sobre simulações técnicas, validação criptográfica de integridade
+ * do snapshot (`ticketsSha256Digest` + `participants`), bloqueio transacional e idempotência comprovada.
  */
 export async function executeSweepstakeDraw(
   tx: Prisma.TransactionClient,
@@ -817,6 +1083,8 @@ export async function executeSweepstakeDraw(
     sweepstakeId,
     barbershopId,
     drawnByUserId,
+    drawnByUserRole,
+    drawnByUserEmail,
     federalLotteryConcurso,
     federalLotteryPremios,
     isTechnicalSimulation = false,
@@ -846,6 +1114,13 @@ export async function executeSweepstakeDraw(
     where: { id_barbershopId: { id: sweepstakeId, barbershopId } },
     include: {
       prizes: { orderBy: { position: "asc" } },
+      participants: {
+        select: {
+          id: true,
+          customerId: true,
+          chancesCount: true,
+        },
+      },
       tickets: {
         include: {
           participant: {
@@ -882,25 +1157,33 @@ export async function executeSweepstakeDraw(
     }
   }
 
-  // TRAVA REGULATÓRIA ESTRITA V1:
-  // A legislação brasileira (Lei 5.768/71 e normativas SPA/MF) exige que sorteios eletrônicos comerciais
-  // com distribuição pública de prêmios sejam previamente certificados por laboratório de testes independente.
-  // Na versão V1, a execução oficial pública permanece bloqueada pelo servidor até a validação da modalidade aplicável.
-  // Nem o preenchimento de código de autorização nem a flag isRegulatedPromotion = false dispensam essa trava.
-  if (!isTechnicalSimulation) {
-    throw new Error(
-      "APURACAO_OFICIAL_BLOQUEADA_V1: Na versão V1, a apuração oficial permanece bloqueada aguardando a validação jurídica e técnica da modalidade aplicável (Loteria Federal ou sistema homologado SPA/MF). Apenas simulações técnicas internas são permitidas."
-    );
-  }
+  // Controle de servidor sobre apuração oficial V1 e simulações técnicas
+  assertTechnicalSimulationAuthorized({
+    isTechnicalSimulation: Boolean(isTechnicalSimulation),
+    userId: drawnByUserId,
+    userRole: drawnByUserRole,
+    userEmail: drawnByUserEmail,
+  });
 
-  // Realizar apuração (seleção pura e validada ANTES de qualquer gravação;
-  // qualquer erro aborta a transação sem ganhadores parciais)
-  const ticketsByNumber = new Map(sweepstake.tickets.map((t) => [t.ticketNumber, t]));
   const drawableTickets: DrawableTicket[] = sweepstake.tickets.map((t) => ({
     ticketNumber: t.ticketNumber,
     participantId: t.participantId,
     customerId: t.participant.customerId,
   }));
+
+  // Validação obrigatória de integridade do snapshot (participantes + bilhetes 1..N + SHA-256)
+  // ANTES de qualquer seleção ou persistência de resultado
+  const verifiedSnapshotDigest = verifySweepstakeSnapshotIntegrity({
+    ticketsSha256Digest: sweepstake.ticketsSha256Digest,
+    totalEligibleCustomers: sweepstake.totalEligibleCustomers,
+    totalChancesAssigned: sweepstake.totalChancesAssigned,
+    participants: sweepstake.participants,
+    tickets: drawableTickets,
+  });
+
+  // Realizar apuração (seleção pura e validada ANTES de qualquer gravação;
+  // qualquer erro aborta a transação sem ganhadores parciais)
+  const ticketsByNumber = new Map(sweepstake.tickets.map((t) => [t.ticketNumber, t]));
   const prizePositions = sweepstake.prizes.map((p) => p.position);
 
   let seedUsedForAudit = sweepstake.precommittedSeed || "LOTERIA_FEDERAL";
@@ -986,7 +1269,7 @@ export async function executeSweepstakeDraw(
       drawnAt: now,
       drawMethod: sweepstake.drawMethod,
       seedUsed: seedUsedForAudit,
-      ticketsSha256Snapshot: sweepstake.ticketsSha256Digest || "",
+      ticketsSha256Snapshot: verifiedSnapshotDigest,
       auditLogJson: auditLog as unknown as Prisma.InputJsonValue,
     },
   });

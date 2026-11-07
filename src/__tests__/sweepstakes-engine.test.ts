@@ -3,6 +3,7 @@ import {
   calculateSweepstakeEligibility,
   freezeCustomerSweepstake,
   executeSweepstakeDraw,
+  computeSweepstakeTicketsDigest,
 } from "@/lib/marketing/sweepstake-engine";
 import { Prisma } from "@prisma/client";
 
@@ -314,17 +315,28 @@ describe("Sweepstake Engine — Elegibilidade, Desduplicação e Apuração Audi
     it("executa sorteio determinístico e rejeita execução duplicada", async () => {
       mockTx.$queryRaw.mockResolvedValue([{ id: "sw-1", status: "FROZEN" }]);
 
+      const validDigest = computeSweepstakeTicketsDigest([
+        { ticketNumber: 1, participantId: "part-1", customerId: "user-1" },
+        { ticketNumber: 2, participantId: "part-2", customerId: "user-2" },
+      ]);
+
       mockTx.customerSweepstake.findUniqueOrThrow.mockResolvedValue({
         id: "sw-1",
         barbershopId: "shop-1",
         status: "FROZEN",
         drawMethod: "ELECTRONIC_DETERMINISTIC",
         precommittedSeed: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
-        ticketsSha256Digest: "hash-sha256-tickets",
+        ticketsSha256Digest: validDigest,
+        totalEligibleCustomers: 2,
+        totalChancesAssigned: 2,
         endExclusiveUtc: new Date("2026-10-31T03:00:00Z"), // Passado
         isRegulatedPromotion: false,
         allowMultiplePrizesPerUser: false,
         prizes: [{ id: "pz-1", position: 1, title: "1º Prêmio: Pomada" }],
+        participants: [
+          { id: "part-1", customerId: "user-1", chancesCount: 1 },
+          { id: "part-2", customerId: "user-2", chancesCount: 1 },
+        ],
         tickets: [
           {
             id: "t-1",

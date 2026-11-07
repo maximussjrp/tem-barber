@@ -431,6 +431,123 @@ async function runSweepstakesRealPgTests() {
   }
   console.log("   ✅ 8.3 Clientes distintos insuficientes: apuração rejeitada, 0 ganhadores parciais, status FROZEN preservado.");
 
+  // 8.4 Restrição de simulações técnicas em produção por padrão e bloqueio de perfil comum
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevSimFlag = process.env.SWEEPSTAKE_ENABLE_TECH_SIMULATION;
+  try {
+    (process.env as any).NODE_ENV = "production";
+    delete process.env.SWEEPSTAKE_ENABLE_TECH_SIMULATION;
+
+    let prodSimBlocked = false;
+    try {
+      await prisma.$transaction(async (tx) =>
+        executeSweepstakeDraw(tx, {
+          sweepstakeId: sweepstakeInsufficient.id,
+          barbershopId: shopA.id,
+          drawnByUserId: adminA.id,
+          drawnByUserRole: "SUPER_ADMIN",
+          isTechnicalSimulation: true,
+        })
+      );
+    } catch (err: any) {
+      if (err.message.includes("SIMULACAO_TECNICA_DESABILITADA")) {
+        prodSimBlocked = true;
+      } else {
+        throw err;
+      }
+    }
+    if (!prodSimBlocked) {
+      throw new Error("FALHA: Simulação técnica foi permitida em produção sem SWEEPSTAKE_ENABLE_TECH_SIMULATION=true!");
+    }
+    console.log("   ✅ 8.4 Simulação técnica bloqueada por padrão em produção (SIMULACAO_TECNICA_DESABILITADA).");
+  } finally {
+    (process.env as any).NODE_ENV = prevNodeEnv;
+    if (prevSimFlag === undefined) delete process.env.SWEEPSTAKE_ENABLE_TECH_SIMULATION;
+    else process.env.SWEEPSTAKE_ENABLE_TECH_SIMULATION = prevSimFlag;
+  }
+
+  // 8.5 Teste de adulteração de snapshot no PostgreSQL local (SNAPSHOT_INTEGRITY_ERROR)
+  const sweepstakeTamper = await prisma.customerSweepstake.create({
+    data: {
+      barbershopId: shopA.id,
+      title: "Sorteio Teste Integridade Snapshot",
+      participationMode: "ONE_PER_SERVICE",
+      targetSegment: "ALL_CUSTOMERS",
+      startDateCivil,
+      endDateCivil,
+      startInclusiveUtc,
+      endExclusiveUtc,
+      drawDateScheduled: endExclusiveUtc,
+      status: "DRAFT",
+      allowMultiplePrizesPerUser: false,
+      createdById: adminA.id,
+      prizes: {
+        create: [{ position: 1, title: "Prêmio Integridade" }],
+      },
+    },
+  });
+  await prisma.$transaction(async (tx) => freezeCustomerSweepstake(tx, sweepstakeTamper.id, shopA.id, adminA.id));
+
+  // Adulterar diretamente no PostgreSQL o vínculo de um bilhete (e ajustar chancesCount para tentar mascarar a soma)
+  const tamperParticipants = await prisma.customerSweepstakeParticipant.findMany({
+    where: { sweepstakeId: sweepstakeTamper.id },
+    orderBy: { chancesCount: "desc" },
+  });
+  if (tamperParticipants.length < 2) {
+    throw new Error("Setup inválido para teste 8.5: menos de 2 participantes.");
+  }
+  // Permutar o dono de 2 bilhetes distintos entre partMajority e partMinority no banco após o congelamento:
+  // as contagens de participantes e chancesCount permanecem idênticas, exigindo que o recálculo SHA-256 detecte a fraude!
+  const [partMajority, partMinority] = tamperParticipants;
+  const ticketFromMaj = await prisma.customerSweepstakeTicket.findFirstOrThrow({
+    where: { sweepstakeId: sweepstakeTamper.id, participantId: partMajority.id },
+    orderBy: { ticketNumber: "asc" },
+  });
+  const ticketFromMin = await prisma.customerSweepstakeTicket.findFirstOrThrow({
+    where: { sweepstakeId: sweepstakeTamper.id, participantId: partMinority.id },
+    orderBy: { ticketNumber: "asc" },
+  });
+
+  await prisma.customerSweepstakeTicket.update({
+    where: { id: ticketFromMaj.id },
+    data: { participantId: partMinority.id },
+  });
+  await prisma.customerSweepstakeTicket.update({
+    where: { id: ticketFromMin.id },
+    data: { participantId: partMajority.id },
+  });
+
+  let tamperBlocked = false;
+  try {
+    await prisma.$transaction(async (tx) =>
+      executeSweepstakeDraw(tx, {
+        sweepstakeId: sweepstakeTamper.id,
+        barbershopId: shopA.id,
+        drawnByUserId: adminA.id,
+        drawnByUserRole: "OWNER",
+        isTechnicalSimulation: true,
+      })
+    );
+  } catch (err: any) {
+    if (err.message.includes("SNAPSHOT_INTEGRITY_ERROR")) {
+      tamperBlocked = true;
+      console.log(`   ✅ 8.5 Adulteração de snapshot detectada e bloqueada no PostgreSQL: "${err.message.slice(0, 105)}..."`);
+    } else {
+      throw err;
+    }
+  }
+  const tamperWinners = await prisma.customerSweepstakeWinner.count({ where: { sweepstakeId: sweepstakeTamper.id } });
+  const tamperAudits = await prisma.customerSweepstakeDrawAudit.count({ where: { sweepstakeId: sweepstakeTamper.id } });
+  const tamperStatus = await prisma.customerSweepstake.findUniqueOrThrow({
+    where: { id_barbershopId: { id: sweepstakeTamper.id, barbershopId: shopA.id } },
+    select: { status: true },
+  });
+  if (!tamperBlocked || tamperWinners !== 0 || tamperAudits !== 0 || tamperStatus.status !== "FROZEN") {
+    throw new Error(
+      `FALHA CRÍTICA DE INTEGRIDADE: Adulteração de snapshot não bloqueou a apuração (tamperBlocked=${tamperBlocked}, winners=${tamperWinners}, audits=${tamperAudits}, status=${tamperStatus.status})!`
+    );
+  }
+
   // 9. Auditoria de Neutralidade Financeira Pós-Execução
   console.log("\n-> 9. Verificando Neutralidade Financeira Absoluta...");
   const finalFinancialEntries = await prisma.financialEntry.count();

@@ -1,81 +1,108 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ==========================================
+# TEM BARBER - SCRIPT DE RESTAURAÇÃO POSTGRESQL
+# ==========================================
+# Uso: ./restore-postgres.sh /caminho/para/db_backup_YYYYMMDD_HHMMSS.sql.gz
+# Variáveis opcionais de ambiente:
+#   DB_CONTAINER   (padrão: tembarber-postgres)
+#   DB_USER        (padrão: tembarber)
+#   DB_NAME        (padrão: tembarber_prod)
+#   FORCE_RESTORE  (padrão: false; definir "true" apenas em automação controlada)
 
-# Configuration
-DB_CONTAINER="tem-barber-postgres"
-DB_USER="tem_barber_user"
-DB_NAME="tem_barber"
+set -Eeuo pipefail
 
-# Read file path
-BACKUP_FILE=$1
+DB_CONTAINER="${DB_CONTAINER:-tembarber-postgres}"
+DB_USER="${DB_USER:-tembarber}"
+DB_NAME="${DB_NAME:-tembarber_prod}"
+FORCE_RESTORE="${FORCE_RESTORE:-false}"
 
-# 1. Validate variables are not empty
-if [ -z "${DB_CONTAINER}" ]; then
-  echo "Error: DB_CONTAINER variable is empty!" >&2
+if [ -z "${1:-}" ]; then
+  echo "❌ Erro: Especifique o arquivo de backup para restaurar." >&2
+  echo "Uso: ./restore-postgres.sh /var/backups/tembarber/db_backup_XXXXXX.sql.gz" >&2
   exit 1
 fi
 
-if [ -z "${DB_USER}" ]; then
-  echo "Error: DB_USER variable is empty!" >&2
+BACKUP_FILE="$1"
+
+# ==========================================
+# 1. VALIDAÇÃO PRÉVIA ESTRITA (ANTES DE QUALQUER AÇÃO NO BANCO)
+# ==========================================
+if [ ! -f "$BACKUP_FILE" ]; then
+  echo "❌ Erro: Arquivo não encontrado: $BACKUP_FILE" >&2
   exit 1
 fi
 
-if [ -z "${DB_NAME}" ]; then
-  echo "Error: DB_NAME variable is empty!" >&2
+if [ ! -s "$BACKUP_FILE" ]; then
+  echo "❌ Erro: Arquivo de backup está vazio: $BACKUP_FILE" >&2
   exit 1
 fi
 
-# 2. Validate backup file parameter
-if [ -z "${BACKUP_FILE}" ]; then
-  echo "Usage: $0 /path/to/backup_file.sql.gz"
+echo "🔍 Validando integridade do arquivo de backup antes de tocar no banco..."
+
+if [ -f "${BACKUP_FILE}.sha256" ] && command -v sha256sum >/dev/null 2>&1; then
+  BACKUP_DIR_PATH="$(dirname "$BACKUP_FILE")"
+  SHA_FILE_NAME="$(basename "${BACKUP_FILE}.sha256")"
+  if ! (cd "$BACKUP_DIR_PATH" && sha256sum -c "$SHA_FILE_NAME" >/dev/null 2>&1); then
+    echo "❌ Erro: Falha na verificação de checksum SHA-256 (${BACKUP_FILE}.sha256). Restauração abortada." >&2
+    exit 1
+  fi
+  echo "  ✔ Checksum SHA-256 verificado."
+fi
+
+if ! gzip -t "$BACKUP_FILE"; then
+  echo "❌ Erro: O arquivo gzip está corrompido ($BACKUP_FILE). Restauração abortada antes de qualquer alteração no banco." >&2
+  exit 1
+fi
+echo "  ✔ Integridade gzip verificada."
+
+if ! gzip -dc "$BACKUP_FILE" | awk '
+  /PostgreSQL database dump/ { header = 1 }
+  /PostgreSQL database dump complete/ { footer = 1 }
+  END { exit !(header && footer) }
+'; then
+  echo "❌ Erro: O dump SQL está incompleto ou inválido (marcadores PostgreSQL ausentes). Restauração abortada antes de qualquer alteração no banco." >&2
+  exit 1
+fi
+echo "  ✔ Cabeçalho e rodapé de dump PostgreSQL verificados."
+
+if ! docker inspect -f '{{.State.Running}}' "$DB_CONTAINER" 2>/dev/null | grep -q '^true$'; then
+  echo "❌ Erro: Container '${DB_CONTAINER}' não está em execução." >&2
   exit 1
 fi
 
-if [ ! -f "${BACKUP_FILE}" ]; then
-  echo "Error: Backup file not found: ${BACKUP_FILE}"
+if ! docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "SELECT 1;" >/dev/null; then
+  echo "❌ Erro: Não foi possível conectar ao banco '${DB_NAME}' no container '${DB_CONTAINER}'." >&2
   exit 1
 fi
+echo "  ✔ Conectividade com o container '${DB_CONTAINER}' (${DB_NAME}) verificada."
 
-# 3. Validate database container is running and accessible
-if ! docker ps --format '{{.Names}}' | grep -Eq "^${DB_CONTAINER}$"; then
-  echo "Error: Database container '${DB_CONTAINER}' is not running or not accessible!" >&2
-  exit 1
+if [ "$FORCE_RESTORE" != "true" ]; then
+  echo "⚠️ ATENÇÃO: Isso irá SOBRESCREVER todos os dados atuais do banco '$DB_NAME' com o backup:"
+  echo "Arquivo: $BACKUP_FILE"
+  read -r -p "Tem certeza que deseja continuar? (digite 'SIM' para confirmar): " CONFIRM
+  if [ "$CONFIRM" != "SIM" ]; then
+    echo "Operação cancelada pelo usuário."
+    exit 0
+  fi
 fi
 
-# 4. Display clear configuration and destructive warning
-echo "============================================="
-echo "DATABASE RESTORE CONFIGURATION"
-echo "============================================="
-echo "DB Container:  ${DB_CONTAINER}"
-echo "DB Name:       ${DB_NAME}"
-echo "DB User:       ${DB_USER}"
-echo "Backup File:   ${BACKUP_FILE}"
-echo "============================================="
-echo "WARNING: This will DESTROY and OVERWRITE all data in the database '${DB_NAME}'!"
-echo "============================================="
+# ==========================================
+# 2. RESTAURAÇÃO TRANSACIONAL ATÔMICA
+# ==========================================
+# O DROP/CREATE SCHEMA e todo o conteúdo do dump são executados em UMA ÚNICA TRANSAÇÃO
+# (--single-transaction) com parada imediata em qualquer erro (-v ON_ERROR_STOP=1).
+# Se qualquer instrução SQL do dump falhar, o PostgreSQL faz ROLLBACK completo,
+# preservando o schema e os dados anteriores intactos.
+echo "[$(date -Iseconds)] Restaurando banco de dados em transação única (ON_ERROR_STOP=1 --single-transaction)..."
 
-# 5. Require strong explicit confirmation
-read -p "Digite RESTORE TEM_BARBER para continuar: " CONFIRMATION
-echo
-if [ "${CONFIRMATION}" != "RESTORE TEM_BARBER" ]; then
-  echo "Restore cancelled. Confirmation did not match."
-  exit 1
-fi
+{
+  echo "DROP SCHEMA IF EXISTS public CASCADE;"
+  echo "CREATE SCHEMA public;"
+  gzip -dc "$BACKUP_FILE"
+} | docker exec -i "$DB_CONTAINER" psql \
+  -U "$DB_USER" \
+  -d "$DB_NAME" \
+  -v ON_ERROR_STOP=1 \
+  --single-transaction >/dev/null
 
-# 6. Execute Drop and Recreate Schema
-echo "Dropping and recreating public schema inside '${DB_CONTAINER}'..."
-docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-if [ $? -ne 0 ]; then
-  echo "Error: Failed to drop and recreate public schema!" >&2
-  exit 1
-fi
-
-# 7. Execute Restore
-echo "Restoring database from ${BACKUP_FILE}..."
-gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}"
-
-if [ $? -eq 0 ]; then
-  echo "Database successfully restored!"
-else
-  echo "Restore failed!" >&2
-  exit 1
-fi
+echo "✅ Restauração concluída com sucesso e validada transacionalmente!"
