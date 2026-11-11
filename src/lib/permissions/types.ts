@@ -8,6 +8,7 @@ export const ALL_PERMISSION_KEYS = [
   "AGENDA_BLOCK_ALL",
   "CLIENTS_VIEW",
   "CLIENTS_MANAGE",
+  "WHATSAPP_ASSISTED_OPERATE",
   "COMANDAS_OWN",
   "COMANDAS_ALL",
   "DISCOUNT_APPLY",
@@ -95,6 +96,12 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
     label: "Gerenciar clientes",
     category: "clientes",
     description: "Cadastrar novos clientes e editar dados cadastrais",
+  },
+  {
+    key: "WHATSAPP_ASSISTED_OPERATE",
+    label: "Operar WhatsApp Assistido",
+    category: "clientes",
+    description: "Operar a ferramenta de comunicação individual e fila assistida por WhatsApp na base de clientes",
   },
   // Comandas
   {

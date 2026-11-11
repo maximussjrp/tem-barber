@@ -9,6 +9,7 @@ import {
   extractCanonicalVisitsForCustomer,
   CanonicalCustomerVisit,
 } from "./canonical-visit-engine";
+import { resolveCampaignOrigin } from "./manual-campaign-service";
 
 export interface ReconcileCampaignAttributionInput {
   barbershopId: string;
@@ -194,6 +195,19 @@ export async function reconcileCampaignAttribution(
     throw err;
   }
 
+  // S-08: Campanhas de comunicação geral da Base de Clientes (CLIENTS_BASE_ASSISTED_QUEUE)
+  // nunca reivindicam conversões nem inflam Receita Recuperada de Reativação.
+  if (resolveCampaignOrigin(campaign) === "CLIENTS_BASE_ASSISTED_QUEUE") {
+    await prisma.reactivationCampaign.update({
+      where: { id: campaignId },
+      data: {
+        convertedCount: 0,
+        totalRevenueAttributed: new Prisma.Decimal(0),
+      },
+    });
+    return getCampaignAttributionSummary(prisma, { barbershopId, campaignId });
+  }
+
   // 1. Fetch all recipients in this campaign
   const campaignRecipients = await prisma.reactivationCampaignRecipient.findMany({
     where: { campaignId, barbershopId },
@@ -235,7 +249,9 @@ export async function reconcileCampaignAttribution(
   }
 
   // 3. Fetch all sent contacts across all campaigns for these customers (ordered by sentConfirmedAt ASC)
-  const allCustomerSentContacts = await prisma.reactivationCampaignRecipient.findMany({
+  // S-08: Filtra apenas campanhas de reativação (incluindo legadas sem origin) para impedir que
+  // comunicações gerais da Base de Clientes roubem atribuição de campanhas de reativação.
+  const rawCustomerSentContacts = await prisma.reactivationCampaignRecipient.findMany({
     where: {
       barbershopId,
       customerId: { in: customerIds },
@@ -247,6 +263,10 @@ export async function reconcileCampaignAttribution(
     },
     orderBy: [{ sentConfirmedAt: "asc" }, { id: "asc" }],
   });
+
+  const allCustomerSentContacts = (rawCustomerSentContacts || []).filter(
+    (contact: any) => resolveCampaignOrigin(contact.campaign) === "SMART_CRM_REACTIVATION"
+  );
 
   // 4. Fetch all appointments for these customers
   const allAppointments = await prisma.appointment.findMany({
@@ -643,8 +663,9 @@ export async function getCampaignAttributionSummary(
       })
     : [];
 
-  // All contacts for these customers to verify last eligible touch
-  const allContactsForCustomers = sentCustomerIds.length > 0
+  // All contacts for these customers to verify last eligible touch (S-08: only SMART_CRM_REACTIVATION campaigns)
+  const isGeneralBaseQueue = resolveCampaignOrigin(campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
+  const rawContactsForCustomers = !isGeneralBaseQueue && sentCustomerIds.length > 0
     ? await prisma.reactivationCampaignRecipient.findMany({
         where: {
           barbershopId,
@@ -656,6 +677,10 @@ export async function getCampaignAttributionSummary(
         orderBy: [{ sentConfirmedAt: "asc" }, { id: "asc" }],
       })
     : [];
+
+  const allContactsForCustomers = (rawContactsForCustomers || []).filter(
+    (c: any) => resolveCampaignOrigin(c.campaign) === "SMART_CRM_REACTIVATION"
+  );
 
   const customersWithBookingSet = new Set<string>();
   let attributedBookings = 0;
@@ -699,10 +724,11 @@ export async function getCampaignAttributionSummary(
     const comanda = r.attributedComanda;
 
     const isReactivated =
-      r.canonicalReturnDate !== null ||
-      r.conversionStatus === RecipientConversionStatus.ATTENDED ||
-      r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
-      r.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED;
+      !isGeneralBaseQueue &&
+      (r.canonicalReturnDate !== null ||
+        r.conversionStatus === RecipientConversionStatus.ATTENDED ||
+        r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
+        r.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED);
 
     if (isReactivated) {
       reactivatedCustomerSet.add(r.customerId);
@@ -1000,11 +1026,14 @@ export async function getCustomerAttributionHistory(
   const history: CustomerAttributionHistoryItem[] = [];
 
   for (const r of recipients) {
+    const isGeneralCampaign =
+      resolveCampaignOrigin(r.campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
     const isReactivated =
-      r.canonicalReturnDate !== null ||
-      r.conversionStatus === RecipientConversionStatus.ATTENDED ||
-      r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
-      r.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED;
+      !isGeneralCampaign &&
+      (r.canonicalReturnDate !== null ||
+        r.conversionStatus === RecipientConversionStatus.ATTENDED ||
+        r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
+        r.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED);
 
     let rev = Number(r.revenueAttributed) || 0;
     if (isReactivated) {

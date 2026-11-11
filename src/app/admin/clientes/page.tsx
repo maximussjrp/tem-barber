@@ -1,8 +1,15 @@
 /* eslint-disable react-hooks/set-state-in-effect, @next/next/no-html-link-for-pages */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ClientNav } from "@/components/admin/clients/ClientNav";
+import {
+  AssistedWhatsAppQueueDrawer,
+  type PendingConsentClientInfo,
+  type QueueRecipientItem,
+} from "@/components/admin/clients/AssistedWhatsAppQueueDrawer";
+import { WHATSAPP_TEMPLATES } from "@/lib/customer-whatsapp-templates";
 
 type ClientFilter =
   | "all"
@@ -34,6 +41,22 @@ interface ClientStats {
   contactLogCount: number;
 }
 
+interface ClientWhatsappQueueInfo {
+  eligible: boolean;
+  consentStatus: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN";
+  isValidMobilePhone: boolean;
+  inCooldown14d: boolean;
+  canRegisterConsentInDrawer: boolean;
+  ineligibilityReason:
+    | "CONSENT_UNKNOWN"
+    | "CONSENT_OPTED_OUT"
+    | "INVALID_PHONE"
+    | "BLOCKED"
+    | "UPCOMING_APPOINTMENT"
+    | "RECENT_CONTACT"
+    | null;
+}
+
 interface Client {
   id: string;
   name: string;
@@ -47,9 +70,37 @@ interface Client {
     comanda: boolean;
     club: boolean;
   };
+  whatsappQueue?: ClientWhatsappQueueInfo;
 }
 
-import { ClientNav } from "@/components/admin/clients/ClientNav";
+interface ContactMetrics {
+  neverContacted: number;
+  noContact30: number;
+  recentlyContacted: number;
+}
+
+interface SummaryMetrics {
+  totalClients: number;
+  withoutAppointment: number;
+  upcoming: number;
+  openComandas: number;
+  neverContacted: number;
+  noContact30: number;
+  noContact60: number;
+  noContact90: number;
+  recentlyContacted: number;
+}
+
+interface QueueSelectionMeta {
+  totalFilteredCount: number;
+  eligibleInFilterCount: number;
+  remainingEligibleInRoundCount: number;
+  excludedInRoundCount: number;
+  pendingConsentInFilterCount: number;
+  ineligibleInFilterCount: number;
+  nextEligibleBatchIds: string[];
+  hasMoreThanBatchLimit: boolean;
+}
 
 const PAGE_SIZE = 30;
 
@@ -71,11 +122,14 @@ const SECONDARY_FILTERS: Array<{ value: ClientFilter; label: string }> = [
   { value: "recently_contacted", label: "Contatados recentemente" },
 ];
 
-interface ContactMetrics {
-  neverContacted: number;
-  noContact30: number;
-  recentlyContacted: number;
-}
+const INELIGIBILITY_LABELS: Record<string, string> = {
+  CONSENT_UNKNOWN: "Consentimento pendente",
+  CONSENT_OPTED_OUT: "Opt-out marketing",
+  INVALID_PHONE: "WhatsApp inválido",
+  BLOCKED: "Bloqueado",
+  UPCOMING_APPOINTMENT: "Com agendamento futuro",
+  RECENT_CONTACT: "Cooldown 14 dias",
+};
 
 type ImportStatus = "VALID" | "DUPLICATE" | "DUPLICATE_IN_FILE" | "INVALID";
 
@@ -125,8 +179,6 @@ function formatDate(iso: string | null) {
   });
 }
 
-
-
 export default function ClientesPage() {
   const router = useRouter();
   const [clients, setClients] = useState<Client[]>([]);
@@ -136,6 +188,9 @@ export default function ClientesPage() {
     noContact30: 0,
     recentlyContacted: 0,
   });
+  const [summaryMetrics, setSummaryMetrics] = useState<SummaryMetrics | null>(null);
+  const [queueSelectionMeta, setQueueSelectionMeta] =
+    useState<QueueSelectionMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ClientFilter>("all");
@@ -158,43 +213,641 @@ export default function ClientesPage() {
   const [createError, setCreateError] = useState("");
   const [submittingCreate, setSubmittingCreate] = useState(false);
 
-  const fetchClients = useCallback(async (q: string, p: number, f: ClientFilter) => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ page: String(p), pageSize: String(PAGE_SIZE), filter: f });
-      if (q) params.set("search", q);
-      const res = await fetch(`/api/admin/clients?${params}`);
-      const data = await res.json();
-      setClients(data.clients ?? []);
-      setTotal(data.total ?? 0);
-      setContactMetrics(data.contactMetrics ?? { neverContacted: 0, noContact30: 0, recentlyContacted: 0 });
-    } finally {
-      setLoading(false);
-    }
+  // Assisted Queue V1 States
+  interface UiClientQueuePermissions {
+    canViewClients: boolean;
+    canManageClients: boolean;
+    canOperateWhatsappAssisted: boolean;
+  }
+  const DEFAULT_DENIED_PERMISSIONS: UiClientQueuePermissions = {
+    canViewClients: false,
+    canManageClients: false,
+    canOperateWhatsappAssisted: false,
+  };
+
+  const [uiPermissions, setUiPermissions] = useState<UiClientQueuePermissions>(
+    DEFAULT_DENIED_PERMISSIONS
+  );
+  const [clientsAccessDenied, setClientsAccessDenied] = useState<boolean>(false);
+  const [currentBarbershopId, setCurrentBarbershopId] = useState<string | null>(null);
+  const [selectedQueueIds, setSelectedQueueIds] = useState<string[]>([]);
+  const [batchTemplateKey, setBatchTemplateKey] = useState<string>("RETURN_REMINDER");
+
+  const getRoundStorageKey = useCallback((shopId?: string | null) => {
+    return shopId ? `tb_crm_work_round_${shopId}` : "tb_crm_work_round";
+  }, []);
+  const getProcessedStorageKey = useCallback((shopId?: string | null) => {
+    return shopId ? `tb_crm_round_processed_${shopId}` : "tb_crm_round_processed";
+  }, []);
+
+  const [workRoundId, setWorkRoundId] = useState<string>(() => {
+    return `round_${Date.now()}`;
+  });
+  const [roundProcessedIds, setRoundProcessedIds] = useState<string[]>([]);
+  const [activeQueueCampaignId, setActiveQueueCampaignId] = useState<string | null>(null);
+  const [activeQueueName, setActiveQueueName] = useState<string>("");
+  const [activeQueueStatus, setActiveQueueStatus] = useState<string>("READY");
+  const [activeQueueRecipients, setActiveQueueRecipients] = useState<QueueRecipientItem[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const [pendingConsentClient, setPendingConsentClient] =
+    useState<PendingConsentClientInfo | null>(null);
+  const [preparingQueue, setPreparingQueue] = useState<boolean>(false);
+  const [queueBannerError, setQueueBannerError] = useState<string | null>(null);
+  const checkedActiveQueueRef = useRef<boolean>(false);
+  const activeBarbershopRef = useRef<string | null>(null);
+  const tenantEpochRef = useRef<number>(0);
+  const clientsSeqRef = useRef<number>(0);
+  const clientsAbortRef = useRef<AbortController | null>(null);
+  const activeQueueSeqRef = useRef<number>(0);
+  const activeQueueAbortRef = useRef<AbortController | null>(null);
+
+  // G23-03 / G24-03: Isola estado e invalida requisições concorrentes ao alternar barbearia no mesmo navegador
+  const handleBarbershopSwitch = useCallback(
+    (newShopId: string) => {
+      activeBarbershopRef.current = newShopId;
+      tenantEpochRef.current += 1;
+      activeQueueAbortRef.current?.abort();
+      activeQueueSeqRef.current += 1;
+      checkedActiveQueueRef.current = false;
+
+      setCurrentBarbershopId(newShopId);
+      setSelectedQueueIds([]);
+      setActiveQueueCampaignId(null);
+      setActiveQueueName("");
+      setActiveQueueStatus("READY");
+      setActiveQueueRecipients([]);
+      setPendingConsentClient(null);
+      setSummaryMetrics(null);
+      setQueueSelectionMeta(null);
+      setDrawerOpen(false);
+      setQueueBannerError(null);
+
+      // Restaura ou inicializa a rodada da nova barbearia
+      const roundKey = getRoundStorageKey(newShopId);
+      const procKey = getProcessedStorageKey(newShopId);
+      let loadedRound = `round_${Date.now()}`;
+      let loadedProcessed: string[] = [];
+
+      if (typeof window !== "undefined") {
+        try {
+          const savedRound = localStorage.getItem(roundKey);
+          if (savedRound) {
+            loadedRound = savedRound;
+          } else {
+            localStorage.setItem(roundKey, loadedRound);
+          }
+          const savedProcessed = localStorage.getItem(procKey);
+          if (savedProcessed) {
+            loadedProcessed = JSON.parse(savedProcessed);
+          }
+        } catch {
+          // localStorage indisponível
+        }
+      }
+
+      setWorkRoundId(loadedRound);
+      setRoundProcessedIds(Array.isArray(loadedProcessed) ? loadedProcessed : []);
+    },
+    [getProcessedStorageKey, getRoundStorageKey]
+  );
+
+  const checkActiveAssistedCampaign = useCallback(
+    async (expectedShopId?: string | null, expectedEpoch?: number) => {
+      activeQueueAbortRef.current?.abort();
+      const controller = new AbortController();
+      activeQueueAbortRef.current = controller;
+      activeQueueSeqRef.current += 1;
+      const reqSeq = activeQueueSeqRef.current;
+
+      try {
+        const targetShopId = expectedShopId ?? activeBarbershopRef.current;
+        let currentRound = workRoundId;
+        const storageKey = getRoundStorageKey(targetShopId);
+        if (typeof window !== "undefined") {
+          try {
+            const saved = localStorage.getItem(storageKey);
+            if (saved) currentRound = saved;
+          } catch {
+            // localStorage indisponível
+          }
+        }
+        const res = await fetch(
+          `/api/admin/clients/reactivation/manual-campaigns/active?origin=CLIENTS_BASE_ASSISTED_QUEUE&workRoundId=${encodeURIComponent(currentRound)}`,
+          { signal: controller.signal }
+        );
+
+        if (controller.signal.aborted || reqSeq !== activeQueueSeqRef.current) {
+          return;
+        }
+        if (expectedEpoch !== undefined && expectedEpoch !== tenantEpochRef.current) {
+          return;
+        }
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            setActiveQueueCampaignId(null);
+            setActiveQueueRecipients([]);
+            setDrawerOpen(false);
+          }
+          return;
+        }
+
+        const data = await res.json();
+        if (controller.signal.aborted || reqSeq !== activeQueueSeqRef.current) {
+          return;
+        }
+        if (expectedEpoch !== undefined && expectedEpoch !== tenantEpochRef.current) {
+          return;
+        }
+
+        // G24-03: Nunca sobrescrever estado da barbearia atual com resposta tardia de outra barbearia
+        if (
+          data?.barbershopId &&
+          activeBarbershopRef.current &&
+          data.barbershopId !== activeBarbershopRef.current
+        ) {
+          return;
+        }
+        if (expectedShopId && data?.barbershopId && data.barbershopId !== expectedShopId) {
+          return;
+        }
+
+        // G24-02: Fail-closed se servidor indicar ausência de permissão operacional
+        if (
+          data?.permissions &&
+          (!data.permissions.canViewClients ||
+            !data.permissions.canOperateWhatsappAssisted)
+        ) {
+          setActiveQueueCampaignId(null);
+          setActiveQueueRecipients([]);
+          setDrawerOpen(false);
+          return;
+        }
+
+        const resolvedShopId = data?.barbershopId || activeBarbershopRef.current;
+        const effectiveStorageKey = getRoundStorageKey(resolvedShopId);
+
+        if (data?.activeCampaign) {
+          setActiveQueueCampaignId(data.activeCampaign.id);
+          setActiveQueueName(data.activeCampaign.name || "Fila Assistida");
+          setActiveQueueStatus(data.activeCampaign.status || "IN_PROGRESS");
+          setActiveQueueRecipients(data.activeCampaign.recipients || []);
+          if (data.activeCampaign.templateKey) {
+            setBatchTemplateKey(data.activeCampaign.templateKey);
+          }
+          if (data.activeCampaign.workRoundId) {
+            setWorkRoundId(data.activeCampaign.workRoundId);
+            if (typeof window !== "undefined") {
+              try {
+                localStorage.setItem(
+                  effectiveStorageKey,
+                  data.activeCampaign.workRoundId
+                );
+              } catch {
+                // localStorage indisponível
+              }
+            }
+          }
+        } else {
+          setActiveQueueCampaignId(null);
+          setActiveQueueRecipients([]);
+        }
+
+        // G21-03 / G22-02: Reconstitui os clientes processados na rodada persistida
+        if (data?.workRound) {
+          if (data.workRound.workRoundId) {
+            setWorkRoundId(data.workRound.workRoundId);
+            if (typeof window !== "undefined") {
+              try {
+                localStorage.setItem(
+                  effectiveStorageKey,
+                  data.workRound.workRoundId
+                );
+              } catch {
+                // localStorage indisponível
+              }
+            }
+          }
+          if (
+            Array.isArray(data.workRound.processedCustomerIds) &&
+            data.workRound.processedCustomerIds.length > 0
+          ) {
+            setRoundProcessedIds((prev) => {
+              const next = Array.from(
+                new Set([...prev, ...data.workRound.processedCustomerIds])
+              );
+              const pKey = getProcessedStorageKey(resolvedShopId);
+              if (typeof window !== "undefined") {
+                try {
+                  localStorage.setItem(pKey, JSON.stringify(next));
+                } catch {
+                  // ignore
+                }
+              }
+              return next;
+            });
+          }
+        }
+      } catch {
+        // Ignore background active check or abort error
+      }
+    },
+    [getProcessedStorageKey, getRoundStorageKey, workRoundId]
+  );
+
+  const fetchClients = useCallback(
+    async (
+      q: string,
+      p: number,
+      f: ClientFilter,
+      excludedIds: string[] = roundProcessedIds
+    ) => {
+      clientsAbortRef.current?.abort();
+      const controller = new AbortController();
+      clientsAbortRef.current = controller;
+      clientsSeqRef.current += 1;
+      const reqSeq = clientsSeqRef.current;
+
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: String(p),
+          pageSize: String(PAGE_SIZE),
+          filter: f,
+        });
+        if (q) params.set("search", q);
+        if (excludedIds.length > 0) {
+          params.set("excludeIds", excludedIds.join(","));
+        }
+        const res = await fetch(`/api/admin/clients?${params}`, {
+          signal: controller.signal,
+        });
+
+        if (controller.signal.aborted || reqSeq !== clientsSeqRef.current) {
+          return;
+        }
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            setClientsAccessDenied(true);
+            setUiPermissions({
+              canViewClients: false,
+              canManageClients: false,
+              canOperateWhatsappAssisted: false,
+            });
+            setClients([]);
+            setTotal(0);
+            setSummaryMetrics(null);
+            setQueueSelectionMeta(null);
+            setSelectedQueueIds([]);
+            setActiveQueueCampaignId(null);
+            setActiveQueueRecipients([]);
+            setPendingConsentClient(null);
+            setDrawerOpen(false);
+          }
+          return;
+        }
+
+        const data = await res.json();
+        if (controller.signal.aborted || reqSeq !== clientsSeqRef.current) {
+          return;
+        }
+
+        const nextPermissions: UiClientQueuePermissions =
+          data?.permissions && typeof data.permissions === "object"
+            ? {
+                canViewClients: Boolean(data.permissions.canViewClients),
+                canManageClients: Boolean(data.permissions.canManageClients),
+                canOperateWhatsappAssisted: Boolean(
+                  data.permissions.canViewClients &&
+                    data.permissions.canOperateWhatsappAssisted
+                ),
+              }
+            : {
+                canViewClients: false,
+                canManageClients: false,
+                canOperateWhatsappAssisted: false,
+              };
+
+        if (data?.barbershopId && data.barbershopId !== activeBarbershopRef.current) {
+          handleBarbershopSwitch(data.barbershopId);
+        }
+
+        if (!nextPermissions.canViewClients) {
+          setClientsAccessDenied(true);
+          setUiPermissions(nextPermissions);
+          setClients([]);
+          setTotal(0);
+          setSummaryMetrics(null);
+          setQueueSelectionMeta(null);
+          setSelectedQueueIds([]);
+          setActiveQueueCampaignId(null);
+          setActiveQueueRecipients([]);
+          setPendingConsentClient(null);
+          setDrawerOpen(false);
+          return;
+        }
+
+        setClientsAccessDenied(false);
+        setUiPermissions(nextPermissions);
+        setClients(data.clients ?? []);
+        setTotal(data.total ?? 0);
+        setContactMetrics(
+          data.contactMetrics ?? {
+            neverContacted: 0,
+            noContact30: 0,
+            recentlyContacted: 0,
+          }
+        );
+        if (data.summaryMetrics) {
+          setSummaryMetrics(data.summaryMetrics);
+        } else {
+          setSummaryMetrics(null);
+        }
+        if (data.queueSelectionMeta) {
+          setQueueSelectionMeta(data.queueSelectionMeta);
+        } else {
+          setQueueSelectionMeta(null);
+        }
+
+        if (!nextPermissions.canOperateWhatsappAssisted) {
+          setSelectedQueueIds([]);
+          setActiveQueueCampaignId(null);
+          setActiveQueueRecipients([]);
+        } else if (
+          (data.queueSelectionMeta || nextPermissions.canOperateWhatsappAssisted) &&
+          !checkedActiveQueueRef.current
+        ) {
+          checkedActiveQueueRef.current = true;
+          void checkActiveAssistedCampaign(
+            data?.barbershopId || activeBarbershopRef.current,
+            tenantEpochRef.current
+          );
+        }
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") {
+          return;
+        }
+      } finally {
+        if (reqSeq === clientsSeqRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [checkActiveAssistedCampaign, handleBarbershopSwitch, roundProcessedIds]
+  );
+
+  useEffect(() => {
+    return () => {
+      clientsAbortRef.current?.abort();
+      activeQueueAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchClients(search, page, filter);
+      fetchClients(search, page, filter, roundProcessedIds);
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, page, filter, fetchClients]);
+  }, [search, page, filter, roundProcessedIds, fetchClients]);
 
   useEffect(() => {
     setPage(1);
   }, [search, filter]);
 
+  // G22-02 / G23-03: Encerramento consciente da rodada (apenas por ação deliberada do operador)
+  const handleStartNewRound = useCallback(() => {
+    const newRound = `round_${Date.now()}`;
+    setWorkRoundId(newRound);
+    setRoundProcessedIds([]);
+    const key = getRoundStorageKey(currentBarbershopId);
+    const procKey = getProcessedStorageKey(currentBarbershopId);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(key, newRound);
+        localStorage.setItem(procKey, JSON.stringify([]));
+      } catch {
+        // localStorage indisponível
+      }
+    }
+    void fetchClients(search, 1, filter, []);
+  }, [currentBarbershopId, fetchClients, filter, getProcessedStorageKey, getRoundStorageKey, search]);
+
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const metrics = useMemo(() => ({
-    total,
-    manual: clients.filter((client) => !client.sources.appointment).length,
-    upcoming: clients.filter((client) => client.stats.nextAppointmentAt).length,
-    openComandas: clients.filter((client) => client.stats.openComandas > 0).length,
-    neverContacted: contactMetrics.neverContacted,
-    noContact30: contactMetrics.noContact30,
-    recentlyContacted: contactMetrics.recentlyContacted,
-  }), [clients, contactMetrics, total]);
+  // G1-C10: Concilia os 7 cards com o backend sobre toda a base da barbearia (com fallback seguro)
+  const metrics = useMemo(
+    () => ({
+      total: summaryMetrics?.totalClients ?? total,
+      manual:
+        summaryMetrics?.withoutAppointment ??
+        clients.filter((client) => !client.sources.appointment).length,
+      upcoming:
+        summaryMetrics?.upcoming ??
+        clients.filter((client) => client.stats.nextAppointmentAt).length,
+      openComandas:
+        summaryMetrics?.openComandas ??
+        clients.filter((client) => client.stats.openComandas > 0).length,
+      neverContacted:
+        summaryMetrics?.neverContacted ?? contactMetrics.neverContacted,
+      noContact30: summaryMetrics?.noContact30 ?? contactMetrics.noContact30,
+      recentlyContacted:
+        summaryMetrics?.recentlyContacted ?? contactMetrics.recentlyContacted,
+    }),
+    [clients, contactMetrics, summaryMetrics, total]
+  );
+
+  const toggleSelectClientForQueue = (clientId: string) => {
+    setQueueBannerError(null);
+    setSelectedQueueIds((prev) => {
+      if (prev.includes(clientId)) {
+        return prev.filter((id) => id !== clientId);
+      }
+      if (prev.length >= 50) {
+        setQueueBannerError("O limite máximo por fila é de 50 clientes.");
+        return prev;
+      }
+      return [...prev, clientId];
+    });
+  };
+
+  const prepareAndOpenQueue = async (
+    customerIds: string[],
+    templateToUse = batchTemplateKey,
+    customQueueName?: string
+  ) => {
+    if (!uiPermissions.canViewClients || !uiPermissions.canOperateWhatsappAssisted) {
+      setQueueBannerError(
+        "Permissão 'WHATSAPP_ASSISTED_OPERATE' necessária para iniciar a fila assistida."
+      );
+      return;
+    }
+    if (customerIds.length === 0) return;
+    const startEpoch = tenantEpochRef.current;
+    const startShopId = activeBarbershopRef.current;
+    setPreparingQueue(true);
+    setQueueBannerError(null);
+
+    try {
+      const requestKey = `queue_${workRoundId}_${Date.now()}_${customerIds.length}`;
+      const res = await fetch(
+        "/api/admin/clients/reactivation/manual-campaigns",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestKey,
+            selectedCustomerIds: customerIds.slice(0, 50),
+            templateKey: templateToUse,
+            name:
+              customQueueName ||
+              `Fila Base de Clientes (${
+                customerIds.length === 1
+                  ? "Individual"
+                  : `${customerIds.length} clientes`
+              })`,
+            origin: "CLIENTS_BASE_ASSISTED_QUEUE",
+            sourceFilter: filter,
+            workRoundId,
+          }),
+        }
+      );
+
+      const payload = await res.json();
+      if (
+        startEpoch !== tenantEpochRef.current ||
+        startShopId !== activeBarbershopRef.current
+      ) {
+        return;
+      }
+      if (!res.ok) {
+        if (
+          payload.error === "ACTIVE_QUEUE_ALREADY_EXISTS" ||
+          payload.code === "ACTIVE_QUEUE_ALREADY_EXISTS"
+        ) {
+          await checkActiveAssistedCampaign(
+            activeBarbershopRef.current,
+            tenantEpochRef.current
+          );
+          if (
+            startEpoch === tenantEpochRef.current &&
+            startShopId === activeBarbershopRef.current
+          ) {
+            setDrawerOpen(true);
+          }
+          return;
+        }
+        throw new Error(
+          payload.message ||
+            payload.error ||
+            "Não foi possível preparar a fila assistida."
+        );
+      }
+
+      if (!payload.accepted || payload.accepted.length === 0) {
+        const reasonMsg =
+          payload.rejected?.[0]?.reasonDetail ||
+          "Nenhum cliente selecionado atende aos critérios de elegibilidade no momento.";
+        throw new Error(reasonMsg);
+      }
+
+      const mappedRecipients: QueueRecipientItem[] = payload.accepted.map(
+        (r: {
+          recipientId: string;
+          queueIndex?: number;
+          customerId: string;
+          customerName: string;
+          customerPhone: string;
+          dispatchStatus: QueueRecipientItem["dispatchStatus"];
+          previewMessage: string;
+        }, idx: number) => ({
+          recipientId: r.recipientId,
+          queueIndex: r.queueIndex ?? idx,
+          customerId: r.customerId,
+          customerName: r.customerName,
+          customerPhone: r.customerPhone,
+          dispatchStatus: r.dispatchStatus || "READY",
+          templateKey: templateToUse,
+          previewMessage: r.previewMessage,
+        })
+      );
+
+      setActiveQueueCampaignId(payload.campaign?.id || null);
+      setActiveQueueName(payload.campaign?.name || "Fila Assistida");
+      setActiveQueueStatus(payload.campaign?.status || "READY");
+      setActiveQueueRecipients(mappedRecipients);
+      setPendingConsentClient(null);
+      setSelectedQueueIds([]);
+      setDrawerOpen(true);
+    } catch (err) {
+      setQueueBannerError(
+        err instanceof Error ? err.message : "Erro ao iniciar fila assistida."
+      );
+    } finally {
+      setPreparingQueue(false);
+    }
+  };
+
+  const handleOpenConsentGateForClient = (client: Client) => {
+    if (!uiPermissions.canViewClients || !uiPermissions.canManageClients) {
+      setQueueBannerError(
+        "Permissão 'CLIENTS_MANAGE' necessária para registrar ou alterar consentimento de marketing."
+      );
+      return;
+    }
+    setPendingConsentClient({
+      id: client.id,
+      name: client.name,
+      phone: client.phone,
+      lastContactedAt: client.stats.lastContactedAt,
+      completedVisits: client.stats.completed,
+      hasClubSubscription: client.stats.hasClubSubscription,
+    });
+    setDrawerOpen(true);
+  };
+
+  const handleRecipientUpdated = (
+    recipientId: string,
+    updates: Partial<QueueRecipientItem>,
+    nextCampaignStatus?: string
+  ) => {
+    setActiveQueueRecipients((prev) =>
+      prev.map((item) =>
+        item.recipientId === recipientId ? { ...item, ...updates } : item
+      )
+    );
+    if (nextCampaignStatus) {
+      setActiveQueueStatus(nextCampaignStatus);
+    }
+  };
+
+  const handleClientProcessedInRound = (customerId: string) => {
+    setRoundProcessedIds((prev) => {
+      const next = prev.includes(customerId) ? prev : [...prev, customerId];
+      void fetchClients(search, page, filter, next);
+      return next;
+    });
+  };
+
+  const handleStartNextBatchInRound = () => {
+    const nextIds = queueSelectionMeta?.nextEligibleBatchIds ?? [];
+    if (nextIds.length > 0) {
+      void prepareAndOpenQueue(
+        nextIds,
+        batchTemplateKey,
+        `Fila Base de Clientes — Lote seguinte (${nextIds.length} clientes)`
+      );
+    }
+  };
+
+  const pendingActiveCount = useMemo(
+    () =>
+      activeQueueRecipients.filter(
+        (r) =>
+          r.dispatchStatus === "READY" || r.dispatchStatus === "WHATSAPP_OPENED"
+      ).length,
+    [activeQueueRecipients]
+  );
 
   const submitCreate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -283,7 +936,6 @@ export default function ClientesPage() {
     await fetchClients(search, 1, filter);
   };
 
-
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-6xl">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -295,13 +947,17 @@ export default function ClientesPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={openImport}
-            className="px-4 py-2 rounded-lg bg-stone-900 border border-stone-700 text-stone-200 text-sm font-bold hover:bg-stone-800"
-          >
-            Importar clientes
-          </button>
+          {uiPermissions.canManageClients && (
+            <>
+              <button
+                type="button"
+                onClick={openImport}
+                className="px-4 py-2 rounded-lg bg-stone-900 border border-stone-700 text-stone-200 text-sm font-bold hover:bg-stone-800"
+              >
+                Importar clientes
+              </button>
+            </>
+          )}
           <div className="relative">
             <button
               type="button"
@@ -330,22 +986,98 @@ export default function ClientesPage() {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
-          >
-            Novo cliente
-          </button>
+          {uiPermissions.canManageClients && (
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(true)}
+              className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-sm font-bold hover:bg-amber-400 transition-colors"
+            >
+              Novo cliente
+            </button>
+          )}
         </div>
       </div>
 
       <ClientNav />
 
+      {clientsAccessDenied && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl bg-red-950/60 border border-red-800 text-red-200 text-sm"
+        >
+          Acesso restrito aos dados da Base de Clientes. Permissão &apos;CLIENTS_VIEW&apos; necessária.
+        </div>
+      )}
+
+      {/* Active Assisted Queue Resume Banner */}
+      {uiPermissions.canOperateWhatsappAssisted &&
+        activeQueueCampaignId &&
+        pendingActiveCount > 0 &&
+        activeQueueStatus !== "CANCELLED" &&
+        activeQueueStatus !== "COMPLETED" && (
+          <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                Fila de WhatsApp Assistido em andamento
+              </p>
+              <p className="text-sm text-stone-200 mt-0.5">
+                <strong>{activeQueueName}</strong> — {pendingActiveCount} de{" "}
+                {activeQueueRecipients.length} cliente(s) pendente(s) para envio.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingConsentClient(null);
+                  setDrawerOpen(true);
+                }}
+                className="px-4 py-2 rounded-lg bg-emerald-500 text-stone-950 text-xs font-bold hover:bg-emerald-400"
+              >
+                Retomar fila ({pendingActiveCount})
+              </button>
+            </div>
+          </div>
+        )}
+
+      {/* G22-02: Banner de Rodada Persistida com opção consciente de iniciar nova rodada */}
+      {uiPermissions.canOperateWhatsappAssisted &&
+        (!activeQueueCampaignId ||
+          pendingActiveCount === 0 ||
+          activeQueueStatus === "CANCELLED" ||
+          activeQueueStatus === "COMPLETED") &&
+        roundProcessedIds.length > 0 && (
+          <div className="p-4 rounded-xl bg-stone-900 border border-stone-800 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                Rodada em Andamento
+              </p>
+              <p className="text-sm text-stone-300 mt-0.5">
+                {roundProcessedIds.length} cliente(s) processado(s) neste ciclo (clientes pulados e contatados ocultados para evitar reenvio).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleStartNewRound}
+                className="px-3 py-1.5 rounded-lg border border-stone-700 bg-stone-800 text-stone-200 text-xs font-semibold hover:bg-stone-700"
+              >
+                Iniciar nova rodada
+              </button>
+            </div>
+          </div>
+        )}
+
+      {/* 7 KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
           <p className="text-[10px] uppercase text-stone-500 font-bold">Clientes</p>
           <p className="text-xl font-bold text-stone-100">{metrics.total}</p>
+          {filter !== "all" && summaryMetrics && (
+            <p className="text-[10px] text-stone-500 mt-0.5">
+              Filtro atual: {total}
+            </p>
+          )}
         </div>
         <div className="bg-stone-900 border border-stone-800 rounded-lg p-4">
           <p className="text-[10px] uppercase text-stone-500 font-bold">Sem agendamento</p>
@@ -373,15 +1105,97 @@ export default function ClientesPage() {
         </div>
       </div>
 
+      {/* Search & Filters */}
       <div className="flex flex-col gap-3">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por nome, telefone ou e-mail..."
-          title="Buscar clientes"
-          className="w-full max-w-md bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-2.5 text-stone-100 placeholder-stone-600 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por nome, telefone ou e-mail..."
+            title="Buscar clientes"
+            className="w-full max-w-md bg-stone-950/70 border border-stone-800 rounded-lg px-4 py-2.5 text-stone-100 placeholder-stone-600 focus:border-amber-500/80 focus:outline-none transition-colors text-sm"
+          />
+
+          {/* Batch Assisted Queue Action Bar */}
+          {uiPermissions.canOperateWhatsappAssisted &&
+            (selectedQueueIds.length > 0 ||
+              (queueSelectionMeta &&
+                queueSelectionMeta.remainingEligibleInRoundCount > 0)) && (
+            <div className="flex flex-wrap items-center gap-2 bg-stone-900/90 border border-stone-800 rounded-lg p-2">
+              <select
+                aria-label="Modelo padrão da fila"
+                value={batchTemplateKey}
+                onChange={(e) => setBatchTemplateKey(e.target.value)}
+                className="bg-stone-950 border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-200"
+              >
+                {WHATSAPP_TEMPLATES.map((tpl) => (
+                  <option key={tpl.key} value={tpl.key}>
+                    {tpl.label}
+                  </option>
+                ))}
+              </select>
+
+              {selectedQueueIds.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={preparingQueue}
+                    onClick={() => void prepareAndOpenQueue(selectedQueueIds)}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-500 text-stone-950 text-xs font-bold hover:bg-emerald-400 disabled:opacity-50"
+                  >
+                    {preparingQueue
+                      ? "Preparando fila..."
+                      : `Iniciar fila com selecionados (${selectedQueueIds.length}/50)`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedQueueIds([])}
+                    className="px-2.5 py-1.5 rounded-lg bg-stone-800 text-stone-300 text-xs hover:text-white"
+                  >
+                    Limpar seleção
+                  </button>
+                </>
+              ) : (
+                queueSelectionMeta && (
+                  <button
+                    type="button"
+                    disabled={preparingQueue}
+                    onClick={() =>
+                      void prepareAndOpenQueue(
+                        queueSelectionMeta.nextEligibleBatchIds
+                      )
+                    }
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-500 text-stone-950 text-xs font-bold hover:bg-emerald-400 disabled:opacity-50"
+                  >
+                    {preparingQueue
+                      ? "Preparando fila..."
+                      : queueSelectionMeta.hasMoreThanBatchLimit
+                      ? `Iniciar fila WhatsApp (Lote de 50 de ${queueSelectionMeta.remainingEligibleInRoundCount} elegíveis)`
+                      : `Iniciar fila WhatsApp (${queueSelectionMeta.remainingEligibleInRoundCount} elegíveis)`}
+                  </button>
+                )
+              )}
+            </div>
+          )}
+        </div>
+
+        {queueBannerError && (
+          <div
+            role="alert"
+            className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-200 text-xs flex items-center justify-between"
+          >
+            <span>{queueBannerError}</span>
+            <button
+              type="button"
+              onClick={() => setQueueBannerError(null)}
+              className="text-red-300 underline ml-3"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           {PRIMARY_FILTERS.map((item) => (
             <button
@@ -449,7 +1263,7 @@ export default function ClientesPage() {
           </div>
         ) : (
           <>
-            <div className="hidden lg:grid grid-cols-[1fr_130px_120px_110px_110px_230px] gap-3 px-5 py-3 border-b border-stone-800 text-[10px] uppercase tracking-wider text-stone-600 font-semibold">
+            <div className="hidden lg:grid grid-cols-[1fr_130px_120px_110px_130px_280px] gap-3 px-5 py-3 border-b border-stone-800 text-[10px] uppercase tracking-wider text-stone-600 font-semibold">
               <span>Cliente</span>
               <span>Última visita</span>
               <span>Próximo</span>
@@ -462,28 +1276,64 @@ export default function ClientesPage() {
                 const contactLabel = client.stats.lastContactedAt
                   ? `Último contato: ${formatDate(client.stats.lastContactedAt)}`
                   : "Nunca contatado";
+                const queueInfo = client.whatsappQueue;
+                const isSelected = selectedQueueIds.includes(client.id);
+                const ineligibilityLabel = queueInfo?.ineligibilityReason
+                  ? INELIGIBILITY_LABELS[queueInfo.ineligibilityReason] ||
+                    queueInfo.ineligibilityReason
+                  : null;
+
                 return (
                   <div
                     key={client.id}
-                    className="px-5 py-4 flex flex-col lg:grid lg:grid-cols-[1fr_130px_120px_110px_110px_230px] gap-3 lg:items-center hover:bg-stone-800/20 transition-colors"
+                    className="px-5 py-4 flex flex-col lg:grid lg:grid-cols-[1fr_130px_120px_110px_130px_280px] gap-3 lg:items-center hover:bg-stone-800/20 transition-colors"
                   >
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/admin/clientes/${client.id}`)}
-                      className="text-left flex items-center gap-3 min-w-0"
-                    >
-                      <div className="shrink-0 w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-xs font-bold text-amber-400">
-                        {client.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-stone-200 truncate">{client.name}</p>
-                        <p className="text-xs text-stone-500">{formatPhone(client.phone)}</p>
-                        <p className={`text-[11px] ${client.stats.lastContactedAt ? "text-cyan-400" : "text-red-300"}`}>
-                          {contactLabel}
-                        </p>
-                        {client.email && <p className="text-[11px] text-stone-600 truncate">{client.email}</p>}
-                      </div>
-                    </button>
+                    <div className="flex items-center gap-3 min-w-0">
+                      {uiPermissions.canOperateWhatsappAssisted && queueInfo && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Selecionar ${client.name} para fila`}
+                          checked={isSelected}
+                          disabled={
+                            !queueInfo.eligible ||
+                            (!isSelected && selectedQueueIds.length >= 50)
+                          }
+                          onChange={() => toggleSelectClientForQueue(client.id)}
+                          className="rounded border-stone-700 bg-stone-950"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/admin/clientes/${client.id}`)}
+                        className="text-left flex items-center gap-3 min-w-0 flex-1"
+                      >
+                        <div className="shrink-0 w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-xs font-bold text-amber-400">
+                          {client.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-stone-200 truncate">
+                            {client.name}
+                          </p>
+                          <p className="text-xs text-stone-500">
+                            {formatPhone(client.phone)}
+                          </p>
+                          <p
+                            className={`text-[11px] ${
+                              client.stats.lastContactedAt
+                                ? "text-cyan-400"
+                                : "text-red-300"
+                            }`}
+                          >
+                            {contactLabel}
+                          </p>
+                          {client.email && (
+                            <p className="text-[11px] text-stone-600 truncate">
+                              {client.email}
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                    </div>
 
                     <p className="text-xs text-stone-500">{formatDate(client.stats.lastVisit)}</p>
                     <p className="text-xs text-stone-500">{formatDate(client.stats.nextAppointmentAt)}</p>
@@ -511,8 +1361,76 @@ export default function ClientesPage() {
                           Bloqueado
                         </span>
                       )}
+                      {ineligibilityLabel && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-stone-800/80 text-stone-400 border border-stone-700">
+                          {ineligibilityLabel}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap justify-start lg:justify-end gap-2">
+                      {queueInfo &&
+                        (uiPermissions.canOperateWhatsappAssisted ||
+                          uiPermissions.canManageClients) && (
+                          <>
+                            {queueInfo.eligible ? (
+                              uiPermissions.canOperateWhatsappAssisted ? (
+                                <button
+                                  type="button"
+                                  disabled={preparingQueue}
+                                  onClick={() =>
+                                    void prepareAndOpenQueue(
+                                      [client.id],
+                                      batchTemplateKey,
+                                      `Contato Assistido — ${client.name}`
+                                    )
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/25 transition-colors"
+                                >
+                                  WhatsApp Assistido
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title="Permissão WHATSAPP_ASSISTED_OPERATE necessária"
+                                  className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
+                                >
+                                  Indisponível
+                                </button>
+                              )
+                            ) : queueInfo.canRegisterConsentInDrawer ? (
+                              uiPermissions.canManageClients ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleOpenConsentGateForClient(client)
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/25 transition-colors"
+                                >
+                                  Autorizar WhatsApp
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title="Permissão CLIENTS_MANAGE necessária para registrar consentimento"
+                                  className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
+                                >
+                                  Indisponível
+                                </button>
+                              )
+                            ) : (
+                              <button
+                                type="button"
+                                disabled
+                                title={ineligibilityLabel || "Inelegível para fila"}
+                                className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
+                              >
+                                Indisponível
+                              </button>
+                            )}
+                          </>
+                        )}
                       <button
                         type="button"
                         onClick={() => router.push(`/admin/clientes/reativacao?search=${encodeURIComponent(client.name)}`)}
@@ -561,6 +1479,52 @@ export default function ClientesPage() {
           </>
         )}
       </div>
+
+      {/* Assisted WhatsApp Queue Drawer */}
+      <AssistedWhatsAppQueueDrawer
+        open={drawerOpen}
+        canViewClients={uiPermissions.canViewClients}
+        canManageClients={uiPermissions.canManageClients}
+        canOperateWhatsappAssisted={uiPermissions.canOperateWhatsappAssisted}
+        campaignId={activeQueueCampaignId}
+        campaignName={activeQueueName}
+        campaignStatus={activeQueueStatus}
+        initialTemplateKey={batchTemplateKey}
+        recipients={activeQueueRecipients}
+        pendingConsentClient={pendingConsentClient}
+        remainingEligibleInRoundCount={
+          queueSelectionMeta?.remainingEligibleInRoundCount ?? 0
+        }
+        onCloseKeepProgress={() => {
+          setDrawerOpen(false);
+          setPendingConsentClient(null);
+        }}
+        onRecipientUpdated={handleRecipientUpdated}
+        onClientConfirmedSent={handleClientProcessedInRound}
+        onClientSkipped={handleClientProcessedInRound}
+        onCampaignCancelled={() => {
+          setActiveQueueStatus("CANCELLED");
+          setActiveQueueCampaignId(null);
+          setActiveQueueRecipients([]);
+          setRoundProcessedIds([]);
+          setWorkRoundId(`round_${Date.now()}`);
+          setDrawerOpen(false);
+        }}
+        onConsentRegisteredAndStartQueue={async (customerId, tplKey) => {
+          await fetchClients(search, page, filter, roundProcessedIds);
+          if (!uiPermissions.canOperateWhatsappAssisted) {
+            setPendingConsentClient(null);
+            setDrawerOpen(false);
+            return;
+          }
+          await prepareAndOpenQueue(
+            [customerId],
+            tplKey,
+            "Contato Assistido (Consentimento registrado)"
+          );
+        }}
+        onStartNextBatchInRound={handleStartNextBatchInRound}
+      />
 
       {showCreateModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">

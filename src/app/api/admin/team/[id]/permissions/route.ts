@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/api-auth";
@@ -108,6 +109,22 @@ export async function PUT(
           { status: 400 }
         );
       }
+    }
+
+    // DEC-05: Somente o OWNER da barbearia pode conceder ou revogar WHATSAPP_ASSISTED_OPERATE
+    const hasWhatsappOperateOverride = overridesList.some(
+      (item) => item.permissionKey === "WHATSAPP_ASSISTED_OPERATE"
+    );
+    if (hasWhatsappOperateOverride && data!.role !== "OWNER") {
+      return NextResponse.json(
+        {
+          error: "FORBIDDEN",
+          code: "OWNER_ONLY_PERMISSION",
+          message:
+            "Apenas o proprietário (OWNER) da barbearia pode conceder ou revogar a permissão 'Operar WhatsApp Assistido'.",
+        },
+        { status: 403 }
+      );
     }
 
     await prisma.$transaction(async (tx) => {

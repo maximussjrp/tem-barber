@@ -177,7 +177,7 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     });
     expect(data.contactMetrics).toEqual({
       neverContacted: 1,
-      noContact30: 2,
+      noContact30: 1,
       recentlyContacted: 1,
     });
     expect(prismaMock.customerContactLog.groupBy).toHaveBeenCalledTimes(1);
@@ -229,9 +229,9 @@ describe("P1 Clientes/CRM LOTE A API", () => {
     }
 
     await expect(runFilter("never_contacted")).resolves.toEqual(["never"]);
-    await expect(runFilter("no_contact_30")).resolves.toEqual(["never", "old30", "old60", "old90"]);
-    await expect(runFilter("no_contact_60")).resolves.toEqual(["never", "old60", "old90"]);
-    await expect(runFilter("no_contact_90")).resolves.toEqual(["never", "old90"]);
+    await expect(runFilter("no_contact_30")).resolves.toEqual(["old30", "old60", "old90"]);
+    await expect(runFilter("no_contact_60")).resolves.toEqual(["old60", "old90"]);
+    await expect(runFilter("no_contact_90")).resolves.toEqual(["old90"]);
     await expect(runFilter("recently_contacted")).resolves.toEqual(["recent"]);
     expect(prismaMock.customerContactLog.groupBy).toHaveBeenLastCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ barbershopId: "shop-a" }) })

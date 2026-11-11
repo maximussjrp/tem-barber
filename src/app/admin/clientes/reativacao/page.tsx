@@ -71,6 +71,17 @@ export default function ReactivationPage() {
   const [activeTab, setActiveTab] = useState<PipelineTab>("hoje");
   const [searchFilter, setSearchFilter] = useState("");
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const q = sp.get("search")?.trim();
+      if (q) {
+        setSearchFilter(q);
+        setActiveTab("todos");
+      }
+    }
+  }, []);
+
   // Selection & Campaign State
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isPreparing, setIsPreparing] = useState(false);

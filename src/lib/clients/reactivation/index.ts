@@ -10,3 +10,4 @@ export * from "./suppression-engine";
 export * from "./candidate-engine";
 export * from "./manual-campaign-service";
 export * from "./attribution-engine";
+export * from "./crm-queue-auth";

@@ -6,6 +6,7 @@ import {
   listBarbershopClients,
   type AdminClientFilter,
 } from "@/lib/customers";
+import { resolveUiQueuePermissions } from "@/lib/clients/reactivation/crm-queue-auth";
 
 export async function GET(request: NextRequest) {
   const { error, data } = await getOperationalStaffSession({ requiredPermission: "CLIENTS_VIEW" });
@@ -21,16 +22,34 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(sp.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, parseInt(sp.get("pageSize") ?? "30")));
   const filter = (sp.get("filter") ?? "all") as AdminClientFilter;
+  const excludeIdsParam = sp.get("excludeIds")?.trim() ?? "";
+  const excludeCustomerIds = excludeIdsParam
+    ? excludeIdsParam.split(",").map((id) => id.trim()).filter(Boolean)
+    : undefined;
 
-  const result = await listBarbershopClients(prisma, {
+  const [result, permissions] = await Promise.all([
+    listBarbershopClients(prisma, {
+      barbershopId,
+      search,
+      filter,
+      page,
+      pageSize,
+      excludeCustomerIds,
+    }),
+    resolveUiQueuePermissions({
+      userId: data!.userId,
+      role: data!.role,
+      memberId: data!.memberId ?? null,
+      barbershopId,
+      db: prisma,
+    }),
+  ]);
+
+  return NextResponse.json({
+    ...result,
     barbershopId,
-    search,
-    filter,
-    page,
-    pageSize,
+    permissions,
   });
-
-  return NextResponse.json(result);
 }
 
 export async function POST(request: NextRequest) {
