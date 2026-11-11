@@ -125,7 +125,6 @@ export async function POST(
     reason,
     evidence,
     eventKey,
-    context,
     declaredPriorAuthorization,
   } = body;
 
@@ -200,9 +199,18 @@ export async function POST(
 
   const validSources = Object.values(MarketingConsentSource);
 
-  // DEC-03 = A / G1-C12: Proíbe consentimento presumido ou fallback silencioso para OPTED_IN
+  // DEC-03 = A / GITHUB-01: Todo OPTED_IN registrado manualmente exige source válido,
+  // declaredPriorAuthorization === true e evidência específica >= 10 caracteres,
+  // independentemente de context, source ou quaisquer campos opcionais.
+  const trimmedEvidence = typeof evidence === "string" ? evidence.trim() : "";
+  const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+
   if (status === MarketingConsentStatus.OPTED_IN) {
-    if (!source || !validSources.includes(source)) {
+    if (
+      !source ||
+      typeof source !== "string" ||
+      !validSources.includes(source as MarketingConsentSource)
+    ) {
       return NextResponse.json(
         {
           error: "INVALID_CONSENT_SOURCE",
@@ -213,46 +221,44 @@ export async function POST(
       );
     }
 
-    const requiresExplicitProof =
-      context === "ASSISTED_QUEUE_DRAWER" ||
-      declaredPriorAuthorization !== undefined ||
-      source === MarketingConsentSource.ADMIN_WITH_PROOF ||
-      evidence !== undefined;
+    if (declaredPriorAuthorization !== true) {
+      return NextResponse.json(
+        {
+          error: "PRIOR_AUTHORIZATION_DECLARATION_REQUIRED",
+          message:
+            "É obrigatório confirmar expressamente que a autorização prévia já foi obtida do cliente.",
+        },
+        { status: 400 }
+      );
+    }
 
-    if (requiresExplicitProof) {
-      if (
-        (context === "ASSISTED_QUEUE_DRAWER" ||
-          declaredPriorAuthorization !== undefined) &&
-        declaredPriorAuthorization !== true
-      ) {
-        return NextResponse.json(
-          {
-            error: "PRIOR_AUTHORIZATION_DECLARATION_REQUIRED",
-            message:
-              "É obrigatório confirmar expressamente que a autorização prévia já foi obtida do cliente.",
-          },
-          { status: 400 }
-        );
-      }
-
-      const trimmedEvidence = String(evidence ?? reason ?? "").trim();
-      if (trimmedEvidence.length < 10) {
-        return NextResponse.json(
-          {
-            error: "CONSENT_EVIDENCE_REQUIRED",
-            message:
-              "Informe a evidência de como a autorização do cliente foi obtida (mínimo de 10 caracteres).",
-          },
-          { status: 400 }
-        );
-      }
+    if (trimmedEvidence.length < 10) {
+      return NextResponse.json(
+        {
+          error: "CONSENT_EVIDENCE_REQUIRED",
+          message:
+            "Informe a evidência de como a autorização do cliente foi obtida (mínimo de 10 caracteres).",
+        },
+        { status: 400 }
+      );
     }
   }
 
   const consentSource =
-    source && validSources.includes(source)
+    source &&
+    typeof source === "string" &&
+    validSources.includes(source as MarketingConsentSource)
       ? (source as MarketingConsentSource)
       : MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP;
+
+  const storedEvidence =
+    status === MarketingConsentStatus.OPTED_IN
+      ? trimmedEvidence
+      : trimmedEvidence || trimmedReason || null;
+  const storedReason =
+    status === MarketingConsentStatus.OPTED_IN
+      ? trimmedReason || trimmedEvidence
+      : trimmedReason || trimmedEvidence || null;
 
   try {
     const result = await prisma.$transaction(async (tx: any) => {
@@ -263,8 +269,8 @@ export async function POST(
         purpose: DEFAULT_CRM_PURPOSE,
         status: status as MarketingConsentStatus,
         source: consentSource,
-        reason: reason?.trim() || evidence?.trim() || null,
-        evidence: evidence?.trim() || reason?.trim() || null,
+        reason: storedReason,
+        evidence: storedEvidence,
         eventKey: eventKey.trim(),
         actorUserId: userId,
         actorMemberId: memberId,

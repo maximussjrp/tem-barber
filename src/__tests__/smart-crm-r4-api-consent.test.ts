@@ -171,7 +171,108 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
       expect(json.error).toBe("EVENT_KEY_CONFLICT");
     });
 
-    it("successfully records explicit OPTED_IN consent", async () => {
+    it("rejects OPTED_IN with 400 and no DB write when omitting context, declaration and evidence", async () => {
+      getAdminSessionMock.mockResolvedValueOnce({
+        error: null,
+        data: { userId: "u-1", role: "OWNER", memberId: "m-1", barbershopId: "shop-1" },
+      });
+
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-1", name: "Cliente 1" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+      prismaMock.customerMarketingConsentEvent.findUnique.mockResolvedValueOnce(null);
+
+      const req = new NextRequest("http://localhost/api/admin/clients/c-1/marketing-consent", {
+        method: "POST",
+        body: JSON.stringify({
+          status: "OPTED_IN",
+          source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+          eventKey: "evt-missing-proof-1",
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("PRIOR_AUTHORIZATION_DECLARATION_REQUIRED");
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(recordMarketingConsentMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects OPTED_IN with 400 when declaration is false or evidence is short / reason-only", async () => {
+      const baseSession = {
+        error: null,
+        data: { userId: "u-1", role: "OWNER", memberId: "m-1", barbershopId: "shop-1" },
+      };
+
+      // Declaração false
+      getAdminSessionMock.mockResolvedValueOnce(baseSession);
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-1", name: "Cliente 1" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+      prismaMock.customerMarketingConsentEvent.findUnique.mockResolvedValueOnce(null);
+
+      const resFalseDecl = await POST(
+        new NextRequest("http://localhost/api/admin/clients/c-1/marketing-consent", {
+          method: "POST",
+          body: JSON.stringify({
+            status: "OPTED_IN",
+            source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+            declaredPriorAuthorization: false,
+            evidence: "Cliente autorizou via WhatsApp em 11/11",
+            eventKey: "evt-false-decl",
+          }),
+        }),
+        { params: Promise.resolve({ id: "c-1" }) }
+      );
+      expect(resFalseDecl.status).toBe(400);
+      expect((await resFalseDecl.json()).error).toBe("PRIOR_AUTHORIZATION_DECLARATION_REQUIRED");
+
+      // Evidência < 10 caracteres
+      getAdminSessionMock.mockResolvedValueOnce(baseSession);
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-1", name: "Cliente 1" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+      prismaMock.customerMarketingConsentEvent.findUnique.mockResolvedValueOnce(null);
+
+      const resShortEvidence = await POST(
+        new NextRequest("http://localhost/api/admin/clients/c-1/marketing-consent", {
+          method: "POST",
+          body: JSON.stringify({
+            status: "OPTED_IN",
+            source: MarketingConsentSource.CUSTOMER_REQUEST_IN_PERSON,
+            declaredPriorAuthorization: true,
+            evidence: "ok ok",
+            eventKey: "evt-short-ev",
+          }),
+        }),
+        { params: Promise.resolve({ id: "c-1" }) }
+      );
+      expect(resShortEvidence.status).toBe(400);
+      expect((await resShortEvidence.json()).error).toBe("CONSENT_EVIDENCE_REQUIRED");
+
+      // Reason genérico sem evidence
+      getAdminSessionMock.mockResolvedValueOnce(baseSession);
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-1", name: "Cliente 1" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+      prismaMock.customerMarketingConsentEvent.findUnique.mockResolvedValueOnce(null);
+
+      const resReasonOnly = await POST(
+        new NextRequest("http://localhost/api/admin/clients/c-1/marketing-consent", {
+          method: "POST",
+          body: JSON.stringify({
+            status: "OPTED_IN",
+            source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+            declaredPriorAuthorization: true,
+            reason: "Justificativa longa apenas em reason sem evidence",
+            eventKey: "evt-reason-only",
+          }),
+        }),
+        { params: Promise.resolve({ id: "c-1" }) }
+      );
+      expect(resReasonOnly.status).toBe(400);
+      expect((await resReasonOnly.json()).error).toBe("CONSENT_EVIDENCE_REQUIRED");
+      expect(recordMarketingConsentMock).not.toHaveBeenCalled();
+    });
+
+    it("successfully records explicit OPTED_IN consent with declaredPriorAuthorization=true and valid evidence", async () => {
       getAdminSessionMock.mockResolvedValueOnce({
         error: null,
         data: { userId: "u-1", role: "OWNER", memberId: "m-1", barbershopId: "shop-1" },
@@ -192,6 +293,8 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
         body: JSON.stringify({
           status: "OPTED_IN",
           source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+          declaredPriorAuthorization: true,
+          evidence: "Cliente autorizou pelo WhatsApp oficial em 11/11/2026",
           eventKey: "evt-valid-1",
         }),
       });
@@ -207,10 +310,80 @@ describe("Smart CRM R4 — Marketing Consent API Tests", () => {
           barbershopId: "shop-1",
           customerId: "c-1",
           status: MarketingConsentStatus.OPTED_IN,
+          source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+          evidence: "Cliente autorizou pelo WhatsApp oficial em 11/11/2026",
           eventKey: "evt-valid-1",
           actorUserId: "u-1",
         })
       );
+    });
+
+    it("keeps OPTED_OUT working without requiring evidence or prior authorization declaration", async () => {
+      getAdminSessionMock.mockResolvedValueOnce({
+        error: null,
+        data: { userId: "u-1", role: "OWNER", memberId: "m-1", barbershopId: "shop-1" },
+      });
+
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-1", name: "Cliente 1" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce({ id: "link-1" });
+      prismaMock.customerMarketingConsentEvent.findUnique.mockResolvedValueOnce(null);
+
+      recordMarketingConsentMock.mockResolvedValueOnce({
+        consent: { id: "consent-1", status: MarketingConsentStatus.OPTED_OUT },
+        event: { id: "event-2", eventType: MarketingConsentStatus.OPTED_OUT },
+        isDuplicateEvent: false,
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/clients/c-1/marketing-consent", {
+        method: "POST",
+        body: JSON.stringify({
+          status: "OPTED_OUT",
+          eventKey: "evt-optout-1",
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(recordMarketingConsentMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          barbershopId: "shop-1",
+          customerId: "c-1",
+          status: MarketingConsentStatus.OPTED_OUT,
+          evidence: null,
+          reason: null,
+          eventKey: "evt-optout-1",
+        })
+      );
+    });
+
+    it("returns 404 and denies access when customer belongs to another barbershop", async () => {
+      getAdminSessionMock.mockResolvedValueOnce({
+        error: null,
+        data: { userId: "u-1", role: "OWNER", memberId: "m-1", barbershopId: "shop-1" },
+      });
+
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: "c-other-shop", name: "Outro Cliente" });
+      prismaMock.customerBarbershopLink.findUnique.mockResolvedValueOnce(null);
+      prismaMock.appointment.findFirst.mockResolvedValueOnce(null);
+      prismaMock.comanda.findFirst.mockResolvedValueOnce(null);
+
+      const req = new NextRequest("http://localhost/api/admin/clients/c-other-shop/marketing-consent", {
+        method: "POST",
+        body: JSON.stringify({
+          status: "OPTED_IN",
+          source: MarketingConsentSource.ADMIN_WITH_PROOF,
+          declaredPriorAuthorization: true,
+          evidence: "Comprovante válido que não deve gravar cross-tenant",
+          eventKey: "evt-cross-tenant",
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: "c-other-shop" }) });
+      expect(res.status).toBe(404);
+      expect(recordMarketingConsentMock).not.toHaveBeenCalled();
     });
   });
 });

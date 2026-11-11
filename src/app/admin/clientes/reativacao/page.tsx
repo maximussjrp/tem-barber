@@ -97,6 +97,10 @@ export default function ReactivationPage() {
   // Consent Modal State
   const [consentModalCandidate, setConsentModalCandidate] = useState<ReactivationCandidateItem | null>(null);
   const [consentChoice, setConsentChoice] = useState<"OPTED_IN" | "OPTED_OUT">("OPTED_IN");
+  const [consentSource, setConsentSource] = useState<
+    "CUSTOMER_REQUEST_WHATSAPP" | "CUSTOMER_REQUEST_IN_PERSON" | "ADMIN_WITH_PROOF"
+  >("CUSTOMER_REQUEST_WHATSAPP");
+  const [consentEvidence, setConsentEvidence] = useState("");
   const [consentConfirmationChecked, setConsentConfirmationChecked] = useState(false);
   const [savingConsent, setSavingConsent] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -223,15 +227,24 @@ export default function ReactivationPage() {
   const openConsentModal = (candidate: ReactivationCandidateItem) => {
     setConsentModalCandidate(candidate);
     setConsentChoice("OPTED_IN");
+    setConsentSource("CUSTOMER_REQUEST_WHATSAPP");
+    setConsentEvidence("");
     setConsentConfirmationChecked(false);
     setConsentError(null);
   };
 
   const handleSaveConsent = async () => {
     if (!consentModalCandidate) return;
-    if (consentChoice === "OPTED_IN" && !consentConfirmationChecked) {
-      setConsentError("Confirme que o cliente de fato autorizou o recebimento de mensagens.");
-      return;
+    const trimmedEvidence = consentEvidence.trim();
+    if (consentChoice === "OPTED_IN") {
+      if (!consentConfirmationChecked) {
+        setConsentError("Confirme que o cliente de fato autorizou o recebimento de mensagens.");
+        return;
+      }
+      if (trimmedEvidence.length < 10) {
+        setConsentError("Informe a evidência específica da autorização prévia (mínimo de 10 caracteres).");
+        return;
+      }
     }
 
     setSavingConsent(true);
@@ -240,15 +253,28 @@ export default function ReactivationPage() {
     const eventKey = `evt-consent-${consentModalCandidate.customer.id}-${Date.now()}`;
 
     try {
+      const payloadBody =
+        consentChoice === "OPTED_IN"
+          ? {
+              status: "OPTED_IN",
+              source: consentSource,
+              declaredPriorAuthorization: true,
+              evidence: trimmedEvidence,
+              reason: trimmedEvidence,
+              context: "SMART_CRM_REACTIVATION",
+              eventKey,
+            }
+          : {
+              status: "OPTED_OUT",
+              source: "CUSTOMER_REQUEST_WHATSAPP",
+              reason: "Opt-out registrado pelo operador",
+              eventKey,
+            };
+
       const res = await fetch(`/api/admin/clients/${consentModalCandidate.customer.id}/marketing-consent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: consentChoice,
-          source: "CUSTOMER_REQUEST_WHATSAPP",
-          reason: consentChoice === "OPTED_IN" ? "Consentimento registrado pelo operador no CRM" : "Opt-out registrado pelo operador",
-          eventKey,
-        }),
+        body: JSON.stringify(payloadBody),
       });
 
       if (!res.ok) {
@@ -1029,18 +1055,69 @@ export default function ReactivationPage() {
             </div>
 
             {consentChoice === "OPTED_IN" && (
-              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2">
-                <label className="flex items-start gap-2 text-xs text-stone-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={consentConfirmationChecked}
-                    onChange={(e) => setConsentConfirmationChecked(e.target.checked)}
-                    className="mt-0.5 text-amber-500 rounded"
+              <div className="space-y-3">
+                <div>
+                  <label
+                    htmlFor="reativacao-consent-source"
+                    className="block text-xs font-semibold text-stone-300 mb-1"
+                  >
+                    Origem da autorização obtida
+                  </label>
+                  <select
+                    id="reativacao-consent-source"
+                    value={consentSource}
+                    onChange={(e) =>
+                      setConsentSource(
+                        e.target.value as
+                          | "CUSTOMER_REQUEST_WHATSAPP"
+                          | "CUSTOMER_REQUEST_IN_PERSON"
+                          | "ADMIN_WITH_PROOF"
+                      )
+                    }
+                    className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
+                  >
+                    <option value="CUSTOMER_REQUEST_WHATSAPP">
+                      Solicitação do cliente via WhatsApp
+                    </option>
+                    <option value="CUSTOMER_REQUEST_IN_PERSON">
+                      Autorização presencial na barbearia
+                    </option>
+                    <option value="ADMIN_WITH_PROOF">
+                      Comprovante administrativo arquivado
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="reativacao-consent-evidence"
+                    className="block text-xs font-semibold text-stone-300 mb-1"
+                  >
+                    Evidência específica da autorização prévia (mínimo 10 caracteres)
+                  </label>
+                  <textarea
+                    id="reativacao-consent-evidence"
+                    rows={3}
+                    value={consentEvidence}
+                    onChange={(e) => setConsentEvidence(e.target.value)}
+                    placeholder="Ex: Cliente solicitou por WhatsApp em 11/11 após atendimento receber avisos de horários."
+                    className="w-full bg-stone-950 border border-stone-700 rounded-lg p-2.5 text-xs text-stone-100"
                   />
-                  <span>
-                    Declaro expressamente que este cliente forneceu autorização prévia para receber mensagens de retorno/marketing da barbearia.
-                  </span>
-                </label>
+                </div>
+
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2">
+                  <label className="flex items-start gap-2 text-xs text-stone-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={consentConfirmationChecked}
+                      onChange={(e) => setConsentConfirmationChecked(e.target.checked)}
+                      className="mt-0.5 text-amber-500 rounded"
+                    />
+                    <span>
+                      Declaro expressamente que este cliente forneceu autorização prévia para receber mensagens de retorno/marketing da barbearia.
+                    </span>
+                  </label>
+                </div>
               </div>
             )}
 
@@ -1058,7 +1135,11 @@ export default function ReactivationPage() {
               </button>
               <button
                 type="button"
-                disabled={savingConsent || (consentChoice === "OPTED_IN" && !consentConfirmationChecked)}
+                disabled={
+                  savingConsent ||
+                  (consentChoice === "OPTED_IN" &&
+                    (!consentConfirmationChecked || consentEvidence.trim().length < 10))
+                }
                 onClick={handleSaveConsent}
                 className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 disabled:opacity-40 transition-colors"
               >

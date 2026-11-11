@@ -266,7 +266,7 @@ describe("Smart CRM R4 — UI Component Tests", () => {
     });
   });
 
-  it("opens consent modal when clicking Registrar consentimento", async () => {
+  it("opens consent modal with empty evidence, enforces proof for OPTED_IN, and preserves OPTED_OUT without evidence", async () => {
     render(<ReactivationPage />);
 
     await waitFor(() => {
@@ -285,6 +285,76 @@ describe("Smart CRM R4 — UI Component Tests", () => {
 
     expect(screen.getByText("Registrar Consentimento de Marketing")).toBeInTheDocument();
     expect(screen.getByText(/Declaro expressamente que este cliente forneceu autorização prévia/i)).toBeInTheDocument();
+
+    const evidenceTextarea = screen.getByLabelText(/Evidência específica da autorização prévia/i) as HTMLTextAreaElement;
+    const sourceSelect = screen.getByLabelText(/Origem da autorização obtida/i) as HTMLSelectElement;
+    const declarationCheckbox = screen.getByRole("checkbox", {
+      name: /Declaro expressamente que este cliente forneceu autorização prévia/i,
+    }) as HTMLInputElement;
+    const saveBtn = screen.getByRole("button", { name: "Salvar consentimento" });
+
+    // Não preenche justificativa genérica automaticamente e mantém botão bloqueado sem declaração + evidência válida
+    expect(evidenceTextarea.value).toBe("");
+    expect(declarationCheckbox.checked).toBe(false);
+    expect(saveBtn).toBeDisabled();
+
+    // Apenas declaração marcada com evidência curta mantém botão bloqueado
+    fireEvent.click(declarationCheckbox);
+    fireEvent.change(evidenceTextarea, { target: { value: "curto" } });
+    expect(saveBtn).toBeDisabled();
+
+    // Evidência válida (>= 10 chars) + origem selecionada + declaração marcada libera e envia ao backend
+    fireEvent.change(sourceSelect, { target: { value: "CUSTOMER_REQUEST_IN_PERSON" } });
+    fireEvent.change(evidenceTextarea, {
+      target: { value: "Cliente autorizou presencialmente no caixa em 11/11." },
+    });
+    expect(saveBtn).not.toBeDisabled();
+
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      const fetchMock = global.fetch as any;
+      const postCall = fetchMock.mock.calls.find(
+        (c: any) =>
+          String(c[0]).includes("/api/admin/clients/cust-2/marketing-consent") &&
+          c[1]?.method === "POST"
+      );
+      expect(postCall).toBeDefined();
+      const sentBody = JSON.parse(postCall[1].body);
+      expect(sentBody).toMatchObject({
+        status: "OPTED_IN",
+        source: "CUSTOMER_REQUEST_IN_PERSON",
+        declaredPriorAuthorization: true,
+        evidence: "Cliente autorizou presencialmente no caixa em 11/11.",
+        context: "SMART_CRM_REACTIVATION",
+      });
+    });
+
+    // Reabre para testar fluxo OPTED_OUT sem exigir evidência ou declaração
+    await waitFor(() => {
+      expect(screen.queryByText("Registrar Consentimento de Marketing")).not.toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Registrar consentimento"));
+    const optOutRadio = screen.getByRole("radio", {
+      name: /Cliente solicitou NÃO receber mensagens/i,
+    });
+    fireEvent.click(optOutRadio);
+
+    const saveOptOutBtn = screen.getByRole("button", { name: "Salvar consentimento" });
+    expect(saveOptOutBtn).not.toBeDisabled();
+    fireEvent.click(saveOptOutBtn);
+
+    await waitFor(() => {
+      const fetchMock = global.fetch as any;
+      const consentPostCalls = fetchMock.mock.calls.filter(
+        (c: any) =>
+          String(c[0]).includes("/api/admin/clients/cust-2/marketing-consent") &&
+          c[1]?.method === "POST"
+      );
+      expect(consentPostCalls.length).toBeGreaterThanOrEqual(2);
+      const lastBody = JSON.parse(consentPostCalls[consentPostCalls.length - 1][1].body);
+      expect(lastBody.status).toBe("OPTED_OUT");
+    });
   });
 
   it("prevents WHATSAPP_OPENED API call when browser popup is blocked", async () => {

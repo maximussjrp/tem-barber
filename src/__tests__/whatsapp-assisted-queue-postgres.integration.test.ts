@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "dotenv/config";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
+import { NextRequest } from "next/server";
 import { Pool, PoolClient } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
@@ -23,6 +24,17 @@ import {
   DEFAULT_CRM_PURPOSE,
 } from "@/lib/clients/reactivation";
 import { listBarbershopClients } from "@/lib/customers";
+
+const { getAdminSessionMock } = vi.hoisted(() => ({
+  getAdminSessionMock: vi.fn(),
+}));
+
+vi.mock("@/lib/api-auth", () => ({
+  getAdminSession: getAdminSessionMock,
+}));
+
+import prismaSingleton from "@/lib/prisma";
+import { POST as marketingConsentPOST } from "@/app/api/admin/clients/[id]/marketing-consent/route";
 
 const rawDbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "";
 const isSafeTestDb =
@@ -224,6 +236,7 @@ describe("G21-01 & G21-02 — PostgreSQL Real Concurrency, Advisory Locks & Inte
       if (clientB) clientB.release();
       if (prismaA) await prismaA.$disconnect();
       if (prismaB) await prismaB.$disconnect();
+      await prismaSingleton.$disconnect();
       if (poolA) await poolA.end();
       if (poolB) await poolB.end();
     }
@@ -1358,6 +1371,269 @@ describe("G21-01 & G21-02 — PostgreSQL Real Concurrency, Advisory Locks & Inte
         await prismaA.customerBarbershopLink.deleteMany({ where: { barbershopId: shopA } });
         await prismaA.user.deleteMany({ where: { id: { in: [op1, op2, cust1, cust2, cust3] } } });
         await prismaA.barbershop.deleteMany({ where: { id: shopA } });
+      }
+    });
+
+    it("GITHUB-01-PG: rota POST /marketing-consent exige prova real no PostgreSQL, preserva OPTED_OUT sem evidência, bloqueia sem CLIENTS_MANAGE e isola outro tenant", async () => {
+      if (!prismaA) throw new Error("Prisma A não inicializado.");
+      const suffix = `gh01-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const shopA = `shop-gha-${suffix}`;
+      const shopB = `shop-ghb-${suffix}`;
+      const ownerId = `own-${suffix}`;
+      const barberId = `bar-${suffix}`;
+      const memberBarberId = `mbr-bar-${suffix}`;
+      const custA = `custa-${suffix}`;
+      const custB = `custb-${suffix}`;
+      const randPhone = (d: number) => `55179${String(40000000 + Math.floor(Math.random() * 50000000) + d).slice(0, 8)}`;
+
+      try {
+        await prismaA.barbershop.createMany({
+          data: [
+            {
+              id: shopA,
+              name: "Barbearia GH01 A",
+              slug: `gh01-a-${suffix}`,
+              phone: "5517991111101",
+              zipCode: "15000000",
+              street: "Rua A",
+              number: "1",
+              neighborhood: "Centro",
+              city: "Sao Jose do Rio Preto",
+              state: "SP",
+            },
+            {
+              id: shopB,
+              name: "Barbearia GH01 B",
+              slug: `gh01-b-${suffix}`,
+              phone: "5517991111102",
+              zipCode: "15000000",
+              street: "Rua B",
+              number: "2",
+              neighborhood: "Centro",
+              city: "Sao Jose do Rio Preto",
+              state: "SP",
+            },
+          ],
+        });
+
+        await prismaA.user.createMany({
+          data: [
+            { id: ownerId, name: "Owner GH01", email: `${ownerId}@test.local`, phone: randPhone(1) },
+            { id: barberId, name: "Barber GH01", email: `${barberId}@test.local`, phone: randPhone(2) },
+            { id: custA, name: "Cliente GH01 A", email: `${custA}@test.local`, phone: randPhone(3) },
+            { id: custB, name: "Cliente GH01 B", email: `${custB}@test.local`, phone: randPhone(4) },
+          ],
+        });
+
+        await prismaA.barbershopMember.create({
+          data: {
+            id: memberBarberId,
+            barbershopId: shopA,
+            userId: barberId,
+            role: "BARBER",
+            isActive: true,
+          },
+        });
+
+        await prismaA.customerBarbershopLink.createMany({
+          data: [
+            { barbershopId: shopA, customerId: custA },
+            { barbershopId: shopB, customerId: custB },
+          ],
+        });
+
+        const ownerSession = {
+          error: null,
+          data: { userId: ownerId, role: "OWNER", memberId: null, barbershopId: shopA },
+        };
+
+        // 1) OPTED_IN sem evidência, omitindo context e declaração -> 400 sem gravação
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resNoProof = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+              eventKey: `evt-gh01-noproof-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resNoProof.status).toBe(400);
+
+        // 2) OPTED_IN com declaração falsa ou evidência curta -> 400 sem gravação
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resFalseDecl = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.CUSTOMER_REQUEST_WHATSAPP,
+              declaredPriorAuthorization: false,
+              evidence: "Autorização válida suficientemente longa",
+              eventKey: `evt-gh01-falsedecl-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resFalseDecl.status).toBe(400);
+
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resShortEv = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.CUSTOMER_REQUEST_IN_PERSON,
+              declaredPriorAuthorization: true,
+              evidence: "curto",
+              eventKey: `evt-gh01-short-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resShortEv.status).toBe(400);
+
+        expect(
+          await prismaA.customerMarketingConsent.count({
+            where: { barbershopId: shopA, customerId: custA },
+          })
+        ).toBe(0);
+        expect(
+          await prismaA.customerMarketingConsentEvent.count({
+            where: { barbershopId: shopA, customerId: custA },
+          })
+        ).toBe(0);
+
+        // 3) Colaborador sem CLIENTS_MANAGE -> 403 sem gravação
+        getAdminSessionMock.mockResolvedValueOnce({
+          error: null,
+          data: {
+            userId: barberId,
+            role: "BARBER",
+            memberId: memberBarberId,
+            barbershopId: shopA,
+          },
+        });
+        const resForbidden = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.ADMIN_WITH_PROOF,
+              declaredPriorAuthorization: true,
+              evidence: "Evidência válida que colaborador sem permissão não pode gravar",
+              eventKey: `evt-gh01-403-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resForbidden.status).toBe(403);
+
+        // 4) Cliente de outra barbearia -> 404 acesso negado sem gravação
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resCrossTenant = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custB}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.ADMIN_WITH_PROOF,
+              declaredPriorAuthorization: true,
+              evidence: "Tentativa indevida em outro tenant com prova",
+              eventKey: `evt-gh01-cross-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custB }) }
+        );
+        expect(resCrossTenant.status).toBe(404);
+        expect(
+          await prismaA.customerMarketingConsent.count({
+            where: { customerId: custB },
+          })
+        ).toBe(0);
+
+        // 5) OPTED_IN com autorização declarada e evidência válida -> 200 e persistência real no Postgres
+        const validEventKey = `evt-gh01-valid-${suffix}`;
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resValidIn = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_IN,
+              source: MarketingConsentSource.CUSTOMER_REQUEST_IN_PERSON,
+              declaredPriorAuthorization: true,
+              evidence: "Cliente autorizou presencialmente no balcão em 11/11/2026.",
+              eventKey: validEventKey,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resValidIn.status).toBe(200);
+
+        const savedConsent = await prismaA.customerMarketingConsent.findUnique({
+          where: {
+            barbershopId_customerId_channel_purpose: {
+              barbershopId: shopA,
+              customerId: custA,
+              channel: DEFAULT_CRM_CHANNEL,
+              purpose: DEFAULT_CRM_PURPOSE,
+            },
+          },
+        });
+        expect(savedConsent?.status).toBe(MarketingConsentStatus.OPTED_IN);
+        expect(savedConsent?.source).toBe(MarketingConsentSource.CUSTOMER_REQUEST_IN_PERSON);
+        expect(savedConsent?.evidence).toBe("Cliente autorizou presencialmente no balcão em 11/11/2026.");
+
+        // 6) OPTED_OUT sem evidência -> 200 e atualização real no Postgres
+        getAdminSessionMock.mockResolvedValueOnce(ownerSession);
+        const resValidOut = await marketingConsentPOST(
+          new NextRequest(`http://localhost/api/admin/clients/${custA}/marketing-consent`, {
+            method: "POST",
+            body: JSON.stringify({
+              status: MarketingConsentStatus.OPTED_OUT,
+              eventKey: `evt-gh01-out-${suffix}`,
+            }),
+          }),
+          { params: Promise.resolve({ id: custA }) }
+        );
+        expect(resValidOut.status).toBe(200);
+
+        const afterOutConsent = await prismaA.customerMarketingConsent.findUnique({
+          where: {
+            barbershopId_customerId_channel_purpose: {
+              barbershopId: shopA,
+              customerId: custA,
+              channel: DEFAULT_CRM_CHANNEL,
+              purpose: DEFAULT_CRM_PURPOSE,
+            },
+          },
+        });
+        expect(afterOutConsent?.status).toBe(MarketingConsentStatus.OPTED_OUT);
+        expect(
+          await prismaA.customerMarketingConsentEvent.count({
+            where: { barbershopId: shopA, customerId: custA },
+          })
+        ).toBe(2);
+      } finally {
+        await prismaA.customerMarketingConsentEvent.deleteMany({
+          where: { barbershopId: { in: [shopA, shopB] } },
+        });
+        await prismaA.customerMarketingConsent.deleteMany({
+          where: { barbershopId: { in: [shopA, shopB] } },
+        });
+        await prismaA.customerBarbershopLink.deleteMany({
+          where: { barbershopId: { in: [shopA, shopB] } },
+        });
+        await prismaA.barbershopMember.deleteMany({
+          where: { id: memberBarberId },
+        });
+        await prismaA.user.deleteMany({
+          where: { id: { in: [ownerId, barberId, custA, custB] } },
+        });
+        await prismaA.barbershop.deleteMany({
+          where: { id: { in: [shopA, shopB] } },
+        });
       }
     });
   });
