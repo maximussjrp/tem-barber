@@ -280,42 +280,28 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     openSpy.mockRestore();
   });
 
-  it("permite registrar consentimento prévio no painel lateral (DEC-03 = A) exigindo declaração e evidência >= 10 caracteres", async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+  it("não exibe formulário Autorização LGPD para UNKNOWN, libera Atendimento WhatsApp sem texto promocional e bloqueia OPTED_OUT", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => ({ closed: false } as Window));
+
+    const optedOutClient3 = {
+      ...pendingConsentClient2,
+      id: "c-3",
+      name: "Roberto OptOut",
+      phone: "5517991089192",
+      whatsappQueue: {
+        eligible: false,
+        consentStatus: "OPTED_OUT" as const,
+        isValidMobilePhone: true,
+        inCooldown14d: false,
+        canRegisterConsentInDrawer: false,
+        ineligibilityReason: "CONSENT_OPTED_OUT" as const,
+      },
+    };
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/admin/clients/reactivation/manual-campaigns/active")) {
         return Promise.resolve({ ok: true, json: async () => ({ activeCampaign: null }) });
-      }
-      if (url.includes("/api/admin/clients/c-2/marketing-consent") && init?.method === "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            success: true,
-            consent: { status: "OPTED_IN" },
-          }),
-        });
-      }
-      if (url.includes("/api/admin/clients/reactivation/manual-campaigns") && init?.method === "POST") {
-        return Promise.resolve({
-          ok: true,
-          status: 201,
-          json: async () => ({
-            success: true,
-            campaign: { id: "camp-consent", name: "Fila Assistida", status: "READY" },
-            accepted: [
-              {
-                recipientId: "rec-c2",
-                customerId: "c-2",
-                customerName: "Marina Sem Consentimento",
-                customerPhone: "5517991089191",
-                dispatchStatus: "READY",
-                previewMessage: "Oi, Marina!",
-                queueIndex: 0,
-              },
-            ],
-            rejected: [],
-          }),
-        });
       }
       return Promise.resolve({
         ok: true,
@@ -326,11 +312,11 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
             canManageClients: true,
             canOperateWhatsappAssisted: true,
           },
-          clients: [pendingConsentClient2],
-          total: 1,
+          clients: [pendingConsentClient2, optedOutClient3],
+          total: 2,
           page: 1,
           pageSize: 30,
-          contactMetrics: { neverContacted: 1, noContact30: 0, recentlyContacted: 0 },
+          contactMetrics: { neverContacted: 2, noContact30: 0, recentlyContacted: 0 },
         }),
       });
     });
@@ -339,36 +325,38 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
 
     render(<ClientesPage />);
     expect(await screen.findByText("Marina Sem Consentimento")).toBeInTheDocument();
+    expect(screen.getByText("Roberto OptOut")).toBeInTheDocument();
 
-    // Clica em "Autorizar WhatsApp"
-    await userEvent.click(screen.getByRole("button", { name: "Autorizar WhatsApp" }));
+    // Não existe botão "Autorizar WhatsApp" nem formulário LGPD no drawer
+    expect(screen.queryByRole("button", { name: "Autorizar WhatsApp" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Autorização LGPD/i)).not.toBeInTheDocument();
 
-    expect(
-      await screen.findByText("Registro de Consentimento Já Obtido (DEC-03 / LGPD)")
-    ).toBeInTheDocument();
+    // OPTED_OUT permanece bloqueado
+    expect(screen.getByText("Opt-out marketing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Indisponível" })).toBeDisabled();
 
-    // Tenta salvar sem marcar declaração -> exibe erro
-    const evidenceInput = screen.getByLabelText("Evidência da autorização (mínimo 10 caracteres)");
-    await userEvent.type(evidenceInput, "Cliente pediu lembretes no balcão ontem.");
-    await userEvent.click(screen.getByRole("button", { name: "Registrar consentimento e preparar mensagem" }));
+    // UNKNOWN oferece atendimento manual independente sem texto promocional e sem gravar consentimento/campanha
+    const manualBtn = screen.getByRole("button", { name: "Atendimento WhatsApp" });
+    await userEvent.click(manualBtn);
 
-    expect(
-      await screen.findByText(/Confirme expressamente a declaração de que a autorização já foi obtida/i)
-    ).toBeInTheDocument();
-
-    // Marca declaração e salva -> chama POST /marketing-consent e em seguida prepara a fila
-    const checkbox = screen.getByRole("checkbox", {
-      name: /Declaro que a autorização de contato já foi obtida previamente/i,
-    });
-    await userEvent.click(checkbox);
-    await userEvent.click(screen.getByRole("button", { name: "Registrar consentimento e preparar mensagem" }));
-
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([url]) => String(url).includes("/api/admin/clients/c-2/marketing-consent"))
-      ).toBe(true)
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://wa.me/5517991089191",
+      "_blank",
+      "noopener,noreferrer"
     );
-    expect(await screen.findByRole("button", { name: "Abrir no WhatsApp" })).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/marketing-consent") ||
+          s.includes("/contact-logs") ||
+          (s.includes("/manual-campaigns") && !s.includes("/active"))
+        );
+      })
+    ).toBe(false);
+
+    openSpy.mockRestore();
   });
 
   it("exibe banner de retomada de fila ativa, fallback de bloqueador de pop-up e botão de próximo lote da rodada (S-03)", async () => {
@@ -533,12 +521,15 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     expect(await screen.findByText("Carlos Elegível")).toBeInTheDocument();
     expect(screen.getByText("Marina Sem Consentimento")).toBeInTheDocument();
 
-    // Controles de fila e consentimento não podem aparecer
+    // Controles de fila promocional e consentimento no drawer não podem aparecer
     expect(screen.queryByRole("button", { name: "WhatsApp Assistido" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Autorizar WhatsApp" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Iniciar fila/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Novo cliente" })).not.toBeInTheDocument();
+    // Para OPTED_IN sem permissão de fila, botão fica Indisponível; para UNKNOWN com CLIENTS_VIEW=true, atendimento manual permanece disponível
+    expect(screen.getByRole("button", { name: "Indisponível" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Atendimento WhatsApp" })).toBeEnabled();
     // Também não consulta /manual-campaigns/active sem permissão
     expect(
       (fetchMock.mock.calls as unknown as [RequestInfo | URL][]).some(([url]) =>
@@ -547,7 +538,7 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     ).toBe(false);
   });
 
-  it("G24-02b: WHATSAPP_ASSISTED_OPERATE=true com CLIENTS_MANAGE=false libera fila mas bloqueia Autorizar WhatsApp", async () => {
+  it("G24-02b: WHATSAPP_ASSISTED_OPERATE=true com CLIENTS_MANAGE=false libera fila para OPTED_IN e Atendimento WhatsApp para UNKNOWN sem Autorizar WhatsApp", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/admin/clients/reactivation/manual-campaigns/active")) {
@@ -598,69 +589,28 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
 
     expect(await screen.findByRole("button", { name: "WhatsApp Assistido" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Autorizar WhatsApp" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Indisponível" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Atendimento WhatsApp" })).toBeEnabled();
   });
 
-  it("G24-02c: CLIENTS_MANAGE=true com WHATSAPP_ASSISTED_OPERATE=false permite registrar consentimento sem iniciar fila WhatsApp", async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/api/admin/clients/c-2/marketing-consent") && init?.method === "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ success: true, consent: { status: "OPTED_IN" } }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
+  it("G24-02c: CLIENTS_VIEW=false oculta listagem e fila assistida (fail-closed)", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 403,
         json: async () => ({
-          barbershopId: "shop-rbac-3",
-          permissions: {
-            canViewClients: true,
-            canManageClients: true,
-            canOperateWhatsappAssisted: false,
-          },
-          clients: [eligibleClient1, pendingConsentClient2],
-          total: 2,
-          page: 1,
-          pageSize: 30,
-          contactMetrics: { neverContacted: 1, noContact30: 1, recentlyContacted: 0 },
+          error: "FORBIDDEN",
+          message: "Permissão CLIENTS_VIEW necessária.",
         }),
-      });
-    });
+      })
+    );
 
     global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<ClientesPage />);
 
-    expect(await screen.findByText("Marina Sem Consentimento")).toBeInTheDocument();
+    expect(await screen.findByText(/Acesso restrito|Permissão/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "WhatsApp Assistido" })).not.toBeInTheDocument();
-    const authBtn = screen.getByRole("button", { name: "Autorizar WhatsApp" });
-    await userEvent.click(authBtn);
-
-    const evidenceInput = await screen.findByLabelText("Evidência da autorização (mínimo 10 caracteres)");
-    await userEvent.type(evidenceInput, "Cliente assinou termo na recepção");
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: /Declaro que a autorização de contato/i })
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Registrar consentimento" }));
-
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([u, i]) =>
-            String(u).includes("/api/admin/clients/c-2/marketing-consent") &&
-            i?.method === "POST"
-        )
-      ).toBe(true)
-    );
-    // Não deve disparar POST /manual-campaigns porque WHATSAPP_ASSISTED_OPERATE é false
-    expect(
-      fetchMock.mock.calls.some(
-        ([u, i]) =>
-          String(u).includes("/api/admin/clients/reactivation/manual-campaigns") &&
-          i?.method === "POST"
-      )
-    ).toBe(false);
+    expect(screen.queryByRole("button", { name: "Atendimento WhatsApp" })).not.toBeInTheDocument();
   });
 
   it("G24-03: resposta tardia da Barbearia A após troca para Barbearia B é descartada sem sobrescrever clientes, métricas ou fila ativa de B", async () => {

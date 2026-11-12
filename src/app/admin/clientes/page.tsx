@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { ClientNav } from "@/components/admin/clients/ClientNav";
 import {
   AssistedWhatsAppQueueDrawer,
-  type PendingConsentClientInfo,
   type QueueRecipientItem,
 } from "@/components/admin/clients/AssistedWhatsAppQueueDrawer";
 import { WHATSAPP_TEMPLATES } from "@/lib/customer-whatsapp-templates";
@@ -249,8 +248,6 @@ export default function ClientesPage() {
   const [activeQueueStatus, setActiveQueueStatus] = useState<string>("READY");
   const [activeQueueRecipients, setActiveQueueRecipients] = useState<QueueRecipientItem[]>([]);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
-  const [pendingConsentClient, setPendingConsentClient] =
-    useState<PendingConsentClientInfo | null>(null);
   const [preparingQueue, setPreparingQueue] = useState<boolean>(false);
   const [queueBannerError, setQueueBannerError] = useState<string | null>(null);
   const checkedActiveQueueRef = useRef<boolean>(false);
@@ -276,7 +273,6 @@ export default function ClientesPage() {
       setActiveQueueName("");
       setActiveQueueStatus("READY");
       setActiveQueueRecipients([]);
-      setPendingConsentClient(null);
       setSummaryMetrics(null);
       setQueueSelectionMeta(null);
       setDrawerOpen(false);
@@ -502,7 +498,6 @@ export default function ClientesPage() {
             setSelectedQueueIds([]);
             setActiveQueueCampaignId(null);
             setActiveQueueRecipients([]);
-            setPendingConsentClient(null);
             setDrawerOpen(false);
           }
           return;
@@ -543,7 +538,6 @@ export default function ClientesPage() {
           setSelectedQueueIds([]);
           setActiveQueueCampaignId(null);
           setActiveQueueRecipients([]);
-          setPendingConsentClient(null);
           setDrawerOpen(false);
           return;
         }
@@ -776,7 +770,6 @@ export default function ClientesPage() {
       setActiveQueueName(payload.campaign?.name || "Fila Assistida");
       setActiveQueueStatus(payload.campaign?.status || "READY");
       setActiveQueueRecipients(mappedRecipients);
-      setPendingConsentClient(null);
       setSelectedQueueIds([]);
       setDrawerOpen(true);
     } catch (err) {
@@ -788,22 +781,16 @@ export default function ClientesPage() {
     }
   };
 
-  const handleOpenConsentGateForClient = (client: Client) => {
-    if (!uiPermissions.canViewClients || !uiPermissions.canManageClients) {
-      setQueueBannerError(
-        "Permissão 'CLIENTS_MANAGE' necessária para registrar ou alterar consentimento de marketing."
-      );
-      return;
-    }
-    setPendingConsentClient({
-      id: client.id,
-      name: client.name,
-      phone: client.phone,
-      lastContactedAt: client.stats.lastContactedAt,
-      completedVisits: client.stats.completed,
-      hasClubSubscription: client.stats.hasClubSubscription,
-    });
-    setDrawerOpen(true);
+  const handleOpenIndependentManualWhatsapp = (client: Client) => {
+    if (!uiPermissions.canViewClients) return;
+    if (client.stats.isBlocked) return;
+    if (client.whatsappQueue?.consentStatus !== "UNKNOWN") return;
+    if (!client.whatsappQueue?.isValidMobilePhone) return;
+
+    const digits = client.phone.replace(/\D/g, "");
+    if (!digits) return;
+    const intl = digits.startsWith("55") ? digits : `55${digits}`;
+    window.open(`https://wa.me/${intl}`, "_blank", "noopener,noreferrer");
   };
 
   const handleRecipientUpdated = (
@@ -1029,7 +1016,6 @@ export default function ClientesPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setPendingConsentClient(null);
                   setDrawerOpen(true);
                 }}
                 className="px-4 py-2 rounded-lg bg-emerald-500 text-stone-950 text-xs font-bold hover:bg-emerald-400"
@@ -1368,69 +1354,59 @@ export default function ClientesPage() {
                       )}
                     </div>
                     <div className="flex flex-wrap justify-start lg:justify-end gap-2">
-                      {queueInfo &&
-                        (uiPermissions.canOperateWhatsappAssisted ||
-                          uiPermissions.canManageClients) && (
-                          <>
-                            {queueInfo.eligible ? (
-                              uiPermissions.canOperateWhatsappAssisted ? (
-                                <button
-                                  type="button"
-                                  disabled={preparingQueue}
-                                  onClick={() =>
-                                    void prepareAndOpenQueue(
-                                      [client.id],
-                                      batchTemplateKey,
-                                      `Contato Assistido — ${client.name}`
-                                    )
-                                  }
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/25 transition-colors"
-                                >
-                                  WhatsApp Assistido
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled
-                                  title="Permissão WHATSAPP_ASSISTED_OPERATE necessária"
-                                  className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
-                                >
-                                  Indisponível
-                                </button>
-                              )
-                            ) : queueInfo.canRegisterConsentInDrawer ? (
-                              uiPermissions.canManageClients ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleOpenConsentGateForClient(client)
-                                  }
-                                  className="px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/25 transition-colors"
-                                >
-                                  Autorizar WhatsApp
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled
-                                  title="Permissão CLIENTS_MANAGE necessária para registrar consentimento"
-                                  className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
-                                >
-                                  Indisponível
-                                </button>
-                              )
+                      {queueInfo && uiPermissions.canViewClients && (
+                        <>
+                          {queueInfo.eligible ? (
+                            uiPermissions.canOperateWhatsappAssisted ? (
+                              <button
+                                type="button"
+                                disabled={preparingQueue}
+                                onClick={() =>
+                                  void prepareAndOpenQueue(
+                                    [client.id],
+                                    batchTemplateKey,
+                                    `Contato Assistido — ${client.name}`
+                                  )
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/25 transition-colors"
+                              >
+                                WhatsApp Assistido
+                              </button>
                             ) : (
                               <button
                                 type="button"
                                 disabled
-                                title={ineligibilityLabel || "Inelegível para fila"}
+                                title="Permissão WHATSAPP_ASSISTED_OPERATE necessária"
                                 className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
                               >
                                 Indisponível
                               </button>
-                            )}
-                          </>
-                        )}
+                            )
+                          ) : queueInfo.consentStatus === "UNKNOWN" &&
+                            !client.stats.isBlocked &&
+                            queueInfo.isValidMobilePhone ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenIndependentManualWhatsapp(client)
+                              }
+                              title="Atendimento manual sem mensagem promocional — usar apenas com conversa iniciada pelo cliente ou contexto legítimo de atendimento"
+                              className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-200 border border-stone-700 text-xs font-semibold hover:bg-stone-700 transition-colors"
+                            >
+                              Atendimento WhatsApp
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              title={ineligibilityLabel || "Inelegível para fila"}
+                              className="px-3 py-1.5 rounded-lg bg-stone-900 text-stone-600 border border-stone-800 text-xs font-semibold cursor-not-allowed"
+                            >
+                              Indisponível
+                            </button>
+                          )}
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => router.push(`/admin/clientes/reativacao?search=${encodeURIComponent(client.name)}`)}
@@ -1484,20 +1460,17 @@ export default function ClientesPage() {
       <AssistedWhatsAppQueueDrawer
         open={drawerOpen}
         canViewClients={uiPermissions.canViewClients}
-        canManageClients={uiPermissions.canManageClients}
         canOperateWhatsappAssisted={uiPermissions.canOperateWhatsappAssisted}
         campaignId={activeQueueCampaignId}
         campaignName={activeQueueName}
         campaignStatus={activeQueueStatus}
         initialTemplateKey={batchTemplateKey}
         recipients={activeQueueRecipients}
-        pendingConsentClient={pendingConsentClient}
         remainingEligibleInRoundCount={
           queueSelectionMeta?.remainingEligibleInRoundCount ?? 0
         }
         onCloseKeepProgress={() => {
           setDrawerOpen(false);
-          setPendingConsentClient(null);
         }}
         onRecipientUpdated={handleRecipientUpdated}
         onClientConfirmedSent={handleClientProcessedInRound}
@@ -1509,19 +1482,6 @@ export default function ClientesPage() {
           setRoundProcessedIds([]);
           setWorkRoundId(`round_${Date.now()}`);
           setDrawerOpen(false);
-        }}
-        onConsentRegisteredAndStartQueue={async (customerId, tplKey) => {
-          await fetchClients(search, page, filter, roundProcessedIds);
-          if (!uiPermissions.canOperateWhatsappAssisted) {
-            setPendingConsentClient(null);
-            setDrawerOpen(false);
-            return;
-          }
-          await prepareAndOpenQueue(
-            [customerId],
-            tplKey,
-            "Contato Assistido (Consentimento registrado)"
-          );
         }}
         onStartNextBatchInRound={handleStartNextBatchInRound}
       />

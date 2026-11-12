@@ -40,19 +40,9 @@ export interface QueueRecipientItem {
   } | null;
 }
 
-export interface PendingConsentClientInfo {
-  id: string;
-  name: string;
-  phone: string;
-  lastContactedAt: string | null;
-  completedVisits: number;
-  hasClubSubscription: boolean;
-}
-
 interface AssistedWhatsAppQueueDrawerProps {
   open: boolean;
   canViewClients?: boolean;
-  canManageClients?: boolean;
   canOperateWhatsappAssisted?: boolean;
   campaignId: string | null;
   campaignName: string;
@@ -60,7 +50,6 @@ interface AssistedWhatsAppQueueDrawerProps {
   initialTemplateKey: string;
   barbershopName?: string;
   recipients: QueueRecipientItem[];
-  pendingConsentClient: PendingConsentClientInfo | null;
   remainingEligibleInRoundCount: number;
   onCloseKeepProgress: () => void;
   onRecipientUpdated: (
@@ -71,10 +60,6 @@ interface AssistedWhatsAppQueueDrawerProps {
   onClientConfirmedSent: (customerId: string) => void;
   onClientSkipped: (customerId: string) => void;
   onCampaignCancelled: () => void;
-  onConsentRegisteredAndStartQueue: (
-    customerId: string,
-    templateKey: string
-  ) => Promise<void>;
   onStartNextBatchInRound: () => void;
 }
 
@@ -93,7 +78,6 @@ function formatDisplayPhone(phone: string) {
 export function AssistedWhatsAppQueueDrawer({
   open,
   canViewClients = false,
-  canManageClients = false,
   canOperateWhatsappAssisted = false,
   campaignId,
   campaignName,
@@ -101,14 +85,12 @@ export function AssistedWhatsAppQueueDrawer({
   initialTemplateKey,
   barbershopName = "nossa barbearia",
   recipients,
-  pendingConsentClient,
   remainingEligibleInRoundCount,
   onCloseKeepProgress,
   onRecipientUpdated,
   onClientConfirmedSent,
   onClientSkipped,
   onCampaignCancelled,
-  onConsentRegisteredAndStartQueue,
   onStartNextBatchInRound,
 }: AssistedWhatsAppQueueDrawerProps) {
   // Find active pending recipients (READY or WHATSAPP_OPENED)
@@ -160,7 +142,7 @@ export function AssistedWhatsAppQueueDrawer({
 
   // Action loading & errors
   const [busyAction, setBusyAction] = useState<
-    "opening" | "confirming" | "skipping" | "cancelling" | "consent" | null
+    "opening" | "confirming" | "skipping" | "cancelling" | null
   >(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -169,13 +151,6 @@ export function AssistedWhatsAppQueueDrawer({
   const [reconciliationRequired, setReconciliationRequired] = useState(false);
   const [reconciliationChecked, setReconciliationChecked] = useState(false);
   const [reconciliationReason, setReconciliationReason] = useState("");
-
-  // DEC-03 = A Contextual Consent state
-  const [consentSource, setConsentSource] = useState<string>(
-    "CUSTOMER_REQUEST_WHATSAPP"
-  );
-  const [consentEvidence, setConsentEvidence] = useState<string>("");
-  const [consentDeclared, setConsentDeclared] = useState<boolean>(false);
 
   // Sync local state only when switching to a different recipient in the queue
   const recipientSyncKey = currentRecipient ? currentRecipient.recipientId : "none";
@@ -581,76 +556,6 @@ export function AssistedWhatsAppQueueDrawer({
     }
   };
 
-  const handleRegisterContextualConsent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canViewClients || !canManageClients) {
-      setActionError(
-        "Permissão 'CLIENTS_MANAGE' necessária para registrar ou alterar consentimento de marketing."
-      );
-      return;
-    }
-    if (!pendingConsentClient) return;
-
-    if (!consentDeclared) {
-      setActionError(
-        "Confirme expressamente a declaração de que a autorização já foi obtida do cliente."
-      );
-      return;
-    }
-
-    if (consentEvidence.trim().length < 10) {
-      setActionError(
-        "Informe a evidência de como a autorização foi obtida (mínimo de 10 caracteres)."
-      );
-      return;
-    }
-
-    setBusyAction("consent");
-    setActionError(null);
-
-    try {
-      const eventKey = `consent_drawer_${
-        pendingConsentClient.id
-      }_${Date.now()}`;
-      const res = await fetch(
-        `/api/admin/clients/${pendingConsentClient.id}/marketing-consent`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: "OPTED_IN",
-            source: consentSource,
-            evidence: consentEvidence.trim(),
-            reason: consentEvidence.trim(),
-            eventKey,
-            context: "ASSISTED_QUEUE_DRAWER",
-            declaredPriorAuthorization: true,
-          }),
-        }
-      );
-
-      const payload = await res.json();
-      if (!res.ok) {
-        throw new Error(
-          payload.message ||
-            payload.error ||
-            "Erro ao registrar consentimento."
-        );
-      }
-
-      setConsentEvidence("");
-      setConsentDeclared(false);
-      await onConsentRegisteredAndStartQueue(
-        pendingConsentClient.id,
-        templateKey
-      );
-    } catch (err: any) {
-      setActionError(err.message || "Falha ao registrar consentimento.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 bg-black/75 flex justify-end items-end md:items-stretch"
@@ -673,9 +578,7 @@ export function AssistedWhatsAppQueueDrawer({
               )}
             </div>
             <h2 className="text-base md:text-lg font-bold text-stone-100 mt-1">
-              {pendingConsentClient
-                ? `Autorização LGPD — ${pendingConsentClient.name}`
-                : campaignName || "Fila Inteligente WhatsApp"}
+              {campaignName || "Fila Inteligente WhatsApp"}
             </h2>
           </div>
 
@@ -728,7 +631,6 @@ export function AssistedWhatsAppQueueDrawer({
             </div>
           )}
 
-          {/* Mode A: Contextual Consent Gate (DEC-03 = A) */}
           {!canViewClients ? (
             <div
               role="alert"
@@ -739,113 +641,6 @@ export function AssistedWhatsAppQueueDrawer({
                 Permissão &apos;CLIENTS_VIEW&apos; necessária para visualizar clientes ou operar a fila assistida.
               </p>
             </div>
-          ) : pendingConsentClient ? (
-            !canManageClients ? (
-              <div
-                role="alert"
-                className="p-4 rounded-xl bg-amber-950/50 border border-amber-700/60 text-amber-200 text-xs space-y-1"
-              >
-                <p className="font-bold">Permissão necessária para consentimento</p>
-                <p>
-                  É necessário possuir &apos;CLIENTS_MANAGE&apos; para registrar ou alterar o consentimento de marketing do cliente.
-                </p>
-              </div>
-            ) : (
-            <form
-              onSubmit={handleRegisterContextualConsent}
-              className="space-y-4"
-            >
-              <div className="p-4 rounded-xl bg-stone-900 border border-stone-800 space-y-1">
-                <p className="text-sm font-bold text-stone-100">
-                  {pendingConsentClient.name}
-                </p>
-                <p className="text-xs text-stone-400">
-                  WhatsApp: {formatDisplayPhone(pendingConsentClient.phone)}
-                </p>
-                <span className="inline-block mt-1 px-2 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-                  Consentimento: UNKNOWN (Não registrado)
-                </span>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-700/40 text-amber-200 text-xs space-y-1">
-                <p className="font-bold">
-                  Registro de Consentimento Já Obtido (DEC-03 / LGPD)
-                </p>
-                <p className="text-amber-300/90">
-                  O sistema nunca converte UNKNOWN em OPTED_IN automaticamente.
-                  Registre apenas se o cliente já tiver autorizado previamente o
-                  recebimento de comunicações pelo WhatsApp.
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="consent-source-select"
-                  className="block text-xs text-stone-300 font-semibold mb-1.5"
-                >
-                  Origem da autorização obtida
-                </label>
-                <select
-                  id="consent-source-select"
-                  value={consentSource}
-                  onChange={(e) => setConsentSource(e.target.value)}
-                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
-                >
-                  <option value="CUSTOMER_REQUEST_WHATSAPP">
-                    Solicitação do cliente via WhatsApp
-                  </option>
-                  <option value="CUSTOMER_REQUEST_IN_PERSON">
-                    Autorização presencial na barbearia
-                  </option>
-                  <option value="ADMIN_WITH_PROOF">
-                    Comprovante administrativo arquivado
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="consent-evidence-input"
-                  className="block text-xs text-stone-300 font-semibold mb-1.5"
-                >
-                  Evidência da autorização (mínimo 10 caracteres)
-                </label>
-                <textarea
-                  id="consent-evidence-input"
-                  rows={3}
-                  value={consentEvidence}
-                  onChange={(e) => setConsentEvidence(e.target.value)}
-                  placeholder="Ex: Cliente solicitou na recepção em 10/11 que enviássemos horários disponíveis pelo WhatsApp."
-                  className="w-full bg-stone-900 border border-stone-700 rounded-lg p-3 text-xs text-stone-100"
-                />
-              </div>
-
-              <label className="flex items-start gap-2.5 text-xs text-stone-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={consentDeclared}
-                  onChange={(e) => setConsentDeclared(e.target.checked)}
-                  className="mt-0.5 rounded border-stone-700"
-                />
-                <span>
-                  Declaro que a autorização de contato já foi obtida previamente
-                  junto ao cliente e possui evidência verificável.
-                </span>
-              </label>
-
-              <button
-                type="submit"
-                disabled={busyAction === "consent"}
-                className="w-full py-2.5 px-4 rounded-lg bg-emerald-500 text-stone-950 font-bold text-xs hover:bg-emerald-400 disabled:opacity-50"
-              >
-                {busyAction === "consent"
-                  ? "Registrando consentimento..."
-                  : canOperateWhatsappAssisted
-                  ? "Registrar consentimento e preparar mensagem"
-                  : "Registrar consentimento"}
-              </button>
-            </form>
-            )
           ) : currentRecipient ? (
             !canOperateWhatsappAssisted ? (
               <div
