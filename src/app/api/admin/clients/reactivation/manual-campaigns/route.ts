@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     templateKey,
     name,
     origin,
+    operationMode,
     sourceFilter,
     workRoundId,
   } = body;
@@ -117,6 +118,9 @@ export async function POST(request: NextRequest) {
         name: name?.trim() || undefined,
         baseUrl,
         origin: normalizedOrigin,
+        ...(operationMode === "ASSISTED_QUEUE" || operationMode === "MARKETING_CAMPAIGN"
+          ? { operationMode }
+          : {}),
         sourceFilter: sourceFilter ?? null,
         workRoundId: workRoundId ?? null,
       });

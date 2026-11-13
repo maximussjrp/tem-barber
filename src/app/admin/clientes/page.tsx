@@ -42,6 +42,8 @@ interface ClientStats {
 
 interface ClientWhatsappQueueInfo {
   eligible: boolean;
+  marketingEligible?: boolean;
+  operationType?: "MARKETING_REACTIVATION" | "MANUAL_SUPPORT";
   consentStatus: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN";
   isValidMobilePhone: boolean;
   inCooldown14d: boolean;
@@ -753,6 +755,10 @@ export default function ClientesPage() {
           customerName: string;
           customerPhone: string;
           dispatchStatus: QueueRecipientItem["dispatchStatus"];
+          operationType?: "MARKETING_REACTIVATION" | "MANUAL_SUPPORT";
+          consentStatusAtPreparation?: "OPTED_IN" | "UNKNOWN" | null;
+          templateKey?: string;
+          templateLabel?: string;
           previewMessage: string;
         }, idx: number) => ({
           recipientId: r.recipientId,
@@ -761,7 +767,10 @@ export default function ClientesPage() {
           customerName: r.customerName,
           customerPhone: r.customerPhone,
           dispatchStatus: r.dispatchStatus || "READY",
-          templateKey: templateToUse,
+          operationType: r.operationType || "MARKETING_REACTIVATION",
+          consentStatusAtPreparation: r.consentStatusAtPreparation ?? null,
+          templateKey: r.templateKey || templateToUse,
+          templateLabel: r.templateLabel,
           previewMessage: r.previewMessage,
         })
       );
@@ -779,18 +788,6 @@ export default function ClientesPage() {
     } finally {
       setPreparingQueue(false);
     }
-  };
-
-  const handleOpenIndependentManualWhatsapp = (client: Client) => {
-    if (!uiPermissions.canViewClients) return;
-    if (client.stats.isBlocked) return;
-    if (client.whatsappQueue?.consentStatus !== "UNKNOWN") return;
-    if (!client.whatsappQueue?.isValidMobilePhone) return;
-
-    const digits = client.phone.replace(/\D/g, "");
-    if (!digits) return;
-    const intl = digits.startsWith("55") ? digits : `55${digits}`;
-    window.open(`https://wa.me/${intl}`, "_blank", "noopener,noreferrer");
   };
 
   const handleRecipientUpdated = (
@@ -1352,6 +1349,11 @@ export default function ClientesPage() {
                           {ineligibilityLabel}
                         </span>
                       )}
+                      {queueInfo?.eligible && queueInfo.consentStatus === "UNKNOWN" && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                          Atendimento manual
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap justify-start lg:justify-end gap-2">
                       {queueInfo && uiPermissions.canViewClients && (
@@ -1382,19 +1384,6 @@ export default function ClientesPage() {
                                 Indisponível
                               </button>
                             )
-                          ) : queueInfo.consentStatus === "UNKNOWN" &&
-                            !client.stats.isBlocked &&
-                            queueInfo.isValidMobilePhone ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleOpenIndependentManualWhatsapp(client)
-                              }
-                              title="Atendimento manual sem mensagem promocional — usar apenas com conversa iniciada pelo cliente ou contexto legítimo de atendimento"
-                              className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-200 border border-stone-700 text-xs font-semibold hover:bg-stone-700 transition-colors"
-                            >
-                              Atendimento WhatsApp
-                            </button>
                           ) : (
                             <button
                               type="button"

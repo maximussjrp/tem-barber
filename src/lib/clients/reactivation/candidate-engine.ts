@@ -88,8 +88,10 @@ interface LightweightCandidate {
   consentStatus: VirtualMarketingConsentStatus;
   recommendationEligible: boolean;
   dispatchEligible: boolean;
+  manualSupportEligible: boolean;
   recommendationSuppressions: any[];
   dispatchSuppressions: any[];
+  manualSupportSuppressions: any[];
   defaultSelected: boolean;
   timingState: CustomerTimingState;
   timingLabel: string;
@@ -672,8 +674,10 @@ export async function getReactivationCandidates(
       consentStatus,
       recommendationEligible: suppressionResult.recommendationEligible,
       dispatchEligible: suppressionResult.dispatchEligible,
+      manualSupportEligible: suppressionResult.manualSupportEligible,
       recommendationSuppressions: suppressionResult.recommendationSuppressions,
       dispatchSuppressions: suppressionResult.dispatchSuppressions,
+      manualSupportSuppressions: suppressionResult.manualSupportSuppressions,
       defaultSelected: suppressionResult.defaultSelected,
       timingState,
       timingLabel,
@@ -803,8 +807,10 @@ export async function getReactivationCandidates(
       consentStatus: item.consentStatus,
       recommendationEligible: item.recommendationEligible,
       dispatchEligible: item.dispatchEligible,
+      manualSupportEligible: item.manualSupportEligible,
       recommendationSuppressions: item.recommendationSuppressions,
       dispatchSuppressions: item.dispatchSuppressions,
+      manualSupportSuppressions: item.manualSupportSuppressions,
       defaultSelected: item.defaultSelected,
     };
   });

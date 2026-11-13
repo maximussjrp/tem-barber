@@ -82,9 +82,11 @@ export interface ReactivationCandidateItem {
 
   recommendationEligible: boolean;
   dispatchEligible: boolean;
+  manualSupportEligible?: boolean;
 
   recommendationSuppressions: RecommendationSuppressionCode[];
   dispatchSuppressions: DispatchSuppressionCode[];
+  manualSupportSuppressions?: DispatchSuppressionCode[];
 
   defaultSelected: boolean;
 }

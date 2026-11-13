@@ -6,6 +6,7 @@ import {
   CustomerTimingState,
   MarketingConsentSource,
   MarketingConsentStatus,
+  RecipientConversionStatus,
   RecipientDispatchStatus,
 } from "@prisma/client";
 
@@ -167,9 +168,9 @@ describe("G2 — WhatsApp Assistido com Fila Inteligente V1 (Funcionalidade, Seg
         neverContacted: 2, // c-appt-only e c-never
         noContact30: 1, // apenas c-old45 (não inclui nunca contatados!)
       });
-      // S-03: queueSelectionMeta desconta excludeCustomerIds da rodada atual
-      expect(result.queueSelectionMeta.eligibleInFilterCount).toBe(1); // apenas c-appt-only tem OPTED_IN
-      expect(result.queueSelectionMeta.remainingEligibleInRoundCount).toBe(1);
+      // S-03: queueSelectionMeta desconta excludeCustomerIds da rodada atual (c-appt-only OPTED_IN + c-never UNKNOWN)
+      expect(result.queueSelectionMeta.eligibleInFilterCount).toBe(2);
+      expect(result.queueSelectionMeta.remainingEligibleInRoundCount).toBe(2);
       expect(result.queueSelectionMeta.pendingConsentInFilterCount).toBe(1); // c-never tem UNKNOWN
     });
   });
@@ -1423,6 +1424,179 @@ describe("G2 — WhatsApp Assistido com Fila Inteligente V1 (Funcionalidade, Seg
 
       expect(custHistory.totalConversions).toBe(1);
       expect(custHistory.totalRevenueRecovered).toBe(90);
+
+      // 3) GITHUB-DEF-01: Campanha mista com OPTED_IN e UNKNOWN (MANUAL_SUPPORT)
+      // Apenas o cliente OPTED_IN converte comercialmente. O UNKNOWN com MANUAL_SUPPORT
+      // não gera conversão nem receita recuperada de marketing.
+      prismaMock.reactivationCampaign.findFirst.mockResolvedValueOnce({
+        id: "camp-mixed",
+        barbershopId: "shop-1",
+        name: "Reativação Mista",
+        status: CampaignStatus.COMPLETED,
+        totalRecipients: 2,
+        sentCount: 2,
+        convertedCount: 0,
+        totalRevenueAttributed: 0,
+        bookingAttributionWindowDays: 14,
+        directReturnWindowDays: 30,
+        targetSegment: { origin: "SMART_CRM_REACTIVATION" },
+        createdAt: new Date("2026-11-01T10:00:00.000Z"),
+      });
+
+      const recOptIn = {
+        id: "rec-mixed-optin",
+        campaignId: "camp-mixed",
+        barbershopId: "shop-1",
+        customerId: "c-optin",
+        dispatchStatus: RecipientDispatchStatus.SENT_CONFIRMED,
+        sentConfirmedAt: new Date("2026-11-01T10:00:00.000Z"),
+        conversionStatus: "NONE",
+        canonicalReturnDate: null,
+        conversionAttributedAt: null,
+        revenueAttributed: null,
+        customer: { id: "c-optin", name: "Cliente OptIn", phone: "5517991111111" },
+        campaign: { id: "camp-mixed", bookingAttributionWindowDays: 14, directReturnWindowDays: 30 },
+        payloadSnapshot: { operationType: "MARKETING_REACTIVATION", templateKey: "RETURN_REMINDER" },
+      };
+
+      const recManual = {
+        id: "rec-mixed-manual",
+        campaignId: "camp-mixed",
+        barbershopId: "shop-1",
+        customerId: "c-manual",
+        dispatchStatus: RecipientDispatchStatus.SENT_CONFIRMED,
+        sentConfirmedAt: new Date("2026-11-01T10:05:00.000Z"),
+        conversionStatus: "NONE",
+        canonicalReturnDate: null,
+        conversionAttributedAt: null,
+        revenueAttributed: null,
+        customer: { id: "c-manual", name: "Cliente Manual", phone: "5517991112222" },
+        campaign: { id: "camp-mixed", bookingAttributionWindowDays: 14, directReturnWindowDays: 30 },
+        payloadSnapshot: { operationType: "MANUAL_SUPPORT", templateKey: "MANUAL_SUPPORT" },
+      };
+
+      prismaMock.reactivationCampaignRecipient.findMany
+        .mockResolvedValueOnce([recOptIn, recManual]) // 1. fetch all recipients
+        .mockResolvedValueOnce([recOptIn, recManual]); // 3. fetch all sent contacts across all campaigns
+
+      // Ambos clientes agendam e completam atendimento de R$ 60 no dia 2026-11-02
+      prismaMock.appointment.findMany.mockResolvedValueOnce([
+        {
+          id: "appt-optin",
+          customerId: "c-optin",
+          barbershopId: "shop-1",
+          createdAt: new Date("2026-11-01T15:00:00.000Z"),
+          dateTime: new Date("2026-11-02T14:00:00.000Z"),
+          status: "CONFIRMED",
+          services: [{ service: { id: "s-1", name: "Corte" } }],
+          barber: { user: { id: "b-1", name: "Barbeiro" } },
+          comandas: [
+            {
+              id: "cmd-optin",
+              status: "CLOSED",
+              paidTotal: 60,
+              items: [{ type: "SERVICE", status: "DONE", completedAt: new Date("2026-11-02T14:45:00.000Z") }],
+            },
+          ],
+        },
+        {
+          id: "appt-manual",
+          customerId: "c-manual",
+          barbershopId: "shop-1",
+          createdAt: new Date("2026-11-01T15:30:00.000Z"),
+          dateTime: new Date("2026-11-02T15:00:00.000Z"),
+          status: "CONFIRMED",
+          services: [{ service: { id: "s-1", name: "Corte" } }],
+          barber: { user: { id: "b-1", name: "Barbeiro" } },
+          comandas: [
+            {
+              id: "cmd-manual",
+              status: "CLOSED",
+              paidTotal: 60,
+              items: [{ type: "SERVICE", status: "DONE", completedAt: new Date("2026-11-02T15:45:00.000Z") }],
+            },
+          ],
+        },
+      ]);
+
+      prismaMock.comanda.findMany.mockResolvedValueOnce([]); // no additional standalone comandas
+      prismaMock.reactivationCampaignRecipient.update.mockResolvedValue({});
+      prismaMock.reactivationCampaign.update.mockResolvedValueOnce({});
+
+      // Mock para getCampaignAttributionSummary subsequente chamado por reconcileCampaignAttribution
+      prismaMock.reactivationCampaign.findFirst.mockResolvedValueOnce({
+        id: "camp-mixed",
+        barbershopId: "shop-1",
+        name: "Reativação Mista",
+        status: CampaignStatus.COMPLETED,
+        bookingAttributionWindowDays: 14,
+        directReturnWindowDays: 30,
+        targetSegment: { origin: "SMART_CRM_REACTIVATION" },
+      });
+
+      const updatedOptIn = {
+        ...recOptIn,
+        conversionStatus: RecipientConversionStatus.REVENUE_ATTRIBUTED,
+        canonicalReturnDate: new Date("2026-11-02T00:00:00.000Z"),
+        revenueAttributed: 60,
+        attributedAppointment: {
+          id: "appt-optin",
+          createdAt: new Date("2026-11-01T15:00:00.000Z"),
+          dateTime: new Date("2026-11-02T14:00:00.000Z"),
+          status: "CONFIRMED",
+          services: [{ service: { name: "Corte" } }],
+          barber: { user: { name: "Barbeiro" } },
+          comandas: [{ id: "cmd-optin", status: "CLOSED", paidTotal: 60, closedAt: new Date("2026-11-02T14:45:00.000Z") }],
+        },
+        attributedComanda: null,
+      };
+
+      const updatedManual = {
+        ...recManual,
+        conversionStatus: RecipientConversionStatus.NONE,
+        canonicalReturnDate: null,
+        revenueAttributed: 250, // Resíduo em banco de destinatário MANUAL_SUPPORT: não pode somar nem ser exibido
+        attributedAppointment: null,
+        attributedComanda: null,
+      };
+
+      prismaMock.reactivationCampaignRecipient.findMany
+        .mockResolvedValueOnce([updatedOptIn, updatedManual]) // recipients in getCampaignAttributionSummary
+        .mockResolvedValueOnce([updatedOptIn]); // rawContactsForCustomers (manual is filtered out)
+
+      prismaMock.appointment.findMany.mockResolvedValueOnce([
+        {
+          id: "appt-optin",
+          customerId: "c-optin",
+          createdAt: new Date("2026-11-01T15:00:00.000Z"),
+          status: "CONFIRMED",
+        },
+      ]);
+      prismaMock.comanda.findMany.mockResolvedValueOnce([]);
+
+      const mixedSummary = await reconcileCampaignAttribution(prismaMock, {
+        barbershopId: "shop-1",
+        campaignId: "camp-mixed",
+      });
+
+      // GITHUB-DEF-01: Exemplo obrigatório pós-auditoria:
+      // - 1 contato promocional (contacts = 1, MANUAL_SUPPORT não dilui)
+      // - 1 conversão comercial (reactivatedCustomers = 1)
+      // - Taxa comercial de 100% (conversionRate = 1.0, bookingRate = 1.0)
+      // - Receita recuperada comercial de R$ 60 (resíduo de R$ 250 em MANUAL_SUPPORT descartado)
+      // - Histórico operacional preservado com ambos os destinatários
+      expect(mixedSummary.contacts).toBe(1);
+      expect(mixedSummary.reactivatedCustomers).toBe(1);
+      expect(mixedSummary.recoveredRevenue).toBe(60);
+      expect(mixedSummary.customersWithAttributedBooking).toBe(1);
+      expect(mixedSummary.bookingRate).toBe(1.0);
+      expect(mixedSummary.attendanceRate).toBe(1.0);
+      expect(mixedSummary.conversionRate).toBe(1.0);
+      expect(mixedSummary.recipients.length).toBe(2);
+      expect(mixedSummary.recipients[0].customerId).toBe("c-optin");
+      expect(mixedSummary.recipients[0].revenueAttributed).toBe(60);
+      expect(mixedSummary.recipients[1].customerId).toBe("c-manual");
+      expect(mixedSummary.recipients[1].revenueAttributed).toBe(0); // Zero receita comercial exibida para manual support
     });
   });
 
@@ -2186,6 +2360,223 @@ describe("G2 — WhatsApp Assistido com Fila Inteligente V1 (Funcionalidade, Seg
       );
       expect(resOut.status).toBe(200);
       expect((await resOut.json()).consent.status).toBe(MarketingConsentStatus.OPTED_OUT);
+    });
+  });
+
+  describe("12. Separação Atendimento Manual (UNKNOWN) vs Campanha Promocional (OPTED_IN)", () => {
+    it("prepara fila assistida com OPTED_IN (MARKETING_REACTIVATION) e UNKNOWN (MANUAL_SUPPORT sem texto promocional) enquanto bloqueia OPTED_OUT, bloqueado e telefone inválido", async () => {
+      prismaMock.reactivationCampaign.findFirst
+        .mockResolvedValueOnce(null) // idempotência requestKey
+        .mockResolvedValueOnce(null) // B04 active queue check
+        .mockResolvedValueOnce(null); // round skipped check
+      prismaMock.barbershop.findUnique.mockResolvedValueOnce({
+        id: "shop-1",
+        name: "Barbearia Modelo",
+        slug: "modelo",
+      });
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        { id: "c-in", name: "João OptIn", phone: "5517991089190" },
+        { id: "c-unk", name: "Maria Unknown", phone: "5517991089191" },
+        { id: "c-out", name: "Pedro OptOut", phone: "5517991089192" },
+        { id: "c-blk", name: "Lucas Bloqueado", phone: "5517991089193" },
+        { id: "c-inv", name: "Ana Invalido", phone: "123" },
+      ]);
+      prismaMock.customerMarketingConsent.findMany.mockResolvedValueOnce([
+        { customerId: "c-in", status: MarketingConsentStatus.OPTED_IN },
+        { customerId: "c-out", status: MarketingConsentStatus.OPTED_OUT },
+      ]);
+      prismaMock.barbershopBlockedCustomer.findMany
+        .mockResolvedValueOnce([{ userId: "c-blk", phoneNormalized: "5517991089193" }])
+        .mockResolvedValueOnce([]);
+      prismaMock.appointment.findMany.mockResolvedValueOnce([]);
+      prismaMock.customerContactLog.findMany.mockResolvedValueOnce([]);
+
+      let createdCampaignData: any = null;
+      prismaMock.reactivationCampaign.create.mockImplementationOnce(async ({ data }: any) => {
+        createdCampaignData = data;
+        return {
+          id: "camp-sep-1",
+          name: data.name,
+          status: data.status,
+          targetSegment: data.targetSegment,
+          recipients: data.recipients.create.map((r: any, idx: number) => ({
+            id: `rec-sep-${idx + 1}`,
+            customerId: r.customer.connect.id,
+            customerNameSnapshot: r.customerNameSnapshot,
+            customerPhoneSnapshot: r.customerPhoneSnapshot,
+            dispatchStatus: r.dispatchStatus,
+            timingStateSnapshot: r.timingStateSnapshot,
+            scoreSnapshot: r.scoreSnapshot,
+            payloadSnapshot: r.payloadSnapshot,
+          })),
+        };
+      });
+
+      const res = await prepareManualReactivationCampaign(prismaMock as any, {
+        barbershopId: "shop-1",
+        userId: "owner-1",
+        requestKey: "req-sep-1",
+        selectedCustomerIds: ["c-in", "c-unk", "c-out", "c-blk", "c-inv"],
+        templateKey: "RETURN_REMINDER",
+        origin: "CLIENTS_BASE_ASSISTED_QUEUE",
+        operationMode: "ASSISTED_QUEUE",
+      });
+
+      expect(res.accepted).toHaveLength(2);
+      const inRec = res.accepted.find((r) => r.customerId === "c-in");
+      const unkRec = res.accepted.find((r) => r.customerId === "c-unk");
+      expect(inRec?.operationType).toBe("MARKETING_REACTIVATION");
+      expect(inRec?.templateKey).toBe("RETURN_REMINDER");
+      expect(inRec?.previewMessage).toContain("Barbearia Modelo");
+
+      expect(unkRec?.operationType).toBe("MANUAL_SUPPORT");
+      expect(unkRec?.templateKey).toBe("MANUAL_SUPPORT");
+      expect(unkRec?.previewMessage).toBe("");
+
+      expect(res.rejected.map((r) => ({ id: r.customerId, code: r.reasonCode }))).toEqual([
+        { id: "c-out", code: "CONSENT_OPTED_OUT" },
+        { id: "c-blk", code: "BLOCKED" },
+        { id: "c-inv", code: "INVALID_PHONE" },
+      ]);
+      expect(createdCampaignData).not.toBeNull();
+      // Nunca cria consentimento fictício para UNKNOWN
+      expect(prismaMock.customerMarketingConsent.upsert).not.toHaveBeenCalled();
+      expect(prismaMock.customerMarketingConsentEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("bloqueia modelo promocional no servidor para destinatário MANUAL_SUPPORT sem OPTED_IN, permite abertura limpa e confirma log sem gerar OPTED_IN", async () => {
+      const manualRecipient = {
+        id: "rec-unk-1",
+        campaignId: "camp-sep-1",
+        barbershopId: "shop-1",
+        customerId: "c-unk",
+        customerNameSnapshot: "Maria Unknown",
+        customerPhoneSnapshot: "5517991089191",
+        dispatchStatus: RecipientDispatchStatus.READY,
+        dispatchAttemptCount: 0,
+        customer: { id: "c-unk", name: "Maria Unknown", phone: "5517991089191" },
+        campaign: {
+          id: "camp-sep-1",
+          barbershopId: "shop-1",
+          name: "Fila Assistida",
+          status: CampaignStatus.READY,
+          startedAt: null,
+          targetSegment: { origin: "CLIENTS_BASE_ASSISTED_QUEUE", operationMode: "ASSISTED_QUEUE" },
+        },
+        payloadSnapshot: {
+          queueIndex: 0,
+          operationType: "MANUAL_SUPPORT",
+          consentStatusAtPreparation: "UNKNOWN",
+          initialTemplateKey: "MANUAL_SUPPORT",
+          templateKey: "MANUAL_SUPPORT",
+          templateLabel: "Atendimento manual",
+          previewMessage: "",
+        },
+      };
+
+      // Tentativa de forçar modelo promocional RETURN_REMINDER para cliente UNKNOWN deve falhar com 400
+      prismaMock.reactivationCampaignRecipient.findFirst.mockResolvedValueOnce(manualRecipient);
+      await expect(
+        revalidateAndOpenManualRecipient(prismaMock as any, {
+          barbershopId: "shop-1",
+          campaignId: "camp-sep-1",
+          recipientId: "rec-unk-1",
+          userId: "owner-1",
+          userRole: "OWNER",
+          templateKey: "RETURN_REMINDER",
+          messageText: "Promoção",
+        })
+      ).rejects.toMatchObject({
+        status: 400,
+        code: "PROMOTIONAL_TEMPLATE_REQUIRES_OPT_IN",
+      });
+
+      // GITHUB-DEF-02: Tentativa de enviar messageText arbitrário em MANUAL_SUPPORT deve falhar com 400 MANUAL_SUPPORT_NO_PREFILLED_MESSAGE
+      prismaMock.reactivationCampaignRecipient.findFirst.mockResolvedValueOnce(manualRecipient);
+      await expect(
+        revalidateAndOpenManualRecipient(prismaMock as any, {
+          barbershopId: "shop-1",
+          campaignId: "camp-sep-1",
+          recipientId: "rec-unk-1",
+          userId: "owner-1",
+          userRole: "OWNER",
+          templateKey: "MANUAL_SUPPORT",
+          messageText: "Olá, venha cortar seu cabelo hoje!",
+        })
+      ).rejects.toMatchObject({
+        status: 400,
+        code: "MANUAL_SUPPORT_NO_PREFILLED_MESSAGE",
+      });
+
+      // Abertura legítima MANUAL_SUPPORT sem texto promocional -> gera https://wa.me/5517991089191 limpo
+      prismaMock.reactivationCampaignRecipient.findFirst.mockResolvedValueOnce(manualRecipient);
+      prismaMock.customerMarketingConsent.findUnique.mockResolvedValueOnce(null); // UNKNOWN
+      prismaMock.barbershopBlockedCustomer.findFirst.mockResolvedValueOnce(null);
+      prismaMock.appointment.findFirst.mockResolvedValueOnce(null);
+      prismaMock.customerContactLog.findFirst.mockResolvedValueOnce(null);
+      prismaMock.reactivationCampaignRecipient.update.mockImplementationOnce(async ({ data }: any) => ({
+        ...manualRecipient,
+        dispatchStatus: data.dispatchStatus,
+        payloadSnapshot: data.payloadSnapshot,
+      }));
+      prismaMock.reactivationCampaignRecipient.findMany.mockResolvedValueOnce([
+        { dispatchStatus: RecipientDispatchStatus.WHATSAPP_OPENED },
+      ]);
+
+      const opened = await revalidateAndOpenManualRecipient(prismaMock as any, {
+        barbershopId: "shop-1",
+        campaignId: "camp-sep-1",
+        recipientId: "rec-unk-1",
+        userId: "owner-1",
+        userRole: "OWNER",
+        templateKey: "MANUAL_SUPPORT",
+        messageText: "",
+      });
+
+      expect(opened.ok).toBe(true);
+      expect(opened.whatsappUrl).toBe("https://wa.me/5517991089191");
+      expect(opened.openPreparationId).toBeTruthy();
+
+      // Confirmação grava CustomerContactLog como MANUAL_SUPPORT sem criar consentimento OPTED_IN
+      const openedRecipient = {
+        ...manualRecipient,
+        dispatchStatus: RecipientDispatchStatus.WHATSAPP_OPENED,
+        payloadSnapshot: opened.recipient.payloadSnapshot,
+      };
+      prismaMock.reactivationCampaignRecipient.findFirst.mockResolvedValueOnce(openedRecipient);
+      prismaMock.customerMarketingConsent.findUnique.mockResolvedValueOnce(null);
+      prismaMock.barbershopBlockedCustomer.findFirst.mockResolvedValueOnce(null);
+      prismaMock.appointment.findFirst.mockResolvedValueOnce(null);
+      prismaMock.customerContactLog.findFirst.mockResolvedValueOnce(null);
+      prismaMock.reactivationCampaignRecipient.update.mockResolvedValueOnce({
+        ...openedRecipient,
+        dispatchStatus: RecipientDispatchStatus.SENT_CONFIRMED,
+      });
+      prismaMock.reactivationCampaign.update.mockResolvedValueOnce({});
+      prismaMock.reactivationCampaignRecipient.findMany.mockResolvedValueOnce([
+        { dispatchStatus: RecipientDispatchStatus.SENT_CONFIRMED },
+      ]);
+      prismaMock.customerContactLog.findFirst.mockResolvedValueOnce(null);
+      let createdLogData: any = null;
+      prismaMock.customerContactLog.create.mockImplementationOnce(async ({ data }: any) => {
+        createdLogData = data;
+        return { id: "log-unk-1", ...data };
+      });
+
+      const confirmed = await confirmManualRecipientSend(prismaMock as any, {
+        barbershopId: "shop-1",
+        campaignId: "camp-sep-1",
+        recipientId: "rec-unk-1",
+        userId: "owner-1",
+        userRole: "OWNER",
+        openPreparationId: opened.openPreparationId,
+      });
+
+      expect(confirmed.postOpenWarning).toBeNull();
+      expect(createdLogData.templateKey).toBe("MANUAL_SUPPORT");
+      expect(createdLogData.templateLabel).toBe("Atendimento manual");
+      expect(prismaMock.customerMarketingConsent.upsert).not.toHaveBeenCalled();
+      expect(prismaMock.customerMarketingConsentEvent.create).not.toHaveBeenCalled();
     });
   });
 });

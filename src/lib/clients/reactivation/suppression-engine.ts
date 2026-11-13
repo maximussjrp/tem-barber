@@ -33,8 +33,10 @@ export interface SuppressionInput {
 export interface SuppressionResult {
   recommendationEligible: boolean;
   dispatchEligible: boolean;
+  manualSupportEligible: boolean;
   recommendationSuppressions: RecommendationSuppressionCode[];
   dispatchSuppressions: DispatchSuppressionCode[];
+  manualSupportSuppressions: DispatchSuppressionCode[];
   defaultSelected: boolean;
 }
 
@@ -72,6 +74,12 @@ export function evaluateSuppressions(input: SuppressionInput): SuppressionResult
   // Build dispatch suppressions (includes recommendation suppressions + consent)
   dispatchSuppressions.push(...recommendationSuppressions);
 
+  const manualSupportSuppressions: DispatchSuppressionCode[] = [
+    ...recommendationSuppressions,
+    ...(input.consentStatus === "OPTED_OUT" ? (["CONSENT_OPTED_OUT"] as DispatchSuppressionCode[]) : []),
+  ];
+  const manualSupportEligible = manualSupportSuppressions.length === 0;
+
   if (input.consentStatus === "UNKNOWN") {
     dispatchSuppressions.push("CONSENT_UNKNOWN");
   } else if (input.consentStatus === "OPTED_OUT") {
@@ -91,8 +99,10 @@ export function evaluateSuppressions(input: SuppressionInput): SuppressionResult
   return {
     recommendationEligible,
     dispatchEligible,
+    manualSupportEligible,
     recommendationSuppressions,
     dispatchSuppressions,
+    manualSupportSuppressions,
     defaultSelected,
   };
 }

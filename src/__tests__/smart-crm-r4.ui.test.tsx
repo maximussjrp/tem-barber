@@ -86,8 +86,10 @@ const mockCandidatesResponse = {
       consentStatus: "UNKNOWN",
       recommendationEligible: true,
       dispatchEligible: false,
+      manualSupportEligible: true,
       recommendationSuppressions: [],
       dispatchSuppressions: ["CONSENT_UNKNOWN"],
+      manualSupportSuppressions: [],
       defaultSelected: false,
       scoreBreakdown: {
         timingScore: 10,
@@ -117,8 +119,10 @@ const mockCandidatesResponse = {
       consentStatus: "OPTED_OUT",
       recommendationEligible: true,
       dispatchEligible: false,
+      manualSupportEligible: false,
       recommendationSuppressions: [],
       dispatchSuppressions: ["CONSENT_OPTED_OUT"],
+      manualSupportSuppressions: ["CONSENT_OPTED_OUT"],
       defaultSelected: false,
       scoreBreakdown: {
         timingScore: 25,
@@ -262,11 +266,49 @@ describe("Smart CRM R4 — UI Component Tests", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Marcos Santos")).toBeInTheDocument();
-      expect(screen.getByText("Registrar consentimento")).toBeInTheDocument();
+      expect(screen.getByText("Atendimento manual")).toBeInTheDocument();
+      expect(screen.queryByText("Registrar consentimento")).not.toBeInTheDocument();
     });
   });
 
-  it("opens consent modal with empty evidence, enforces proof for OPTED_IN, and preserves OPTED_OUT without evidence", async () => {
+  it("removes LGPD consent modal from Reactivation and allows UNKNOWN candidate in Assisted Queue without promotional message", async () => {
+    (global.fetch as any).mockImplementation((url: string) => {
+      if (url.includes("/api/admin/clients/reactivation/manual-campaigns")) {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            campaign: { id: "camp-unk-1" },
+            accepted: [
+              {
+                recipientId: "rec-unk-1",
+                customerId: "cust-2",
+                customerName: "Marcos Santos",
+                customerPhone: "5511999992222",
+                dispatchStatus: "READY",
+                operationType: "MANUAL_SUPPORT",
+                templateKey: "MANUAL_SUPPORT",
+                previewMessage: "",
+              },
+            ],
+            rejected: [],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/admin/clients/reactivation")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockCandidatesResponse,
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true }),
+      } as Response);
+    });
+
     render(<ReactivationPage />);
 
     await waitFor(() => {
@@ -277,83 +319,39 @@ describe("Smart CRM R4 — UI Component Tests", () => {
     fireEvent.click(todosTab);
 
     await waitFor(() => {
-      expect(screen.getByText("Registrar consentimento")).toBeInTheDocument();
+      expect(screen.getByText("Marcos Santos")).toBeInTheDocument();
     });
 
-    const consentBtn = screen.getByText("Registrar consentimento");
-    fireEvent.click(consentBtn);
+    // Modal e botão LGPD foram removidos do fluxo de Reativação
+    expect(screen.queryByText("Registrar consentimento")).not.toBeInTheDocument();
+    expect(screen.queryByText("Registrar Consentimento de Marketing")).not.toBeInTheDocument();
 
-    expect(screen.getByText("Registrar Consentimento de Marketing")).toBeInTheDocument();
-    expect(screen.getByText(/Declaro expressamente que este cliente forneceu autorização prévia/i)).toBeInTheDocument();
+    // Cliente UNKNOWN (Marcos Santos) tem botão WhatsApp habilitado
+    const waButtons = screen.getAllByRole("button", { name: "WhatsApp" });
+    const marcosWaBtn = waButtons.find((btn) =>
+      btn.getAttribute("title")?.includes("Atendimento manual")
+    );
+    expect(marcosWaBtn).toBeDefined();
+    expect(marcosWaBtn).not.toBeDisabled();
 
-    const evidenceTextarea = screen.getByLabelText(/Evidência específica da autorização prévia/i) as HTMLTextAreaElement;
-    const sourceSelect = screen.getByLabelText(/Origem da autorização obtida/i) as HTMLSelectElement;
-    const declarationCheckbox = screen.getByRole("checkbox", {
-      name: /Declaro expressamente que este cliente forneceu autorização prévia/i,
-    }) as HTMLInputElement;
-    const saveBtn = screen.getByRole("button", { name: "Salvar consentimento" });
-
-    // Não preenche justificativa genérica automaticamente e mantém botão bloqueado sem declaração + evidência válida
-    expect(evidenceTextarea.value).toBe("");
-    expect(declarationCheckbox.checked).toBe(false);
-    expect(saveBtn).toBeDisabled();
-
-    // Apenas declaração marcada com evidência curta mantém botão bloqueado
-    fireEvent.click(declarationCheckbox);
-    fireEvent.change(evidenceTextarea, { target: { value: "curto" } });
-    expect(saveBtn).toBeDisabled();
-
-    // Evidência válida (>= 10 chars) + origem selecionada + declaração marcada libera e envia ao backend
-    fireEvent.change(sourceSelect, { target: { value: "CUSTOMER_REQUEST_IN_PERSON" } });
-    fireEvent.change(evidenceTextarea, {
-      target: { value: "Cliente autorizou presencialmente no caixa em 11/11." },
-    });
-    expect(saveBtn).not.toBeDisabled();
-
-    fireEvent.click(saveBtn);
+    fireEvent.click(marcosWaBtn!);
 
     await waitFor(() => {
-      const fetchMock = global.fetch as any;
-      const postCall = fetchMock.mock.calls.find(
-        (c: any) =>
-          String(c[0]).includes("/api/admin/clients/cust-2/marketing-consent") &&
-          c[1]?.method === "POST"
-      );
-      expect(postCall).toBeDefined();
-      const sentBody = JSON.parse(postCall[1].body);
-      expect(sentBody).toMatchObject({
-        status: "OPTED_IN",
-        source: "CUSTOMER_REQUEST_IN_PERSON",
-        declaredPriorAuthorization: true,
-        evidence: "Cliente autorizou presencialmente no caixa em 11/11.",
-        context: "SMART_CRM_REACTIVATION",
-      });
+      expect(
+        screen.getByText(/Sem mensagem promocional pré-preenchida/i)
+      ).toBeInTheDocument();
     });
 
-    // Reabre para testar fluxo OPTED_OUT sem exigir evidência ou declaração
-    await waitFor(() => {
-      expect(screen.queryByText("Registrar Consentimento de Marketing")).not.toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText("Registrar consentimento"));
-    const optOutRadio = screen.getByRole("radio", {
-      name: /Cliente solicitou NÃO receber mensagens/i,
-    });
-    fireEvent.click(optOutRadio);
-
-    const saveOptOutBtn = screen.getByRole("button", { name: "Salvar consentimento" });
-    expect(saveOptOutBtn).not.toBeDisabled();
-    fireEvent.click(saveOptOutBtn);
-
-    await waitFor(() => {
-      const fetchMock = global.fetch as any;
-      const consentPostCalls = fetchMock.mock.calls.filter(
-        (c: any) =>
-          String(c[0]).includes("/api/admin/clients/cust-2/marketing-consent") &&
-          c[1]?.method === "POST"
-      );
-      expect(consentPostCalls.length).toBeGreaterThanOrEqual(2);
-      const lastBody = JSON.parse(consentPostCalls[consentPostCalls.length - 1][1].body);
-      expect(lastBody.status).toBe("OPTED_OUT");
+    const fetchMock = global.fetch as any;
+    const prepCall = fetchMock.mock.calls.find(
+      (c: any) =>
+        String(c[0]).includes("/api/admin/clients/reactivation/manual-campaigns") &&
+        c[1]?.method === "POST"
+    );
+    expect(prepCall).toBeDefined();
+    expect(JSON.parse(prepCall[1].body)).toMatchObject({
+      selectedCustomerIds: ["cust-2"],
+      operationMode: "ASSISTED_QUEUE",
     });
   });
 

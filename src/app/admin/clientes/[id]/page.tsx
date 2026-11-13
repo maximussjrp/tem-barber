@@ -343,6 +343,9 @@ export default function Cliente360Page() {
   const [contactError, setContactError] = useState("");
   const [submittingContact, setSubmittingContact] = useState(false);
   const [profileBirthDate, setProfileBirthDate] = useState("");
+  const [marketingConsentStatus, setMarketingConsentStatus] = useState<"OPTED_IN" | "OPTED_OUT" | "UNKNOWN" | null>(null);
+  const [savingOptOut, setSavingOptOut] = useState(false);
+  const [optOutFeedback, setOptOutFeedback] = useState("");
   const [profileNotes, setProfileNotes] = useState("");
   const [profileError, setProfileError] = useState("");
   const [profileNotice, setProfileNotice] = useState("");
@@ -390,6 +393,49 @@ export default function Cliente360Page() {
     }
   }, [id]);
 
+  const loadMarketingConsent = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/clients/${id}/marketing-consent`);
+      if (!res.ok) return;
+      const payload = await res.json();
+      const status = payload?.consent?.status;
+      if (status === "OPTED_IN" || status === "OPTED_OUT" || status === "UNKNOWN") {
+        setMarketingConsentStatus(status);
+      } else {
+        setMarketingConsentStatus("UNKNOWN");
+      }
+    } catch {
+      // Silently ignore if unavailable
+    }
+  }, [id]);
+
+  const handleRegisterOptOut = async () => {
+    setSavingOptOut(true);
+    setOptOutFeedback("");
+    try {
+      const res = await fetch(`/api/admin/clients/${id}/marketing-consent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "OPTED_OUT",
+          source: "CUSTOMER_REQUEST_WHATSAPP",
+          reason: "Opt-out registrado manualmente no perfil do cliente",
+          eventKey: `evt-optout-${id}-${Date.now()}`,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.message || payload.error || "Não foi possível registrar opt-out.");
+      }
+      setMarketingConsentStatus("OPTED_OUT");
+      setOptOutFeedback("Opt-out de marketing registrado com sucesso.");
+    } catch (err) {
+      setOptOutFeedback(err instanceof Error ? err.message : "Erro ao registrar opt-out.");
+    } finally {
+      setSavingOptOut(false);
+    }
+  };
+
   const loadData = useCallback(async () => {
     setError("");
     try {
@@ -401,12 +447,13 @@ export default function Cliente360Page() {
       setProfileNotes(payload.notes ?? "");
       await loadContactLogs();
       await loadCreditData();
+      await loadMarketingConsent();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
     } finally {
       setLoading(false);
     }
-  }, [id, loadContactLogs, loadCreditData]);
+  }, [id, loadContactLogs, loadCreditData, loadMarketingConsent]);
 
   useEffect(() => {
     let ignore = false;
@@ -422,6 +469,7 @@ export default function Cliente360Page() {
           setProfileNotes(payload.notes ?? "");
           await loadContactLogs();
           await loadCreditData();
+      await loadMarketingConsent();
         }
       } catch (err) {
         if (!ignore) setError(err instanceof Error ? err.message : "Erro ao carregar dados.");
@@ -431,7 +479,7 @@ export default function Cliente360Page() {
     };
     init();
     return () => { ignore = true; };
-  }, [id, loadContactLogs, loadCreditData]);
+  }, [id, loadContactLogs, loadCreditData, loadMarketingConsent]);
 
   const submitProfile = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -501,6 +549,7 @@ export default function Cliente360Page() {
       setCreditAmount("");
       setCreditDescription("");
       await loadCreditData();
+      await loadMarketingConsent();
     } catch (err) {
       setCreditError(err instanceof Error ? err.message : "Erro ao movimentar crédito.");
     } finally {
@@ -826,6 +875,43 @@ export default function Cliente360Page() {
         <p className="text-xs text-stone-500">
           Abrir WhatsApp não registra contato automaticamente.
         </p>
+        {marketingConsentStatus && (
+          <div className="pt-3 border-t border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <p className="text-xs font-semibold text-stone-300">
+                Preferência de marketing (WhatsApp):{" "}
+                <span
+                  className={
+                    marketingConsentStatus === "OPTED_IN"
+                      ? "text-emerald-400"
+                      : marketingConsentStatus === "OPTED_OUT"
+                        ? "text-red-400"
+                        : "text-amber-300"
+                  }
+                >
+                  {marketingConsentStatus === "OPTED_IN"
+                    ? "OPTED_IN (Autorizado)"
+                    : marketingConsentStatus === "OPTED_OUT"
+                      ? "OPTED_OUT (Recusou marketing)"
+                      : "UNKNOWN (Somente atendimento manual)"}
+                </span>
+              </p>
+              {optOutFeedback && (
+                <p className="text-xs text-stone-400">{optOutFeedback}</p>
+              )}
+            </div>
+            {marketingConsentStatus !== "OPTED_OUT" && (
+              <button
+                type="button"
+                disabled={savingOptOut}
+                onClick={handleRegisterOptOut}
+                className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-300 border border-red-500/30 text-xs font-semibold hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+              >
+                {savingOptOut ? "Registrando..." : "Registrar opt-out de marketing"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-stone-900 border border-stone-800 rounded-lg p-6">

@@ -68,6 +68,11 @@ export interface OperatorTransferReconciliationInput {
   reason: string;
 }
 
+export const MANUAL_SUPPORT_TEMPLATE_KEY = "MANUAL_SUPPORT";
+export const MANUAL_SUPPORT_TEMPLATE_LABEL = "Atendimento manual";
+export type ManualOperationMode = "ASSISTED_QUEUE" | "MARKETING_CAMPAIGN";
+export type RecipientOperationType = "MARKETING_REACTIVATION" | "MANUAL_SUPPORT";
+
 export interface PrepareManualCampaignInput {
   barbershopId: string;
   userId?: string;
@@ -80,6 +85,7 @@ export interface PrepareManualCampaignInput {
   name?: string;
   baseUrl?: string;
   origin?: ManualCampaignOrigin;
+  operationMode?: ManualOperationMode;
   sourceFilter?: string | null;
   workRoundId?: string | null;
   excludeCustomerIds?: string[];
@@ -93,6 +99,10 @@ export interface PrepareManualCampaignResult {
     customerName: string;
     customerPhone: string;
     dispatchStatus: RecipientDispatchStatus;
+    operationType?: RecipientOperationType;
+    consentStatusAtPreparation?: "OPTED_IN" | "UNKNOWN";
+    templateKey?: string;
+    templateLabel?: string;
     previewMessage: string;
     timingState: CustomerTimingState;
     score: number;
@@ -475,7 +485,10 @@ export async function prepareManualReactivationCampaign(
     throw new Error("BATCH_LIMIT_EXCEEDED: Maximum of 50 candidates can be prepared at once.");
   }
 
-  const template = WHATSAPP_TEMPLATES.find((t) => t.key === input.templateKey);
+  const isManualSupportTemplate = input.templateKey === MANUAL_SUPPORT_TEMPLATE_KEY;
+  const template = isManualSupportTemplate
+    ? { key: MANUAL_SUPPORT_TEMPLATE_KEY, label: MANUAL_SUPPORT_TEMPLATE_LABEL }
+    : WHATSAPP_TEMPLATES.find((t) => t.key === input.templateKey);
   if (!template) {
     throw new Error(`INVALID_TEMPLATE: Unknown template key '${input.templateKey}'.`);
   }
@@ -521,17 +534,27 @@ export async function prepareManualReactivationCampaign(
     // Replay idempotente da campanha existente
     return {
       campaign: existingCampaign,
-      accepted: existingCampaign.recipients.map((r: any, idx: number) => ({
-        recipientId: r.id,
-        customerId: r.customerId,
-        customerName: r.customerNameSnapshot,
-        customerPhone: r.customerPhoneSnapshot,
-        dispatchStatus: r.dispatchStatus,
-        previewMessage: (r.payloadSnapshot as any)?.previewMessage || "",
-        timingState: r.timingStateSnapshot,
-        score: r.scoreSnapshot,
-        queueIndex: (r.payloadSnapshot as any)?.queueIndex ?? idx,
-      })),
+      accepted: existingCampaign.recipients.map((r: any, idx: number) => {
+        const snap = (r.payloadSnapshot as any) || {};
+        return {
+          recipientId: r.id,
+          customerId: r.customerId,
+          customerName: r.customerNameSnapshot,
+          customerPhone: r.customerPhoneSnapshot,
+          dispatchStatus: r.dispatchStatus,
+          operationType:
+            snap.operationType === "MANUAL_SUPPORT"
+              ? "MANUAL_SUPPORT"
+              : "MARKETING_REACTIVATION",
+          consentStatusAtPreparation: snap.consentStatusAtPreparation || undefined,
+          templateKey: snap.templateKey || input.templateKey,
+          templateLabel: snap.templateLabel || template.label,
+          previewMessage: snap.previewMessage || "",
+          timingState: r.timingStateSnapshot,
+          score: r.scoreSnapshot,
+          queueIndex: snap.queueIndex ?? idx,
+        };
+      }),
       rejected: (existingSegment?.rejected || []) as any[],
       isExisting: true,
     };
@@ -556,6 +579,12 @@ export async function prepareManualReactivationCampaign(
     input.origin === "CLIENTS_BASE_ASSISTED_QUEUE"
       ? "CLIENTS_BASE_ASSISTED_QUEUE"
       : "SMART_CRM_REACTIVATION";
+  const effectiveOperationMode: ManualOperationMode =
+    input.operationMode === "ASSISTED_QUEUE" ||
+    campaignOrigin === "CLIENTS_BASE_ASSISTED_QUEUE" ||
+    isManualSupportTemplate
+      ? "ASSISTED_QUEUE"
+      : "MARKETING_CAMPAIGN";
 
   // B04: Se for Fila Assistida da Base, impede atomicamente duas filas simultaneamente ativas no mesmo tenant
   if (campaignOrigin === "CLIENTS_BASE_ASSISTED_QUEUE") {
@@ -714,6 +743,10 @@ export async function prepareManualReactivationCampaign(
   const acceptedCandidates: Array<{
     customer: { id: string; name: string; phone: string };
     validPhone: string;
+    operationType: RecipientOperationType;
+    consentStatusAtPreparation: "OPTED_IN" | "UNKNOWN";
+    templateKey: string;
+    templateLabel: string;
     previewMessage: string;
     queueIndex: number;
   }> = [];
@@ -748,15 +781,22 @@ export async function prepareManualReactivationCampaign(
     }
 
     const consentStatus = consentMap.get(custId);
-    if (consentStatus !== "OPTED_IN") {
+    if (consentStatus === "OPTED_OUT") {
       rejectedCandidates.push({
         customerId: custId,
         customerName: cust.name,
-        reasonCode: consentStatus === "OPTED_OUT" ? "CONSENT_OPTED_OUT" : "CONSENT_UNKNOWN",
-        reasonDetail:
-          consentStatus === "OPTED_OUT"
-            ? "Cliente optou por não receber mensagens de marketing."
-            : "Consentimento de marketing não registrado para WhatsApp.",
+        reasonCode: "CONSENT_OPTED_OUT",
+        reasonDetail: "Cliente optou por não receber mensagens de marketing.",
+      });
+      continue;
+    }
+
+    if (consentStatus !== "OPTED_IN" && effectiveOperationMode === "MARKETING_CAMPAIGN") {
+      rejectedCandidates.push({
+        customerId: custId,
+        customerName: cust.name,
+        reasonCode: "CONSENT_UNKNOWN",
+        reasonDetail: "Consentimento de marketing não registrado para WhatsApp.",
       });
       continue;
     }
@@ -805,16 +845,36 @@ export async function prepareManualReactivationCampaign(
       continue;
     }
 
-    const message = buildClientWhatsappMessage({
-      template: input.templateKey,
-      customerName: cust.name,
-      barbershopName: barbershop.name,
-      bookingUrl,
-    });
+    const isOptedIn = consentStatus === "OPTED_IN";
+    const recipientOperationType: RecipientOperationType =
+      !isOptedIn || isManualSupportTemplate
+        ? "MANUAL_SUPPORT"
+        : "MARKETING_REACTIVATION";
+    const recipientTemplateKey =
+      recipientOperationType === "MANUAL_SUPPORT"
+        ? MANUAL_SUPPORT_TEMPLATE_KEY
+        : template.key;
+    const recipientTemplateLabel =
+      recipientOperationType === "MANUAL_SUPPORT"
+        ? MANUAL_SUPPORT_TEMPLATE_LABEL
+        : template.label;
+    const message =
+      recipientOperationType === "MANUAL_SUPPORT"
+        ? ""
+        : buildClientWhatsappMessage({
+            template: recipientTemplateKey,
+            customerName: cust.name,
+            barbershopName: barbershop.name,
+            bookingUrl,
+          });
 
     acceptedCandidates.push({
       customer: cust,
       validPhone: normalizedPhone,
+      operationType: recipientOperationType,
+      consentStatusAtPreparation: isOptedIn ? "OPTED_IN" : "UNKNOWN",
+      templateKey: recipientTemplateKey,
+      templateLabel: recipientTemplateLabel,
       previewMessage: message,
       queueIndex: acceptedCandidates.length,
     });
@@ -862,6 +922,7 @@ export async function prepareManualReactivationCampaign(
       targetSegment: {
         requestKey: input.requestKey,
         origin: campaignOrigin,
+        operationMode: effectiveOperationMode,
         sourceFilter: input.sourceFilter ?? null,
         workRoundId: input.workRoundId ?? null,
         selectedCustomerIds: selectedIds,
@@ -885,9 +946,11 @@ export async function prepareManualReactivationCampaign(
           dispatchStatus: RecipientDispatchStatus.READY,
           payloadSnapshot: {
             queueIndex: cand.queueIndex,
-            initialTemplateKey: input.templateKey,
-            templateKey: input.templateKey,
-            templateLabel: template.label,
+            operationType: cand.operationType,
+            consentStatusAtPreparation: cand.consentStatusAtPreparation,
+            initialTemplateKey: cand.templateKey,
+            templateKey: cand.templateKey,
+            templateLabel: cand.templateLabel,
             previewMessage: cand.previewMessage,
             isCustomEdited: false,
           },
@@ -910,17 +973,27 @@ export async function prepareManualReactivationCampaign(
       ...createdCampaign,
       recipients: sortedRecipients,
     },
-    accepted: sortedRecipients.map((r: any, idx: number) => ({
-      recipientId: r.id,
-      customerId: r.customerId,
-      customerName: r.customerNameSnapshot,
-      customerPhone: r.customerPhoneSnapshot,
-      dispatchStatus: r.dispatchStatus,
-      previewMessage: (r.payloadSnapshot as any)?.previewMessage || "",
-      timingState: r.timingStateSnapshot,
-      score: r.scoreSnapshot,
-      queueIndex: (r.payloadSnapshot as any)?.queueIndex ?? idx,
-    })),
+    accepted: sortedRecipients.map((r: any, idx: number) => {
+      const snap = (r.payloadSnapshot as any) || {};
+      return {
+        recipientId: r.id,
+        customerId: r.customerId,
+        customerName: r.customerNameSnapshot,
+        customerPhone: r.customerPhoneSnapshot,
+        dispatchStatus: r.dispatchStatus,
+        operationType:
+          snap.operationType === "MANUAL_SUPPORT"
+            ? "MANUAL_SUPPORT"
+            : "MARKETING_REACTIVATION",
+        consentStatusAtPreparation: snap.consentStatusAtPreparation || undefined,
+        templateKey: snap.templateKey || input.templateKey,
+        templateLabel: snap.templateLabel || template.label,
+        previewMessage: snap.previewMessage || "",
+        timingState: r.timingStateSnapshot,
+        score: r.scoreSnapshot,
+        queueIndex: snap.queueIndex ?? idx,
+      };
+    }),
     rejected: rejectedCandidates,
     isExisting: false,
   };
@@ -1049,43 +1122,85 @@ export async function revalidateAndOpenManualRecipient(
     now,
   });
 
+  const recipientOperationType: RecipientOperationType =
+    payload.operationType === "MANUAL_SUPPORT"
+      ? "MANUAL_SUPPORT"
+      : "MARKETING_REACTIVATION";
+
   // Validação de templateKey e messageText customizados (se enviados)
   let effectiveTemplateKey: string =
-    payload.templateKey || "RETURN_REMINDER";
+    payload.templateKey ||
+    (recipientOperationType === "MANUAL_SUPPORT"
+      ? MANUAL_SUPPORT_TEMPLATE_KEY
+      : "RETURN_REMINDER");
   let effectiveTemplateLabel: string =
-    payload.templateLabel || "Lembrete de retorno";
+    payload.templateLabel ||
+    (recipientOperationType === "MANUAL_SUPPORT"
+      ? MANUAL_SUPPORT_TEMPLATE_LABEL
+      : "Lembrete de retorno");
 
   if (input.templateKey !== undefined) {
-    const foundTemplate = WHATSAPP_TEMPLATES.find(
-      (t) => t.key === input.templateKey
-    );
-    if (!foundTemplate) {
-      const err: any = new Error(
-        `INVALID_TEMPLATE: Unknown template key '${input.templateKey}'.`
+    if (recipientOperationType === "MANUAL_SUPPORT") {
+      if (input.templateKey !== MANUAL_SUPPORT_TEMPLATE_KEY) {
+        const err: any = new Error(
+          "PROMOTIONAL_TEMPLATE_REQUIRES_OPT_IN: Modelos promocionais exigem consentimento OPTED_IN. Utilize apenas atendimento manual."
+        );
+        err.status = 400;
+        err.code = "PROMOTIONAL_TEMPLATE_REQUIRES_OPT_IN";
+        throw err;
+      }
+      effectiveTemplateKey = MANUAL_SUPPORT_TEMPLATE_KEY;
+      effectiveTemplateLabel = MANUAL_SUPPORT_TEMPLATE_LABEL;
+    } else if (input.templateKey === MANUAL_SUPPORT_TEMPLATE_KEY) {
+      effectiveTemplateKey = MANUAL_SUPPORT_TEMPLATE_KEY;
+      effectiveTemplateLabel = MANUAL_SUPPORT_TEMPLATE_LABEL;
+    } else {
+      const foundTemplate = WHATSAPP_TEMPLATES.find(
+        (t) => t.key === input.templateKey
       );
-      err.status = 400;
-      err.code = "INVALID_TEMPLATE";
-      throw err;
+      if (!foundTemplate) {
+        const err: any = new Error(
+          `INVALID_TEMPLATE: Unknown template key '${input.templateKey}'.`
+        );
+        err.status = 400;
+        err.code = "INVALID_TEMPLATE";
+        throw err;
+      }
+      effectiveTemplateKey = foundTemplate.key;
+      effectiveTemplateLabel = foundTemplate.label;
     }
-    effectiveTemplateKey = foundTemplate.key;
-    effectiveTemplateLabel = foundTemplate.label;
   }
 
   let effectiveMessageText: string =
-    payload.openedMessageText || payload.previewMessage || "";
+    payload.openedMessageText ?? payload.previewMessage ?? "";
 
   if (input.messageText !== undefined) {
     const trimmed =
       typeof input.messageText === "string" ? input.messageText.trim() : "";
-    if (trimmed.length === 0 || trimmed.length > 2000) {
-      const err: any = new Error(
-        "INVALID_MESSAGE_TEXT: A mensagem deve conter entre 1 e 2000 caracteres."
-      );
-      err.status = 400;
-      err.code = "INVALID_MESSAGE_TEXT";
-      throw err;
+    if (recipientOperationType === "MANUAL_SUPPORT") {
+      // GITHUB-DEF-02: Para UNKNOWN / MANUAL_SUPPORT, não aceita texto livre pré-preenchido para construir URL com ?text=
+      if (trimmed.length > 0) {
+        const err: any = new Error(
+          "MANUAL_SUPPORT_NO_PREFILLED_MESSAGE: Atendimento manual para clientes sem consentimento não aceita mensagem pré-preenchida. A conversa deve ser iniciada diretamente no WhatsApp."
+        );
+        err.status = 400;
+        err.code = "MANUAL_SUPPORT_NO_PREFILLED_MESSAGE";
+        throw err;
+      }
+      effectiveMessageText = "";
+    } else {
+      if (trimmed.length === 0 || trimmed.length > 2000) {
+        const err: any = new Error(
+          "INVALID_MESSAGE_TEXT: A mensagem deve conter entre 1 e 2000 caracteres."
+        );
+        err.status = 400;
+        err.code = "INVALID_MESSAGE_TEXT";
+        throw err;
+      }
+      effectiveMessageText = trimmed;
     }
-    effectiveMessageText = trimmed;
+  } else if (recipientOperationType === "MANUAL_SUPPORT") {
+    effectiveMessageText = "";
   }
 
   const cooldownCutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -1177,11 +1292,20 @@ export async function revalidateAndOpenManualRecipient(
     throw err;
   };
 
-  if (!consent || consent.status !== "OPTED_IN") {
+  if (consent?.status === "OPTED_OUT") {
     return handleStaleSuppression(
       RecipientDispatchStatus.OPTED_OUT,
       "STALE_CONSENT",
-      "Consentimento não é OPTED_IN no momento do disparo.",
+      "Cliente optou por não receber mensagens (OPTED_OUT).",
+      "STALE_CONSENT: Customer consent is OPTED_OUT."
+    );
+  }
+
+  if (recipientOperationType === "MARKETING_REACTIVATION" && (!consent || consent.status !== "OPTED_IN")) {
+    return handleStaleSuppression(
+      RecipientDispatchStatus.OPTED_OUT,
+      "STALE_CONSENT",
+      "Consentimento não é OPTED_IN no momento do disparo promocional.",
       "STALE_CONSENT: Customer consent is no longer OPTED_IN."
     );
   }
@@ -1286,10 +1410,10 @@ export async function revalidateAndOpenManualRecipient(
     now
   );
 
-  const whatsappUrl = generateWhatsAppLink(
-    normalizedPhone,
-    effectiveMessageText
-  );
+  const whatsappUrl =
+    recipientOperationType === "MANUAL_SUPPORT"
+      ? generateWhatsAppLink(normalizedPhone, "")
+      : generateWhatsAppLink(normalizedPhone, effectiveMessageText);
 
   return {
     ok: true,
@@ -1528,7 +1652,17 @@ export async function confirmManualRecipientSend(
         : Promise.resolve(null),
     ]);
 
-    if (!liveConsent || liveConsent.status !== "OPTED_IN") {
+    const recipientOperationTypeForAudit: RecipientOperationType =
+      payload.operationType === "MANUAL_SUPPORT"
+        ? "MANUAL_SUPPORT"
+        : "MARKETING_REACTIVATION";
+
+    if (liveConsent?.status === "OPTED_OUT") {
+      detectedPostOpenChanges.push("CONSENT_CHANGED_AFTER_OPEN");
+    } else if (
+      recipientOperationTypeForAudit === "MARKETING_REACTIVATION" &&
+      (!liveConsent || liveConsent.status !== "OPTED_IN")
+    ) {
       detectedPostOpenChanges.push("CONSENT_CHANGED_AFTER_OPEN");
     }
     if (liveBlock) {
@@ -1548,8 +1682,18 @@ export async function confirmManualRecipientSend(
     }
   }
 
-  const templateKey = payload.templateKey || "RETURN_REMINDER";
-  const templateLabel = payload.templateLabel || "Lembrete de retorno";
+  const recipientOperationType: RecipientOperationType =
+    payload.operationType === "MANUAL_SUPPORT"
+      ? "MANUAL_SUPPORT"
+      : "MARKETING_REACTIVATION";
+  const templateKey =
+    recipientOperationType === "MANUAL_SUPPORT"
+      ? MANUAL_SUPPORT_TEMPLATE_KEY
+      : payload.templateKey || "RETURN_REMINDER";
+  const templateLabel =
+    recipientOperationType === "MANUAL_SUPPORT"
+      ? MANUAL_SUPPORT_TEMPLATE_LABEL
+      : payload.templateLabel || "Lembrete de retorno";
   const confirmedMessageText =
     payload.openedMessageText || payload.previewMessage || "";
   const confirmedPhoneNormalized =
@@ -1608,11 +1752,16 @@ export async function confirmManualRecipientSend(
   );
 
   // S-02 / G1-C09: Minimização de dados na nota do CustomerContactLog
-  const conciseNote = isCustomEdited
-    ? `[Fila Assistida • Editada] ${confirmedMessageText.slice(0, 220)}`
-    : `Disparo manual via WhatsApp (Campanha: ${
-        recipient.campaign?.name || "Fila Assistida"
-      })`;
+  const conciseNote =
+    recipientOperationType === "MANUAL_SUPPORT"
+      ? confirmedMessageText.trim()
+        ? `[Atendimento Manual • WhatsApp Assistido] ${confirmedMessageText.slice(0, 220)}`
+        : "Atendimento manual via WhatsApp Assistido (sem mensagem promocional)"
+      : isCustomEdited
+        ? `[Fila Assistida • Editada] ${confirmedMessageText.slice(0, 220)}`
+        : `Disparo manual via WhatsApp (Campanha: ${
+            recipient.campaign?.name || "Fila Assistida"
+          })`;
 
   const logResult = await createReactivationContactLog(prisma, {
     barbershopId: input.barbershopId,
@@ -2014,6 +2163,11 @@ export async function getActiveManualCampaign(
       sentConfirmedAt: r.sentConfirmedAt
         ? new Date(r.sentConfirmedAt).toISOString()
         : null,
+      operationType:
+        payload.operationType === "MANUAL_SUPPORT"
+          ? ("MANUAL_SUPPORT" as const)
+          : ("MARKETING_REACTIVATION" as const),
+      consentStatusAtPreparation: payload.consentStatusAtPreparation || null,
       templateKey: payload.templateKey || "RETURN_REMINDER",
       templateLabel: payload.templateLabel || "Lembrete de retorno",
       previewMessage: payload.previewMessage || "",

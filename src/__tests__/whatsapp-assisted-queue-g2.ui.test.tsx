@@ -73,12 +73,14 @@ const pendingConsentClient2 = {
     contactLogCount: 0,
   },
   whatsappQueue: {
-    eligible: false,
+    eligible: true,
+    marketingEligible: false,
+    operationType: "MANUAL_SUPPORT" as const,
     consentStatus: "UNKNOWN" as const,
     isValidMobilePhone: true,
     inCooldown14d: false,
-    canRegisterConsentInDrawer: true,
-    ineligibilityReason: "CONSENT_UNKNOWN" as const,
+    canRegisterConsentInDrawer: false,
+    ineligibilityReason: null,
   },
 };
 
@@ -230,8 +232,8 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     expect(screen.getByText("142")).toBeInTheDocument();
     expect(screen.getByText("35")).toBeInTheDocument();
 
-    // Clica em "WhatsApp Assistido" no cliente elegível
-    await userEvent.click(screen.getByRole("button", { name: "WhatsApp Assistido" }));
+    // Clica em "WhatsApp Assistido" no primeiro cliente elegível
+    await userEvent.click(screen.getAllByRole("button", { name: "WhatsApp Assistido" })[0]);
 
     // Painel lateral abre com 0 de 2 processados
     expect(await screen.findByRole("dialog", { name: "Fila Assistida de WhatsApp" })).toBeInTheDocument();
@@ -280,7 +282,7 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     openSpy.mockRestore();
   });
 
-  it("não exibe formulário Autorização LGPD para UNKNOWN, libera Atendimento WhatsApp sem texto promocional e bloqueia OPTED_OUT", async () => {
+  it("não exibe formulário Autorização LGPD para UNKNOWN, permite entrar na fila sequencial em modo MANUAL_SUPPORT sem texto promocional e bloqueia OPTED_OUT", async () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => ({ closed: false } as Window));
 
     const optedOutClient3 = {
@@ -290,6 +292,8 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
       phone: "5517991089192",
       whatsappQueue: {
         eligible: false,
+        marketingEligible: false,
+        operationType: "MANUAL_SUPPORT" as const,
         consentStatus: "OPTED_OUT" as const,
         isValidMobilePhone: true,
         inCooldown14d: false,
@@ -302,6 +306,43 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
       const url = String(input);
       if (url.includes("/api/admin/clients/reactivation/manual-campaigns/active")) {
         return Promise.resolve({ ok: true, json: async () => ({ activeCampaign: null }) });
+      }
+      if (url.endsWith("/api/admin/clients/reactivation/manual-campaigns")) {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            success: true,
+            campaign: { id: "camp-unk-1", name: "Contato Assistido — Marina Sem Consentimento", status: "READY" },
+            accepted: [
+              {
+                recipientId: "rec-unk-1",
+                queueIndex: 0,
+                customerId: "c-2",
+                customerName: "Marina Sem Consentimento",
+                customerPhone: "5517991089191",
+                dispatchStatus: "READY",
+                operationType: "MANUAL_SUPPORT",
+                consentStatusAtPreparation: "UNKNOWN",
+                templateKey: "MANUAL_SUPPORT",
+                templateLabel: "Atendimento manual",
+                previewMessage: "",
+              },
+            ],
+            rejected: [],
+          }),
+        });
+      }
+      if (url.includes("/recipients/rec-unk-1/opened")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            whatsappUrl: "https://wa.me/5517991089191",
+            openPreparationId: "prep-unk-1",
+            recipient: { id: "rec-unk-1", dispatchStatus: "WHATSAPP_OPENED" },
+          }),
+        });
       }
       return Promise.resolve({
         ok: true,
@@ -335,25 +376,20 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     expect(screen.getByText("Opt-out marketing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Indisponível" })).toBeDisabled();
 
-    // UNKNOWN oferece atendimento manual independente sem texto promocional e sem gravar consentimento/campanha
-    const manualBtn = screen.getByRole("button", { name: "Atendimento WhatsApp" });
-    await userEvent.click(manualBtn);
+    // UNKNOWN entra na fila sequencial de WhatsApp Assistido sem modelo promocional e sem textarea
+    const assistedBtn = screen.getByRole("button", { name: "WhatsApp Assistido" });
+    await userEvent.click(assistedBtn);
 
-    expect(openSpy).toHaveBeenCalledTimes(1);
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://wa.me/5517991089191",
-      "_blank",
-      "noopener,noreferrer"
-    );
+    expect(await screen.findByText(/Atendimento manual \(sem consentimento de marketing\)/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Modelo de mensagem")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Mensagem para/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Abrir no WhatsApp" }));
+    expect(openSpy).toHaveBeenCalledWith("https://wa.me/5517991089191", "_blank", "noopener,noreferrer");
+
+    // Nunca grava consentimento fictício OPTED_IN
     expect(
-      fetchMock.mock.calls.some(([u]) => {
-        const s = String(u);
-        return (
-          s.includes("/marketing-consent") ||
-          s.includes("/contact-logs") ||
-          (s.includes("/manual-campaigns") && !s.includes("/active"))
-        );
-      })
+      fetchMock.mock.calls.some(([u]) => String(u).includes("/marketing-consent"))
     ).toBe(false);
 
     openSpy.mockRestore();
@@ -527,9 +563,10 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
     expect(screen.queryByRole("button", { name: /Iniciar fila/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Novo cliente" })).not.toBeInTheDocument();
-    // Para OPTED_IN sem permissão de fila, botão fica Indisponível; para UNKNOWN com CLIENTS_VIEW=true, atendimento manual permanece disponível
-    expect(screen.getByRole("button", { name: "Indisponível" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Atendimento WhatsApp" })).toBeEnabled();
+    // Sem WHATSAPP_ASSISTED_OPERATE, todos os botões da fila ficam Indisponível (fail-closed)
+    const unavailableButtons = screen.getAllByRole("button", { name: "Indisponível" });
+    expect(unavailableButtons).toHaveLength(2);
+    unavailableButtons.forEach((btn) => expect(btn).toBeDisabled());
     // Também não consulta /manual-campaigns/active sem permissão
     expect(
       (fetchMock.mock.calls as unknown as [RequestInfo | URL][]).some(([url]) =>
@@ -587,9 +624,10 @@ describe("G2 UI — Fila Assistida de WhatsApp na Base de Clientes", () => {
 
     render(<ClientesPage />);
 
-    expect(await screen.findByRole("button", { name: "WhatsApp Assistido" })).toBeInTheDocument();
+    const assistedButtons = await screen.findAllByRole("button", { name: "WhatsApp Assistido" });
+    expect(assistedButtons).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Autorizar WhatsApp" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Atendimento WhatsApp" })).toBeEnabled();
+    expect(screen.getByText("Atendimento manual")).toBeInTheDocument();
   });
 
   it("G24-02c: CLIENTS_VIEW=false oculta listagem e fila assistida (fail-closed)", async () => {

@@ -94,29 +94,17 @@ export default function ReactivationPage() {
   // Explainability Drawer State
   const [explainCandidate, setExplainCandidate] = useState<ReactivationCandidateItem | null>(null);
 
-  // Consent Modal State
-  const [consentModalCandidate, setConsentModalCandidate] = useState<ReactivationCandidateItem | null>(null);
-  const [consentChoice, setConsentChoice] = useState<"OPTED_IN" | "OPTED_OUT">("OPTED_IN");
-  const [consentSource, setConsentSource] = useState<
-    "CUSTOMER_REQUEST_WHATSAPP" | "CUSTOMER_REQUEST_IN_PERSON" | "ADMIN_WITH_PROOF"
-  >("CUSTOMER_REQUEST_WHATSAPP");
-  const [consentEvidence, setConsentEvidence] = useState("");
-  const [consentConfirmationChecked, setConsentConfirmationChecked] = useState(false);
-  const [savingConsent, setSavingConsent] = useState(false);
-  const [consentError, setConsentError] = useState<string | null>(null);
-
   // Escape key handler for modals/drawer
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (explainCandidate) setExplainCandidate(null);
-        if (consentModalCandidate) setConsentModalCandidate(null);
         if (showPreparationModal) setShowPreparationModal(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [explainCandidate, consentModalCandidate, showPreparationModal]);
+  }, [explainCandidate, showPreparationModal]);
 
   // Fetch Candidates from Canonical R3 API
   const fetchCandidates = useCallback(async () => {
@@ -224,73 +212,6 @@ export default function ReactivationPage() {
     setSelectedIds(next);
   };
 
-  const openConsentModal = (candidate: ReactivationCandidateItem) => {
-    setConsentModalCandidate(candidate);
-    setConsentChoice("OPTED_IN");
-    setConsentSource("CUSTOMER_REQUEST_WHATSAPP");
-    setConsentEvidence("");
-    setConsentConfirmationChecked(false);
-    setConsentError(null);
-  };
-
-  const handleSaveConsent = async () => {
-    if (!consentModalCandidate) return;
-    const trimmedEvidence = consentEvidence.trim();
-    if (consentChoice === "OPTED_IN") {
-      if (!consentConfirmationChecked) {
-        setConsentError("Confirme que o cliente de fato autorizou o recebimento de mensagens.");
-        return;
-      }
-      if (trimmedEvidence.length < 10) {
-        setConsentError("Informe a evidência específica da autorização prévia (mínimo de 10 caracteres).");
-        return;
-      }
-    }
-
-    setSavingConsent(true);
-    setConsentError(null);
-
-    const eventKey = `evt-consent-${consentModalCandidate.customer.id}-${Date.now()}`;
-
-    try {
-      const payloadBody =
-        consentChoice === "OPTED_IN"
-          ? {
-              status: "OPTED_IN",
-              source: consentSource,
-              declaredPriorAuthorization: true,
-              evidence: trimmedEvidence,
-              reason: trimmedEvidence,
-              context: "SMART_CRM_REACTIVATION",
-              eventKey,
-            }
-          : {
-              status: "OPTED_OUT",
-              source: "CUSTOMER_REQUEST_WHATSAPP",
-              reason: "Opt-out registrado pelo operador",
-              eventKey,
-            };
-
-      const res = await fetch(`/api/admin/clients/${consentModalCandidate.customer.id}/marketing-consent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadBody),
-      });
-
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload.message || payload.error || "Erro ao registrar consentimento.");
-      }
-
-      setConsentModalCandidate(null);
-      await fetchCandidates();
-    } catch (err: any) {
-      setConsentError(err.message || "Erro ao salvar consentimento.");
-    } finally {
-      setSavingConsent(false);
-    }
-  };
-
   const handlePrepareSelected = async (customIds?: string[]) => {
     const ids = customIds || Array.from(selectedIds);
     if (ids.length === 0) return;
@@ -308,6 +229,7 @@ export default function ReactivationPage() {
           requestKey,
           selectedCustomerIds: ids,
           templateKey: selectedTemplateKey,
+          operationMode: "ASSISTED_QUEUE",
         }),
       });
 
@@ -343,10 +265,17 @@ export default function ReactivationPage() {
     }
 
     try {
+      const isManualSupport = recipient.operationType === "MANUAL_SUPPORT";
       const res = await fetch(
         `/api/admin/clients/reactivation/manual-campaigns/${activeCampaign.id}/recipients/${recipient.recipientId}/opened`,
         {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            isManualSupport
+              ? { templateKey: "MANUAL_SUPPORT", messageText: "" }
+              : { templateKey: selectedTemplateKey }
+          ),
         }
       );
 
@@ -722,12 +651,17 @@ export default function ReactivationPage() {
 
             const recurrenceSource = RECURRENCE_SOURCE_LABELS[candidate.expectedReturnSource] || "Padrão";
 
-            let dispatchTooltip = "Preparar mensagem WhatsApp";
-            if (!candidate.dispatchEligible) {
+            const canOpenAssisted =
+              candidate.manualSupportEligible ??
+              (candidate.dispatchEligible ||
+                (candidate.recommendationEligible && !isOptedOut));
+
+            let dispatchTooltip = isOptedIn
+              ? "Preparar mensagem WhatsApp"
+              : "Atendimento manual no WhatsApp Assistido (sem modelo promocional)";
+            if (!canOpenAssisted) {
               if (candidate.dispatchSuppressions && candidate.dispatchSuppressions.includes("CONSENT_OPTED_OUT")) {
                 dispatchTooltip = "Contato indisponível: cliente solicitou opt-out";
-              } else if (candidate.dispatchSuppressions && candidate.dispatchSuppressions.includes("CONSENT_UNKNOWN")) {
-                dispatchTooltip = "Contato indisponível: consentimento de marketing pendente";
               } else if (candidate.dispatchSuppressions && candidate.dispatchSuppressions.includes("RECENT_CONTACT")) {
                 dispatchTooltip = "Contato indisponível: contatado recentemente nos últimos 14 dias";
               } else if (candidate.dispatchSuppressions && candidate.dispatchSuppressions.includes("UPCOMING_APPOINTMENT")) {
@@ -846,13 +780,9 @@ export default function ReactivationPage() {
                         Opt-out
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => openConsentModal(candidate)}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition-colors"
-                      >
-                        Registrar consentimento
-                      </button>
+                      <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                        Atendimento manual
+                      </span>
                     )}
 
                     <button
@@ -866,7 +796,7 @@ export default function ReactivationPage() {
 
                     <button
                       type="button"
-                      disabled={!candidate.dispatchEligible}
+                      disabled={!canOpenAssisted}
                       title={dispatchTooltip}
                       onClick={() => {
                         setSelectedIds(new Set([candidate.customer.id]));
@@ -1018,138 +948,6 @@ export default function ReactivationPage() {
         </div>
       )}
 
-      {/* Consent Recording Modal */}
-      {consentModalCandidate && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
-            <h3 className="text-lg font-bold text-stone-100">
-              Registrar Consentimento de Marketing
-            </h3>
-            <p className="text-xs text-stone-400">
-              Cliente: <strong className="text-stone-200">{consentModalCandidate.customer.name}</strong>
-              <br />
-              Telefone: {formatPhone(consentModalCandidate.customer.phone)}
-            </p>
-
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-semibold text-stone-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="consent"
-                  checked={consentChoice === "OPTED_IN"}
-                  onChange={() => setConsentChoice("OPTED_IN")}
-                  className="text-amber-500"
-                />
-                <span>Cliente autorizou contato de marketing por WhatsApp (OPTED_IN)</span>
-              </label>
-              <label className="flex items-center gap-2 text-xs font-semibold text-stone-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="consent"
-                  checked={consentChoice === "OPTED_OUT"}
-                  onChange={() => setConsentChoice("OPTED_OUT")}
-                  className="text-amber-500"
-                />
-                <span>Cliente solicitou NÃO receber mensagens (OPTED_OUT)</span>
-              </label>
-            </div>
-
-            {consentChoice === "OPTED_IN" && (
-              <div className="space-y-3">
-                <div>
-                  <label
-                    htmlFor="reativacao-consent-source"
-                    className="block text-xs font-semibold text-stone-300 mb-1"
-                  >
-                    Origem da autorização obtida
-                  </label>
-                  <select
-                    id="reativacao-consent-source"
-                    value={consentSource}
-                    onChange={(e) =>
-                      setConsentSource(
-                        e.target.value as
-                          | "CUSTOMER_REQUEST_WHATSAPP"
-                          | "CUSTOMER_REQUEST_IN_PERSON"
-                          | "ADMIN_WITH_PROOF"
-                      )
-                    }
-                    className="w-full bg-stone-950 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
-                  >
-                    <option value="CUSTOMER_REQUEST_WHATSAPP">
-                      Solicitação do cliente via WhatsApp
-                    </option>
-                    <option value="CUSTOMER_REQUEST_IN_PERSON">
-                      Autorização presencial na barbearia
-                    </option>
-                    <option value="ADMIN_WITH_PROOF">
-                      Comprovante administrativo arquivado
-                    </option>
-                  </select>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="reativacao-consent-evidence"
-                    className="block text-xs font-semibold text-stone-300 mb-1"
-                  >
-                    Evidência específica da autorização prévia (mínimo 10 caracteres)
-                  </label>
-                  <textarea
-                    id="reativacao-consent-evidence"
-                    rows={3}
-                    value={consentEvidence}
-                    onChange={(e) => setConsentEvidence(e.target.value)}
-                    placeholder="Ex: Cliente solicitou por WhatsApp em 11/11 após atendimento receber avisos de horários."
-                    className="w-full bg-stone-950 border border-stone-700 rounded-lg p-2.5 text-xs text-stone-100"
-                  />
-                </div>
-
-                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2">
-                  <label className="flex items-start gap-2 text-xs text-stone-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={consentConfirmationChecked}
-                      onChange={(e) => setConsentConfirmationChecked(e.target.checked)}
-                      className="mt-0.5 text-amber-500 rounded"
-                    />
-                    <span>
-                      Declaro expressamente que este cliente forneceu autorização prévia para receber mensagens de retorno/marketing da barbearia.
-                    </span>
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {consentError && (
-              <p className="text-xs text-red-400 font-semibold">{consentError}</p>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
-              <button
-                type="button"
-                onClick={() => setConsentModalCandidate(null)}
-                className="px-4 py-2 rounded-lg border border-stone-700 text-stone-300 text-xs font-semibold hover:bg-stone-800"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={
-                  savingConsent ||
-                  (consentChoice === "OPTED_IN" &&
-                    (!consentConfirmationChecked || consentEvidence.trim().length < 10))
-                }
-                onClick={handleSaveConsent}
-                className="px-4 py-2 rounded-lg bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 disabled:opacity-40 transition-colors"
-              >
-                {savingConsent ? "Gravando..." : "Salvar consentimento"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Manual WhatsApp Preparation Drawer / Modal */}
       {showPreparationModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
@@ -1179,27 +977,34 @@ export default function ReactivationPage() {
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">
-                Modelo de Mensagem
-              </label>
-              <select
-                value={selectedTemplateKey}
-                onChange={(e) => setSelectedTemplateKey(e.target.value)}
-                className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
-              >
-                {WHATSAPP_TEMPLATES.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    [{t.category}] {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {preparedRecipients.some((r) => r.operationType !== "MANUAL_SUPPORT") ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-wider block">
+                  Modelo de Mensagem (somente clientes OPTED_IN)
+                </label>
+                <select
+                  value={selectedTemplateKey}
+                  onChange={(e) => setSelectedTemplateKey(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
+                >
+                  {WHATSAPP_TEMPLATES.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      [{t.category}] {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 text-xs text-stone-300">
+                Atendimento manual: modelos promocionais não são pré-preenchidos para clientes sem opt-in de marketing.
+              </div>
+            )}
 
             <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
               {preparedRecipients.map((recipient) => {
                 const isOpened = recipient.dispatchStatus === "WHATSAPP_OPENED";
                 const isSent = recipient.dispatchStatus === "SENT_CONFIRMED";
+                const isManualSupport = recipient.operationType === "MANUAL_SUPPORT";
 
                 return (
                   <div
@@ -1207,16 +1012,23 @@ export default function ReactivationPage() {
                     className="p-3.5 bg-stone-950/70 border border-stone-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-bold text-stone-200 truncate">
                           {recipient.customerName}
                         </p>
                         <span className="text-xs text-stone-500 font-mono">
                           {formatPhone(recipient.customerPhone)}
                         </span>
+                        {isManualSupport && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                            Atendimento manual
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-stone-400 line-clamp-2">
-                        {recipient.previewMessage || "Mensagem contextual de reativação."}
+                        {isManualSupport
+                          ? "Sem mensagem promocional pré-preenchida (abertura direta para atendimento manual)."
+                          : recipient.previewMessage || "Mensagem contextual de reativação."}
                       </p>
                     </div>
 

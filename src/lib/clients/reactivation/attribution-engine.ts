@@ -154,6 +154,18 @@ function formatCanonicalDate(d: Date | string | null | undefined): string | null
 }
 
 /**
+ * Detects if a recipient was handled as operational manual support (UNKNOWN / MANUAL_SUPPORT)
+ * rather than an eligible commercial marketing reactivation contact.
+ */
+export function isManualSupportRecipient(recipient: any): boolean {
+  const snap = (recipient?.payloadSnapshot as any) || {};
+  return (
+    snap.operationType === "MANUAL_SUPPORT" ||
+    snap.templateKey === "MANUAL_SUPPORT"
+  );
+}
+
+/**
  * Calculates attribution rate strictly without silent error clamping.
  * Invariant: 0 <= numerator <= contacts.
  * If numerator < 0 or numerator > contacts, throws an explicit business error.
@@ -222,11 +234,34 @@ export async function reconcileCampaignAttribution(
       r.sentConfirmedAt !== null
   );
 
+  // S-08 & GITHUB-DEF-01: Limpa preventivamente qualquer estado de conversão ou receita residual em MANUAL_SUPPORT da campanha
+  const manualRecipients = campaignRecipients.filter((r: any) => isManualSupportRecipient(r));
+  for (const mr of manualRecipients) {
+    if (mr.conversionStatus !== RecipientConversionStatus.NONE || mr.revenueAttributed !== null) {
+      await prisma.reactivationCampaignRecipient.update({
+        where: { id: mr.id },
+        data: {
+          conversionStatus: RecipientConversionStatus.NONE,
+          attributedAppointmentId: null,
+          attributedComandaId: null,
+          canonicalReturnDate: null,
+          conversionAttributedAt: null,
+          revenueAttributed: null,
+        },
+      });
+    }
+  }
+
+  // Apenas contatos comerciais legítimos são elegíveis à atribuição de marketing
+  const commercialRecipients = sentRecipients.filter(
+    (r: any) => !isManualSupportRecipient(r)
+  );
+
   const customerIds: string[] = Array.from(
-    new Set<string>(sentRecipients.map((r: any) => String(r.customerId)))
+    new Set<string>(commercialRecipients.map((r: any) => String(r.customerId)))
   ).sort();
 
-  // If no sent recipients, return empty metrics immediately
+  // If no commercial sent recipients, return empty metrics immediately
   if (customerIds.length === 0) {
     await prisma.reactivationCampaign.update({
       where: { id: campaignId },
@@ -249,8 +284,10 @@ export async function reconcileCampaignAttribution(
   }
 
   // 3. Fetch all sent contacts across all campaigns for these customers (ordered by sentConfirmedAt ASC)
-  // S-08: Filtra apenas campanhas de reativação (incluindo legadas sem origin) para impedir que
-  // comunicações gerais da Base de Clientes roubem atribuição de campanhas de reativação.
+  // S-08 & GITHUB-DEF-01: Filtra apenas contatos de reativação comercial legítimos:
+  // - Origem SMART_CRM_REACTIVATION (ou legada sem origin)
+  // - Exclui estritamente atendimentos manuais (MANUAL_SUPPORT), que não geram conversão comercial
+  //   nem disputam a atribuição de último contato com campanhas promocionais.
   const rawCustomerSentContacts = await prisma.reactivationCampaignRecipient.findMany({
     where: {
       barbershopId,
@@ -265,7 +302,12 @@ export async function reconcileCampaignAttribution(
   });
 
   const allCustomerSentContacts = (rawCustomerSentContacts || []).filter(
-    (contact: any) => resolveCampaignOrigin(contact.campaign) === "SMART_CRM_REACTIVATION"
+    (contact: any) => {
+      if (resolveCampaignOrigin(contact.campaign) !== "SMART_CRM_REACTIVATION") {
+        return false;
+      }
+      return !isManualSupportRecipient(contact);
+    }
   );
 
   // 4. Fetch all appointments for these customers
@@ -630,10 +672,18 @@ export async function getCampaignAttributionSummary(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
+  const isGeneralBaseQueue = resolveCampaignOrigin(campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
   const sentRecipients = recipients.filter(
     (r: any) => r.dispatchStatus === RecipientDispatchStatus.SENT_CONFIRMED
   );
-  const contacts = sentRecipients.length;
+
+  // GITHUB-DEF-01: Apenas contatos comerciais elegíveis à atribuição de marketing.
+  // Destinatários MANUAL_SUPPORT ou de filas de atendimento geral (CLIENTS_BASE_ASSISTED_QUEUE)
+  // não entram na contagem de contatos promocionais nem reduzem as taxas comerciais.
+  const commercialSentRecipients = sentRecipients.filter(
+    (r: any) => !isGeneralBaseQueue && !isManualSupportRecipient(r)
+  );
+  const contacts = commercialSentRecipients.length;
 
   // Query all appointments for these customers created within booking window where this campaign is last eligible touch
   const sentCustomerIds = Array.from(new Set(sentRecipients.map((r: any) => r.customerId)));
@@ -663,8 +713,7 @@ export async function getCampaignAttributionSummary(
       })
     : [];
 
-  // All contacts for these customers to verify last eligible touch (S-08: only SMART_CRM_REACTIVATION campaigns)
-  const isGeneralBaseQueue = resolveCampaignOrigin(campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
+  // All contacts for these customers to verify last eligible touch (S-08: only SMART_CRM_REACTIVATION campaigns; GITHUB-DEF-01: exclude MANUAL_SUPPORT)
   const rawContactsForCustomers = !isGeneralBaseQueue && sentCustomerIds.length > 0
     ? await prisma.reactivationCampaignRecipient.findMany({
         where: {
@@ -679,7 +728,12 @@ export async function getCampaignAttributionSummary(
     : [];
 
   const allContactsForCustomers = (rawContactsForCustomers || []).filter(
-    (c: any) => resolveCampaignOrigin(c.campaign) === "SMART_CRM_REACTIVATION"
+    (c: any) => {
+      if (resolveCampaignOrigin(c.campaign) !== "SMART_CRM_REACTIVATION") {
+        return false;
+      }
+      return !isManualSupportRecipient(c);
+    }
   );
 
   const customersWithBookingSet = new Set<string>();
@@ -722,9 +776,12 @@ export async function getCampaignAttributionSummary(
   for (const r of recipients) {
     const appt = r.attributedAppointment;
     const comanda = r.attributedComanda;
+    const rPayload = (r.payloadSnapshot as any) || {};
+    const isManualSupport = isManualSupportRecipient(r);
 
     const isReactivated =
       !isGeneralBaseQueue &&
+      !isManualSupport &&
       (r.canonicalReturnDate !== null ||
         r.conversionStatus === RecipientConversionStatus.ATTENDED ||
         r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
@@ -734,28 +791,32 @@ export async function getCampaignAttributionSummary(
       reactivatedCustomerSet.add(r.customerId);
     }
 
-    // Live derived recovered revenue from the attributed return visit comandas
-    let rev = Number(r.revenueAttributed) || 0;
-    if (isReactivated && r.canonicalReturnDate) {
-      if (appt?.comandas && appt.comandas.length > 0) {
-        rev = appt.comandas.reduce((s: number, c: any) => s + (Number(c.paidTotal) || 0), 0);
-      } else {
-        const canonicalDateStr = formatCanonicalDate(r.canonicalReturnDate);
-        const dateCmds = allCustomerComandas.filter((c: any) => {
-          if (c.customerId !== r.customerId) return false;
-          if (c.appointmentId) return false;
-          const hasDoneService = (c.items || []).length > 0;
-          if (!hasDoneService) return false;
-          const cTs = c.closedAt ? new Date(c.closedAt) : new Date(c.createdAt);
-          return formatCanonicalDate(cTs) === canonicalDateStr;
-        });
-        if (dateCmds.length > 0) {
-          rev = dateCmds.reduce((s: number, c: any) => s + (Number(c.paidTotal) || 0), 0);
+    // Live derived recovered revenue from the attributed return visit comandas.
+    // GITHUB-DEF-01: Garantir que valores residuais ou armazenados em destinatários
+    // MANUAL_SUPPORT jamais sejam somados nem exibidos como receita comercial recuperada.
+    let rev = 0;
+    if (isReactivated) {
+      rev = Number(r.revenueAttributed) || 0;
+      if (r.canonicalReturnDate) {
+        if (appt?.comandas && appt.comandas.length > 0) {
+          rev = appt.comandas.reduce((s: number, c: any) => s + (Number(c.paidTotal) || 0), 0);
+        } else {
+          const canonicalDateStr = formatCanonicalDate(r.canonicalReturnDate);
+          const dateCmds = allCustomerComandas.filter((c: any) => {
+            if (c.customerId !== r.customerId) return false;
+            if (c.appointmentId) return false;
+            const hasDoneService = (c.items || []).length > 0;
+            if (!hasDoneService) return false;
+            const cTs = c.closedAt ? new Date(c.closedAt) : new Date(c.createdAt);
+            return formatCanonicalDate(cTs) === canonicalDateStr;
+          });
+          if (dateCmds.length > 0) {
+            rev = dateCmds.reduce((s: number, c: any) => s + (Number(c.paidTotal) || 0), 0);
+          }
         }
       }
+      recoveredRevenue += rev;
     }
-
-    recoveredRevenue += rev;
 
     summaryItems.push({
       recipientId: r.id,
@@ -941,13 +1002,20 @@ export async function getRecipientAttributionDetail(
     }
   }
 
-  let liveRevenue = Number(recipient.revenueAttributed) || 0;
+  let liveRevenue = 0;
+  const isGeneralCampaign =
+    resolveCampaignOrigin(recipient.campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
+  const isManualSupport = isManualSupportRecipient(recipient);
+
   if (
-    recipient.canonicalReturnDate !== null ||
-    recipient.conversionStatus === RecipientConversionStatus.ATTENDED ||
-    recipient.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
-    recipient.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED
+    !isGeneralCampaign &&
+    !isManualSupport &&
+    (recipient.canonicalReturnDate !== null ||
+      recipient.conversionStatus === RecipientConversionStatus.ATTENDED ||
+      recipient.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
+      recipient.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED)
   ) {
+    liveRevenue = Number(recipient.revenueAttributed) || 0;
     if (comandasEvidence.length > 0) {
       liveRevenue = comandasEvidence.reduce((sum, c) => sum + c.paidTotal, 0);
     }
@@ -1028,15 +1096,19 @@ export async function getCustomerAttributionHistory(
   for (const r of recipients) {
     const isGeneralCampaign =
       resolveCampaignOrigin(r.campaign) === "CLIENTS_BASE_ASSISTED_QUEUE";
+    const isManualSupport = isManualSupportRecipient(r);
+
     const isReactivated =
       !isGeneralCampaign &&
+      !isManualSupport &&
       (r.canonicalReturnDate !== null ||
         r.conversionStatus === RecipientConversionStatus.ATTENDED ||
         r.conversionStatus === RecipientConversionStatus.DIRECT_RETURN ||
         r.conversionStatus === RecipientConversionStatus.REVENUE_ATTRIBUTED);
 
-    let rev = Number(r.revenueAttributed) || 0;
+    let rev = 0;
     if (isReactivated) {
+      rev = Number(r.revenueAttributed) || 0;
       const uniqueComandas = new Map<string, number>();
       if (r.attributedComanda && Number(r.attributedComanda.paidTotal) >= 0) {
         uniqueComandas.set(r.attributedComanda.id, Number(r.attributedComanda.paidTotal));

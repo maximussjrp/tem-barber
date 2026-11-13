@@ -22,6 +22,8 @@ export interface QueueRecipientItem {
     | "FAILED";
   failureReason?: string | null;
   dispatchError?: string | null;
+  operationType?: "MARKETING_REACTIVATION" | "MANUAL_SUPPORT";
+  consentStatusAtPreparation?: "OPTED_IN" | "UNKNOWN" | null;
   templateKey?: string;
   templateLabel?: string;
   previewMessage: string;
@@ -170,16 +172,21 @@ export function AssistedWhatsAppQueueDrawer({
       setReconciliationChecked(false);
       setReconciliationReason("");
     } else {
-      const rTemplate =
-        currentRecipient.templateKey || initialTemplateKey || "RETURN_REMINDER";
-      const rText =
-        currentRecipient.openedMessageText ||
-        currentRecipient.previewMessage ||
-        buildClientWhatsappMessage({
-          template: rTemplate,
-          customerName: currentRecipient.customerName,
-          barbershopName,
-        });
+      const isManualSupport =
+        currentRecipient.operationType === "MANUAL_SUPPORT" ||
+        currentRecipient.templateKey === "MANUAL_SUPPORT";
+      const rTemplate = isManualSupport
+        ? "MANUAL_SUPPORT"
+        : currentRecipient.templateKey || initialTemplateKey || "RETURN_REMINDER";
+      const rText = isManualSupport
+        ? (currentRecipient.openedMessageText ?? currentRecipient.previewMessage ?? "")
+        : currentRecipient.openedMessageText ||
+          currentRecipient.previewMessage ||
+          buildClientWhatsappMessage({
+            template: rTemplate,
+            customerName: currentRecipient.customerName,
+            barbershopName,
+          });
 
       setTemplateKey(rTemplate);
       setMessageText(rText);
@@ -237,6 +244,11 @@ export function AssistedWhatsAppQueueDrawer({
   const completedCount = sentCount + skippedCount;
   const progressPercent =
     totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  const isCurrentManualSupport =
+    Boolean(currentRecipient) &&
+    (currentRecipient?.operationType === "MANUAL_SUPPORT" ||
+      templateKey === "MANUAL_SUPPORT");
 
   const isDirtySinceLastOpen =
     currentRecipient?.dispatchStatus === "WHATSAPP_OPENED" &&
@@ -301,8 +313,8 @@ export function AssistedWhatsAppQueueDrawer({
       return;
     }
     if (!campaignId || !currentRecipient) return;
-    const trimmed = messageText.trim();
-    if (!trimmed) {
+    const trimmed = isCurrentManualSupport ? "" : messageText.trim();
+    if (!trimmed && !isCurrentManualSupport) {
       setActionError("A mensagem não pode estar vazia.");
       return;
     }
@@ -745,65 +757,78 @@ export function AssistedWhatsAppQueueDrawer({
                   </div>
                 )}
 
-              {/* Template Selector */}
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="queue-template-select"
-                  className="block text-xs font-semibold text-stone-300"
-                >
-                  Modelo de mensagem
-                </label>
-                <select
-                  id="queue-template-select"
-                  value={templateKey}
-                  onChange={(e) => handleSelectTemplate(e.target.value)}
-                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
-                >
-                  {WHATSAPP_TEMPLATES.map((tpl) => (
-                    <option key={tpl.key} value={tpl.key}>
-                      {tpl.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Editable Message */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+              {/* Template Selector or Manual Support Notice */}
+              {isCurrentManualSupport ? (
+                <div className="p-3 rounded-xl bg-stone-900 border border-stone-700 text-xs text-stone-300 space-y-1">
+                  <p className="font-semibold text-amber-300">
+                    Atendimento manual (sem consentimento de marketing)
+                  </p>
+                  <p className="text-stone-400">
+                    A conversa será aberta diretamente no WhatsApp sem mensagem promocional pré-preenchida. O operador pode conversar livremente no aplicativo caso haja contexto legítimo de atendimento.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
                   <label
-                    htmlFor="queue-message-textarea"
-                    className="text-xs font-semibold text-stone-300"
+                    htmlFor="queue-template-select"
+                    className="block text-xs font-semibold text-stone-300"
                   >
-                    Mensagem para {currentRecipient.customerName}
+                    Modelo de mensagem
                   </label>
-                  <span className="text-[11px] text-stone-500">
-                    {messageText.length}/2000
-                  </span>
-                </div>
-                <textarea
-                  id="queue-message-textarea"
-                  rows={5}
-                  value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
-                  className="w-full bg-stone-900 border border-stone-700 rounded-lg p-3 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
-                />
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleRestoreDefaultMessage}
-                    className="text-xs text-stone-400 hover:text-stone-200 underline"
+                  <select
+                    id="queue-template-select"
+                    value={templateKey}
+                    onChange={(e) => handleSelectTemplate(e.target.value)}
+                    className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
                   >
-                    Restaurar texto padrão
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyMessage}
-                    className="px-2.5 py-1 rounded bg-stone-800 border border-stone-700 text-stone-200 text-xs hover:bg-stone-700"
-                  >
-                    {copiedFeedback ? "Mensagem copiada!" : "Copiar mensagem"}
-                  </button>
+                    {WHATSAPP_TEMPLATES.map((tpl) => (
+                      <option key={tpl.key} value={tpl.key}>
+                        {tpl.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              </div>
+              )}
+
+              {/* Editable Message for Marketing */}
+              {!isCurrentManualSupport && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label
+                      htmlFor="queue-message-textarea"
+                      className="text-xs font-semibold text-stone-300"
+                    >
+                      Mensagem para {currentRecipient.customerName}
+                    </label>
+                    <span className="text-[11px] text-stone-500">
+                      {messageText.length}/2000
+                    </span>
+                  </div>
+                  <textarea
+                    id="queue-message-textarea"
+                    rows={5}
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    className="w-full bg-stone-900 border border-stone-700 rounded-lg p-3 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
+                  />
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRestoreDefaultMessage}
+                      className="text-xs text-stone-400 hover:text-stone-200 underline"
+                    >
+                      Restaurar texto padrão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopyMessage}
+                      className="px-2.5 py-1 rounded bg-stone-800 border border-stone-700 text-stone-200 text-xs hover:bg-stone-700"
+                    >
+                      {copiedFeedback ? "Mensagem copiada!" : "Copiar mensagem"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Dirty after open warning (S-02) */}
               {isDirtySinceLastOpen && (

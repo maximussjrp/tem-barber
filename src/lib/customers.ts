@@ -86,6 +86,8 @@ export type AdminClientListItem = {
   };
   whatsappQueue?: {
     eligible: boolean;
+    marketingEligible?: boolean;
+    operationType?: "MARKETING_REACTIVATION" | "MANUAL_SUPPORT";
     consentStatus: "OPTED_IN" | "OPTED_OUT" | "UNKNOWN";
     isValidMobilePhone: boolean;
     inCooldown14d: boolean;
@@ -713,9 +715,12 @@ export async function listBarbershopClients(
         ineligibilityReason = "UPCOMING_APPOINTMENT";
       } else if (inCooldown14d) {
         ineligibilityReason = "RECENT_CONTACT";
-      } else if (consentStatus !== "OPTED_IN") {
-        ineligibilityReason = "CONSENT_UNKNOWN";
       }
+
+      const eligible = ineligibilityReason === null;
+      const marketingEligible = eligible && consentStatus === "OPTED_IN";
+      const operationType =
+        consentStatus === "OPTED_IN" ? "MARKETING_REACTIVATION" : "MANUAL_SUPPORT";
 
       return {
         id: user.id,
@@ -733,11 +738,13 @@ export async function listBarbershopClients(
         },
         stats,
         whatsappQueue: {
-          eligible: ineligibilityReason === null,
+          eligible,
+          marketingEligible,
+          operationType,
           consentStatus,
           isValidMobilePhone,
           inCooldown14d,
-          canRegisterConsentInDrawer: ineligibilityReason === "CONSENT_UNKNOWN",
+          canRegisterConsentInDrawer: false,
           ineligibilityReason,
         },
       };
@@ -772,7 +779,11 @@ export async function listBarbershopClients(
     eligibleInFilterCount: eligibleInFilter.length,
     remainingEligibleInRoundCount: eligibleRemainingInRound.length,
     excludedInRoundCount: eligibleInFilter.length - eligibleRemainingInRound.length,
-    pendingConsentInFilterCount: clients.filter((clientItem) => clientItem.whatsappQueue?.canRegisterConsentInDrawer).length,
+    pendingConsentInFilterCount: clients.filter(
+      (clientItem) =>
+        clientItem.whatsappQueue?.eligible &&
+        clientItem.whatsappQueue?.consentStatus === "UNKNOWN"
+    ).length,
     ineligibleInFilterCount: clients.filter((clientItem) => !clientItem.whatsappQueue?.eligible).length,
     nextEligibleBatchIds: eligibleRemainingInRound.slice(0, 50).map((clientItem) => clientItem.id),
     hasMoreThanBatchLimit: eligibleRemainingInRound.length > 50,

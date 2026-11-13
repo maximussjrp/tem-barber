@@ -64,5 +64,8 @@ export function generateWhatsAppLink(phone: string, message: string): string | n
   const formattedPhone = formatWhatsAppPhone(phone);
   if (!formattedPhone) return null;
   
+  if (!message || message.trim().length === 0) {
+    return `https://wa.me/${formattedPhone}`;
+  }
   return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
 }
